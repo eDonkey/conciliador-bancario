@@ -27,19 +27,6 @@ from engine import reglas as reglas_mod
 
 app = FastAPI(title="Conciliador bancario")
 
-
-@app.middleware("http")
-async def _control_acceso(request, call_next):
-    """Si CLAVE_ACCESO está definida (p.ej. en un deploy público), los
-    endpoints /api/* requieren esa clave (header X-Clave o ?clave=)."""
-    clave = os.environ.get("CLAVE_ACCESO")
-    if clave and request.url.path.startswith("/api"):
-        recibida = request.headers.get("x-clave") or request.query_params.get("clave")
-        if recibida != clave:
-            return JSONResponse(status_code=401,
-                                content={"error": "Clave de acceso requerida"})
-    return await call_next(request)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
 os.makedirs(DATOS_DIR, exist_ok=True)

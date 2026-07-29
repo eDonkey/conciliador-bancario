@@ -81,8 +81,6 @@ mayor, y apretá **Conciliar**. Al final podés **exportar todo a Excel**.
    → elegir `conciliador-bancario`. Railway detecta el `Dockerfile` solo.
 2. En **Variables** agregar:
    - `ANTHROPIC_API_KEY` — para las sugerencias con IA (opcional).
-   - `CLAVE_ACCESO` — recomendado en deploys públicos: la app pide esta clave
-     antes de dejar operar (los extractos son datos sensibles).
 3. En **Settings → Networking → Generate Domain** para obtener la URL pública.
 4. (Opcional) Montar un **Volume** en `/app/datos` para que las conciliaciones
    guardadas y las reglas aprendidas sobrevivan a los redeploys.

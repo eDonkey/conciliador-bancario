@@ -197,28 +197,6 @@
 const $ = s => document.querySelector(s);
 let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
 
-// Fetch con clave de acceso (para deploys públicos con CLAVE_ACCESO definida)
-async function apiFetch(url, opts = {}) {
-  const intento = async () => {
-    opts.headers = { ...(opts.headers || {}),
-                     'X-Clave': localStorage.getItem('clave_acceso') || '' };
-    return fetch(url, opts);
-  };
-  let r = await intento();
-  if (r.status === 401) {
-    const clave = window.prompt('Este servidor requiere clave de acceso:');
-    if (clave != null) {
-      localStorage.setItem('clave_acceso', clave);
-      r = await intento();
-    }
-  }
-  return r;
-}
-const claveQuery = () => {
-  const c = localStorage.getItem('clave_acceso');
-  return c ? `?clave=${encodeURIComponent(c)}` : '';
-};
-
 function configurarZona(zona, input, multiple, alCambiar) {
   zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
   zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
@@ -263,7 +241,7 @@ $('#btnConciliar').addEventListener('click', async () => {
   $('#estado').innerHTML = '<span class="spinner"></span>Procesando… (la IA puede tardar unos minutos)';
   $('#avisos').innerHTML = '';
   try {
-    const resp = await apiFetch('/api/conciliar', { method: 'POST', body: fd });
+    const resp = await fetch('/api/conciliar', { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
@@ -355,7 +333,7 @@ function activarTab(id) {
 
 window.confirmarMatch = async (bancoId, valor) => {
   try {
-    const resp = await apiFetch(`/api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ banco_id: bancoId, confirmado: valor }),
     });
@@ -368,7 +346,7 @@ window.confirmarMatch = async (bancoId, valor) => {
 
 window.confirmarTodos = async valor => {
   try {
-    const resp = await apiFetch(`/api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ todos: valor }),
     });
@@ -458,7 +436,7 @@ function pintarTabla() {
 
 $('#buscador').addEventListener('input', pintarTabla);
 $('#btnExportar').addEventListener('click', () => {
-  if (datos) window.location = `/api/exportar/${datos.job_id}${claveQuery()}`;
+  if (datos) window.location = `/api/exportar/${datos.job_id}`;
 });
 
 /* ================= Conciliación manual ================= */
@@ -586,7 +564,7 @@ $('#btnLimpiarSel').addEventListener('click', () => {
 
 async function aplicarManual(cuerpo, volverA) {
   try {
-    const resp = await apiFetch(`/api/manual/${datos.job_id}`, {
+    const resp = await fetch(`/api/manual/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cuerpo),
     });
@@ -619,7 +597,7 @@ window.aceptarSugerencia = i => {
 
 window.deshacerManual = async id => {
   try {
-    const resp = await apiFetch(`/api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`/api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
