@@ -116,13 +116,13 @@
   <section class="tarjeta">
     <div class="grid-carga">
       <div class="zona" id="zonaPdf">
-        <h3>📄 Extractos bancarios (PDF)</h3>
+        <h3> Extractos bancarios (PDF)</h3>
         <p>Arrastrá o hacé clic — uno o más resúmenes de cuenta Santander</p>
         <input type="file" id="inputPdf" accept=".pdf" multiple hidden>
         <ul class="archivos" id="listaPdf"></ul>
       </div>
       <div class="zona" id="zonaXls">
-        <h3>📊 Libro mayor (Excel)</h3>
+        <h3> Libro mayor (Excel)</h3>
         <p>Arrastrá o hacé clic — el .xlsx con las hojas de la cuenta E y la cuenta O</p>
         <input type="file" id="inputXls" accept=".xlsx,.xls" hidden>
         <ul class="archivos" id="listaXls"></ul>
@@ -152,7 +152,7 @@
     <div class="panel-manual oculto" id="panelManual">
       <div class="dual">
         <div class="col-manual">
-          <h4>🏦 Extracto sin conciliar</h4>
+          <h4> Extracto sin conciliar</h4>
           <div class="filtros">
             <input type="text" id="filtroBanco" placeholder="Filtrar…">
             <select id="ladoBanco">
@@ -165,7 +165,7 @@
           <div class="lista-items" id="listaBanco"></div>
         </div>
         <div class="col-manual">
-          <h4>📒 Mayor sin conciliar (E y O pendientes)</h4>
+          <h4> Mayor sin conciliar (E y O pendientes)</h4>
           <div class="filtros">
             <input type="text" id="filtroMayor" placeholder="Filtrar…">
             <select id="ladoMayor">
@@ -306,7 +306,7 @@ function mostrarResultados() {
 
   let avisos = '';
   if (r.reglas_aplicadas)
-    avisos += `<div class="aviso info">🧠 Se conciliaron automáticamente
+    avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
       conciliaciones manuales anteriores (método "regla aprendida").</div>`;
 
@@ -326,9 +326,9 @@ function mostrarResultados() {
     ['nota_debito', 'Gastos por mes (ND)', datos.nota_debito.length],
     ['e_sin_banco', 'Mayor E sin banco', datos.e_sin_banco.length],
     ['o_pendientes_sin_banco', 'O pendientes sin banco', datos.o_pendientes_sin_banco.length],
-    ['manual', '✋ Conciliar manualmente', (datos.conciliados_manual || []).length],
+    ['manual', ' Conciliar manualmente', (datos.conciliados_manual || []).length],
   ];
-  if (ia.sugerencias.length) tabs.push(['ia', 'Sugerencias IA ✨', ia.sugerencias.length]);
+  if (ia.sugerencias.length) tabs.push(['ia', 'Sugerencias IA', ia.sugerencias.length]);
   $('#tabs').innerHTML = tabs.map(([id, nombre, n]) =>
     `<button data-tab="${id}">${nombre} <span class="n">${n}</span></button>`).join('');
   document.querySelectorAll('#tabs button').forEach(b =>
@@ -347,7 +347,7 @@ function activarTab(id) {
   if (manual) { pintarManual(); return; }
   $('#buscador').value = '';
   $('#accionesTab').innerHTML = id === 'conciliados_o' && datos.conciliados_o.length ?
-    `<button class="mini" onclick="confirmarTodos(true)">✔ Confirmar todos</button>
+    `<button class="mini" onclick="confirmarTodos(true)">Confirmar todos</button>
      <button class="secundario" style="padding:5px 12px;font-size:12px;"
        onclick="confirmarTodos(false)">Desmarcar todos</button>` : '';
   pintarTabla();
@@ -363,7 +363,7 @@ window.confirmarMatch = async (bancoId, valor) => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
     refrescarTrasManual('conciliados_o');
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 };
 
 window.confirmarTodos = async valor => {
@@ -376,7 +376,7 @@ window.confirmarTodos = async valor => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
     refrescarTrasManual('conciliados_o');
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 };
 
 function pintarTabla() {
@@ -439,7 +439,7 @@ function pintarTabla() {
     filas = datos.ia.sugerencias.map((s, i) => [
       s.ids_banco.join(', '), s.ids_mayor.join(', '),
       { html: `<span class="conf-${s.confianza}">${s.confianza}</span>` }, s.motivo,
-      { html: s.aceptada ? '<span class="conf-alta">✔ aceptada</span>'
+      { html: s.aceptada ? '<span class="conf-alta">aceptada</span>'
              : `<button class="mini" onclick="aceptarSugerencia(${i})">Aceptar</button>` }]);
   }
 
@@ -555,13 +555,13 @@ function pintarMatchesManual() {
   $('#listaMatchesManual').innerHTML = lista.slice().reverse().map(m => `
     <div class="match-manual">
       <div class="detalle-m">
-        ${m.banco.map(b => `<div class="fila-m">🏦 ${esc(b.fecha ?? '')} ${esc(b.descripcion)}
+        ${m.banco.map(b => `<div class="fila-m">${esc(b.fecha ?? '')} ${esc(b.descripcion)}
           — $ ${fmt(b.credito - b.debito)}</div>`).join('')}
-        ${m.mayor.map(a => `<div class="fila-m">📒 [${esc(a.hoja)}] ${esc(a.fecha ?? '')}
+        ${m.mayor.map(a => `<div class="fila-m">[${esc(a.hoja)}] ${esc(a.fecha ?? '')}
           ${esc(a.referencia)} ${esc(a.comentario)} — $ ${fmt(a.debe - a.haber)}</div>`).join('')}
         <div><b>Diferencia: $ ${fmt(m.diferencia)}</b>
           ${m.fuente === 'ia' ? ' · <span class="conf-alta">sugerencia IA aceptada</span>' : ''}
-          ${m.regla_aprendida ? ' · <span class="metodo">🧠 regla aprendida para próximas conciliaciones</span>' : ''}
+          ${m.regla_aprendida ? ' · <span class="metodo">regla aprendida para próximas conciliaciones</span>' : ''}
           ${m.nota ? ` · ${esc(m.nota)}` : ''}</div>
       </div>
       <button onclick="deshacerManual('${m.match_id}')">↩ Deshacer</button>
