@@ -75,11 +75,24 @@ docker run -p 8765:8765 conciliador
 Abre http://localhost:8765 — arrastrá los PDFs del extracto y el Excel del
 mayor, y apretá **Conciliar**. Al final podés **exportar todo a Excel**.
 
+### Deploy en Railway (u otro hosting)
+
+1. En [railway.app](https://railway.app): **New Project → Deploy from GitHub repo**
+   → elegir `conciliador-bancario`. Railway detecta el `Dockerfile` solo.
+2. En **Variables** agregar:
+   - `ANTHROPIC_API_KEY` — para las sugerencias con IA (opcional).
+   - `CLAVE_ACCESO` — recomendado en deploys públicos: la app pide esta clave
+     antes de dejar operar (los extractos son datos sensibles).
+3. En **Settings → Networking → Generate Domain** para obtener la URL pública.
+4. (Opcional) Montar un **Volume** en `/app/datos` para que las conciliaciones
+   guardadas y las reglas aprendidas sobrevivan a los redeploys.
+
 ### IA (opcional)
 
 Para habilitar las sugerencias con IA definí la variable de entorno
-`ANTHROPIC_API_KEY` (o iniciá sesión con `ant auth login`). Sin credenciales, el
-sistema funciona igual con la conciliación determinística.
+`ANTHROPIC_API_KEY`, o guardá la clave en `datos/anthropic_key.txt` (la carpeta
+`datos/` nunca se sube al repo). Sin credenciales, el sistema funciona igual
+con la conciliación determinística.
 
 ```bat
 set ANTHROPIC_API_KEY=sk-ant-...

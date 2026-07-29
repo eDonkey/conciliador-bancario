@@ -11,7 +11,25 @@ import os
 
 MODEL = "claude-opus-5"
 MAX_BANCO = 80     # límites por llamada para no exceder contexto
-MAX_MAYOR = 160
+MAX_MAYOR = 400
+
+RUTA_CLAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "datos", "anthropic_key.txt")
+
+
+def _cargar_clave() -> bool:
+    """Busca credenciales: variable de entorno o datos/anthropic_key.txt."""
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return True
+    if os.path.exists(RUTA_CLAVE):
+        try:
+            clave = open(RUTA_CLAVE, encoding="utf-8").read().strip()
+        except OSError:
+            return False
+        if clave:
+            os.environ["ANTHROPIC_API_KEY"] = clave
+            return True
+    return False
 
 SCHEMA = {
     "type": "object",
@@ -53,7 +71,7 @@ de referencia compartido."""
 
 
 def disponible() -> bool:
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+    if _cargar_clave():
         return True
     # perfil de `ant auth login`
     cfg = os.path.join(os.path.expanduser("~"), ".config", "anthropic")
@@ -85,6 +103,7 @@ def sugerir_matches(movs_banco, asientos_mayor):
     if not movs_banco or not asientos_mayor:
         return []
 
+    _cargar_clave()
     client = anthropic.Anthropic()
     sugerencias = []
 

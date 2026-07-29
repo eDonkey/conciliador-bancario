@@ -27,6 +27,19 @@ from engine import reglas as reglas_mod
 
 app = FastAPI(title="Conciliador bancario")
 
+
+@app.middleware("http")
+async def _control_acceso(request, call_next):
+    """Si CLAVE_ACCESO está definida (p.ej. en un deploy público), los
+    endpoints /api/* requieren esa clave (header X-Clave o ?clave=)."""
+    clave = os.environ.get("CLAVE_ACCESO")
+    if clave and request.url.path.startswith("/api"):
+        recibida = request.headers.get("x-clave") or request.query_params.get("clave")
+        if recibida != clave:
+            return JSONResponse(status_code=401,
+                                content={"error": "Clave de acceso requerida"})
+    return await call_next(request)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
 os.makedirs(DATOS_DIR, exist_ok=True)
@@ -139,8 +152,9 @@ async def api_conciliar(
             try:
                 residual_mayor = (resultado["e_sin_banco"]
                                   + resultado["o_pendientes_sin_banco"])
-                residual_banco = (resultado["banco_sin_contabilizar"]
-                                  + resultado["gastos_bancarios"])
+                # los gastos bancarios no van a la IA: ya están explicados por
+                # la nota de débito mensual
+                residual_banco = resultado["banco_sin_contabilizar"]
                 ia_sugerencias = ai_assist.sugerir_matches(residual_banco, residual_mayor)
                 ia_estado = "ok"
             except Exception as exc:  # noqa: BLE001 — mostrar el error al usuario
@@ -443,4 +457,6 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    puerto = int(os.environ.get("PORT", "8765"))
+    host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
+    uvicorn.run(app, host=host, port=puerto)

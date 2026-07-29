@@ -7,4 +7,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 8765
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8765"]
+# Railway/Render inyectan PORT; local usa 8765
+CMD python -m uvicorn app:app --host 0.0.0.0 --port ${PORT:-8765}
