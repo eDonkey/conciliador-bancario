@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conciliador bancario</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6ea;
+    --texto: #1d2733; --texto2: #5b6875;
+    --rojo: #C8102E; --verde: #1a7f4b; --ambar: #b26a00; --azul: #1f5fbf;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--texto); }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 28px; display:flex; align-items:center; gap:12px; }
+  header .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--rojo); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header p { font-size: 12.5px; color: var(--texto2); }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
+
+  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+  .zona { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; transition: .15s; }
+  .zona:hover, .zona.arrastrando { border-color: var(--rojo); background: #fff5f6; }
+  .zona h3 { font-size: 15px; margin-bottom: 4px; }
+  .zona p { font-size: 12.5px; color: var(--texto2); }
+  .grid-carga { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid-carga { grid-template-columns: 1fr; } }
+  ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: 13px; }
+  ul.archivos li { padding: 6px 10px; background: var(--bg); border-radius: 6px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
+  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; }
+
+  .acciones { display:flex; align-items:center; gap:18px; margin-top: 18px; flex-wrap: wrap; }
+  button.principal { background: var(--rojo); color:#fff; border:none; padding: 12px 26px; border-radius: 8px; font-size: 15px; font-weight:600; cursor:pointer; }
+  button.principal:disabled { background:#cbd2d9; cursor:not-allowed; }
+  label.check { font-size: 13.5px; color: var(--texto2); display:flex; gap:8px; align-items:center; cursor:pointer; }
+  #estado { font-size: 13.5px; color: var(--texto2); }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--rojo); border-radius:50%; animation: g .8s linear infinite; vertical-align: -2px; margin-right: 6px;}
+  @keyframes g { to { transform: rotate(360deg); } }
+
+  .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 22px 0 8px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi .valor { font-size: 24px; font-weight: 700; }
+  .kpi .etiqueta { font-size: 12px; color: var(--texto2); margin-top: 2px; }
+  .kpi .sub { font-size: 11.5px; color: var(--texto2); }
+  .kpi.verde .valor { color: var(--verde); } .kpi.ambar .valor { color: var(--ambar); }
+  .kpi.rojo .valor { color: var(--rojo); } .kpi.azul .valor { color: var(--azul); }
+
+  nav.tabs { display:flex; gap: 4px; margin: 22px 0 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  nav.tabs button { border:none; background:none; padding: 10px 14px; font-size: 13.5px; color: var(--texto2); cursor:pointer; border-bottom: 2px solid transparent; }
+  nav.tabs button.activa { color: var(--texto); font-weight: 600; border-bottom-color: var(--rojo); }
+  nav.tabs button .n { background: var(--bg); border-radius: 10px; padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+
+  .panel-tabla { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 12px 12px; padding: 14px; }
+  .buscador { width: 100%; max-width: 340px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+  .contenedor-tabla { overflow-x: auto; max-height: 520px; overflow-y: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { position: sticky; top: 0; background: #fafbfc; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--texto2); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid #f0f2f4; vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .metodo { font-size: 11px; background: #eef4ff; color: var(--azul); border-radius: 6px; padding: 1px 6px; white-space:nowrap; }
+  td .conf-alta { color: var(--verde); font-weight: 600; }
+  td .conf-media { color: var(--ambar); font-weight: 600; }
+  td .conf-baja { color: var(--texto2); }
+  .oculto { display: none; }
+
+  /* --- conciliación manual --- */
+  .panel-manual { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 12px 12px; padding: 14px; }
+  .dual { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .dual { grid-template-columns: 1fr; } }
+  .col-manual h4 { font-size: 13.5px; margin-bottom: 8px; }
+  .col-manual .filtros { display:flex; gap:8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .col-manual .filtros input[type=text] { flex:1; min-width: 120px; padding: 7px 10px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; }
+  .col-manual .filtros select { padding: 7px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; }
+  .col-manual .filtros label { font-size: 12px; color: var(--texto2); display:flex; align-items:center; gap:4px; }
+  .lista-items { border: 1px solid var(--border); border-radius: 8px; height: 380px; overflow-y: auto; }
+  .item { display:flex; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f0f2f4; font-size: 12.3px; cursor:pointer; align-items: flex-start; }
+  .item:hover { background: #fafbfc; }
+  .item.sel { background: #fff5f6; }
+  .item input { margin-top: 2px; }
+  .item .cuerpo { flex: 1; min-width: 0; }
+  .item .desc { overflow-wrap: anywhere; }
+  .item .meta { color: var(--texto2); font-size: 11px; }
+  .item .imp { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+  .item .imp.deb { color: var(--rojo); } .item .imp.cred { color: var(--verde); }
+  .item .badge { font-size: 10px; border-radius: 5px; padding: 0 5px; background: var(--bg); color: var(--texto2); }
+  .barra-sel { display:flex; align-items:center; gap: 16px; flex-wrap: wrap; background: #fafbfc; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 12px; font-size: 13.5px; }
+  .barra-sel .dif-ok { color: var(--verde); font-weight: 700; }
+  .barra-sel .dif-no { color: var(--ambar); font-weight: 700; }
+  .barra-sel input[type=text] { padding: 7px 10px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; width: 220px; }
+  .matches-manual { margin-top: 16px; }
+  .matches-manual h4 { font-size: 13.5px; margin-bottom: 8px; }
+  .match-manual { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; display:flex; gap: 10px; align-items:flex-start; }
+  .match-manual .detalle-m { flex: 1; }
+  .match-manual .fila-m { color: var(--texto2); }
+  .match-manual button { border: 1px solid var(--border); background:#fff; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor:pointer; color: var(--rojo); }
+  button.mini { border: none; background: var(--verde); color:#fff; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  button.mini:disabled { background: #cbd2d9; cursor: not-allowed; }
+  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px; }
+  .aviso.error { background: #fdecec; color: #8f1d1d; }
+  .aviso.info { background: #eef4ff; color: #1d3f7a; }
+  .export { margin-left:auto; }
+  button.secundario { background:#fff; color: var(--texto); border:1px solid var(--border); padding: 9px 18px; border-radius: 8px; font-size: 13.5px; cursor:pointer; }
+  button.secundario:hover { border-color: var(--texto2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">C</div>
+  <div>
+    <h1>Conciliador bancario</h1>
+    <p>Extractos Santander vs. libro mayor (cuentas E y O) — conciliación automática con IA</p>
+  </div>
+</header>
+
+<main>
+  <section class="tarjeta">
+    <div class="grid-carga">
+      <div class="zona" id="zonaPdf">
+        <h3>📄 Extractos bancarios (PDF)</h3>
+        <p>Arrastrá o hacé clic — uno o más resúmenes de cuenta Santander</p>
+        <input type="file" id="inputPdf" accept=".pdf" multiple hidden>
+        <ul class="archivos" id="listaPdf"></ul>
+      </div>
+      <div class="zona" id="zonaXls">
+        <h3>📊 Libro mayor (Excel)</h3>
+        <p>Arrastrá o hacé clic — el .xlsx con las hojas de la cuenta E y la cuenta O</p>
+        <input type="file" id="inputXls" accept=".xlsx,.xls" hidden>
+        <ul class="archivos" id="listaXls"></ul>
+      </div>
+    </div>
+    <div class="acciones">
+      <button class="principal" id="btnConciliar" disabled>Conciliar</button>
+      <label class="check"><input type="checkbox" id="chkIa" checked>
+        Usar IA (Claude) para sugerir matches en los casos difíciles</label>
+      <span id="estado"></span>
+    </div>
+    <div id="avisos"></div>
+  </section>
+
+  <section id="resultados" class="oculto">
+    <div class="kpis" id="kpis"></div>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="panel-tabla" id="panelTabla">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <input class="buscador" id="buscador" placeholder="Filtrar en la tabla…">
+        <span id="accionesTab"></span>
+        <button class="secundario export" id="btnExportar">⬇ Exportar a Excel</button>
+      </div>
+      <div class="contenedor-tabla"><table id="tabla"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="panel-manual oculto" id="panelManual">
+      <div class="dual">
+        <div class="col-manual">
+          <h4>🏦 Extracto sin conciliar</h4>
+          <div class="filtros">
+            <input type="text" id="filtroBanco" placeholder="Filtrar…">
+            <select id="ladoBanco">
+              <option value="">Débitos y créditos</option>
+              <option value="debito">Solo débitos</option>
+              <option value="credito">Solo créditos</option>
+            </select>
+            <label><input type="checkbox" id="chkGastos"> incluir gastos bancarios</label>
+          </div>
+          <div class="lista-items" id="listaBanco"></div>
+        </div>
+        <div class="col-manual">
+          <h4>📒 Mayor sin conciliar (E y O pendientes)</h4>
+          <div class="filtros">
+            <input type="text" id="filtroMayor" placeholder="Filtrar…">
+            <select id="ladoMayor">
+              <option value="">Debe y Haber</option>
+              <option value="debe">Solo Debe</option>
+              <option value="haber">Solo Haber</option>
+            </select>
+          </div>
+          <div class="lista-items" id="listaMayor"></div>
+        </div>
+      </div>
+      <div class="barra-sel">
+        <span>Banco: <b id="selBancoTxt">0 ítems — $ 0,00</b></span>
+        <span>Mayor: <b id="selMayorTxt">0 ítems — $ 0,00</b></span>
+        <span>Diferencia: <span id="selDifTxt" class="dif-ok">$ 0,00</span></span>
+        <input type="text" id="notaManual" placeholder="Nota (opcional)">
+        <button class="mini" id="btnManual" disabled>✔ Conciliar selección</button>
+        <button class="secundario" id="btnLimpiarSel" style="padding:5px 12px; font-size:12px;">Limpiar</button>
+      </div>
+      <div class="matches-manual">
+        <h4 id="tituloManual"></h4>
+        <div id="listaMatchesManual"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
+
+function configurarZona(zona, input, multiple, alCambiar) {
+  zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
+  zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
+  zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
+  zona.addEventListener('drop', e => {
+    e.preventDefault(); zona.classList.remove('arrastrando');
+    alCambiar([...e.dataTransfer.files]);
+  });
+  input.addEventListener('change', () => alCambiar([...input.files]));
+}
+
+configurarZona($('#zonaPdf'), $('#inputPdf'), true, files => {
+  archivosPdf = archivosPdf.concat(files.filter(f => f.name.toLowerCase().endsWith('.pdf')));
+  pintarListas();
+});
+configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
+  const f = files.find(f => /\.xlsx?$/i.test(f.name));
+  if (f) archivoXls = f;
+  pintarListas();
+});
+
+function pintarListas() {
+  $('#listaPdf').innerHTML = archivosPdf.map((f, i) =>
+    `<li><span>${f.name}</span><button onclick="quitarPdf(${i}, event)">✕</button></li>`).join('');
+  $('#listaXls').innerHTML = archivoXls ?
+    `<li><span>${archivoXls.name}</span><button onclick="quitarXls(event)">✕</button></li>` : '';
+  $('#btnConciliar').disabled = !(archivosPdf.length && archivoXls);
+}
+window.quitarPdf = (i, e) => { e.stopPropagation(); archivosPdf.splice(i, 1); pintarListas(); };
+window.quitarXls = e => { e.stopPropagation(); archivoXls = null; pintarListas(); };
+
+const fmt = n => n == null || n === '' ? '' :
+  Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+$('#btnConciliar').addEventListener('click', async () => {
+  const fd = new FormData();
+  archivosPdf.forEach(f => fd.append('extractos', f));
+  fd.append('mayor', archivoXls);
+  fd.append('usar_ia', $('#chkIa').checked ? 'si' : 'no');
+  $('#btnConciliar').disabled = true;
+  $('#estado').innerHTML = '<span class="spinner"></span>Procesando… (la IA puede tardar unos minutos)';
+  $('#avisos').innerHTML = '';
+  try {
+    const resp = await fetch('/api/conciliar', { method: 'POST', body: fd });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    mostrarResultados();
+    $('#estado').textContent = 'Listo ✔';
+  } catch (err) {
+    $('#avisos').innerHTML = `<div class="aviso error">⚠ ${esc(err.message)}</div>`;
+    $('#estado').textContent = '';
+  } finally {
+    $('#btnConciliar').disabled = false;
+  }
+});
+
+function mostrarResultados() {
+  const r = datos.resumen;
+  const primeraVez = $('#resultados').classList.contains('oculto');
+  $('#resultados').classList.remove('oculto');
+  $('#kpis').innerHTML = `
+    <div class="kpi azul"><div class="valor">${r.movimientos_banco}</div>
+      <div class="etiqueta">Movimientos del extracto</div></div>
+    <div class="kpi verde"><div class="valor">${r.conciliados_e}</div>
+      <div class="etiqueta">Conciliados con cuenta E</div></div>
+    <div class="kpi ambar"><div class="valor">${r.en_o_pendientes_confirmar}</div>
+      <div class="etiqueta">En O — falta confirmar en el sistema</div>
+      <div class="sub">${r.o_confirmados || 0} ya confirmados ✔</div></div>
+    <div class="kpi"><div class="valor">${r.gastos_bancarios.cantidad}</div>
+      <div class="etiqueta">Gastos/impuestos bancarios</div>
+      <div class="sub">$ ${fmt(r.gastos_bancarios.importe)}${r.nota_debito && r.nota_debito.periodos ?
+        ` — dif. vs ND mayor: $ ${fmt(r.nota_debito.diferencia_total)}` : ''}</div></div>
+    <div class="kpi rojo"><div class="valor">${r.banco_sin_contabilizar.cantidad}</div>
+      <div class="etiqueta">Banco sin contabilizar</div>
+      <div class="sub">$ ${fmt(r.banco_sin_contabilizar.importe)}</div></div>
+    <div class="kpi rojo"><div class="valor">${r.e_sin_banco.cantidad}</div>
+      <div class="etiqueta">Mayor E sin banco</div>
+      <div class="sub">$ ${fmt(r.e_sin_banco.importe)}</div></div>
+    <div class="kpi azul"><div class="valor">${r.conciliados_manual || 0}</div>
+      <div class="etiqueta">Conciliados manualmente</div></div>
+    <div class="kpi verde"><div class="valor">${r.porcentaje_conciliado}%</div>
+      <div class="etiqueta">Extracto conciliado</div></div>`;
+
+  let avisos = '';
+  if (r.reglas_aplicadas)
+    avisos += `<div class="aviso info">🧠 Se conciliaron automáticamente
+      <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
+      conciliaciones manuales anteriores (método "regla aprendida").</div>`;
+
+  const ia = datos.ia;
+  if (ia.estado === 'sin_credenciales')
+    avisos += `<div class="aviso info">ℹ La IA está activada pero no se encontró
+      ANTHROPIC_API_KEY en el entorno. Se muestra la conciliación determinística.</div>`;
+  else if (ia.estado.startsWith('error'))
+    avisos += `<div class="aviso error">⚠ IA: ${esc(ia.estado)}</div>`;
+  $('#avisos').innerHTML = avisos;
+
+  const tabs = [
+    ['conciliados_e', 'Conciliados (E)', datos.conciliados_e.length],
+    ['conciliados_o', 'Pendientes de confirmar (O)', datos.conciliados_o.length],
+    ['banco_sin_contabilizar', 'Banco sin contabilizar', datos.banco_sin_contabilizar.length],
+    ['gastos_bancarios', 'Gastos bancarios', datos.gastos_bancarios.length],
+    ['nota_debito', 'Gastos por mes (ND)', datos.nota_debito.length],
+    ['e_sin_banco', 'Mayor E sin banco', datos.e_sin_banco.length],
+    ['o_pendientes_sin_banco', 'O pendientes sin banco', datos.o_pendientes_sin_banco.length],
+    ['manual', '✋ Conciliar manualmente', (datos.conciliados_manual || []).length],
+  ];
+  if (ia.sugerencias.length) tabs.push(['ia', 'Sugerencias IA ✨', ia.sugerencias.length]);
+  $('#tabs').innerHTML = tabs.map(([id, nombre, n]) =>
+    `<button data-tab="${id}">${nombre} <span class="n">${n}</span></button>`).join('');
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.addEventListener('click', () => activarTab(b.dataset.tab)));
+  activarTab(tabs[0][0]);
+  if (primeraVez) $('#resultados').scrollIntoView({ behavior: 'smooth' });
+}
+
+function activarTab(id) {
+  tabActiva = id;
+  document.querySelectorAll('#tabs button').forEach(b =>
+    b.classList.toggle('activa', b.dataset.tab === id));
+  const manual = id === 'manual';
+  $('#panelManual').classList.toggle('oculto', !manual);
+  $('#panelTabla').classList.toggle('oculto', manual);
+  if (manual) { pintarManual(); return; }
+  $('#buscador').value = '';
+  $('#accionesTab').innerHTML = id === 'conciliados_o' && datos.conciliados_o.length ?
+    `<button class="mini" onclick="confirmarTodos(true)">✔ Confirmar todos</button>
+     <button class="secundario" style="padding:5px 12px;font-size:12px;"
+       onclick="confirmarTodos(false)">Desmarcar todos</button>` : '';
+  pintarTabla();
+}
+
+window.confirmarMatch = async (bancoId, valor) => {
+  try {
+    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ banco_id: bancoId, confirmado: valor }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    refrescarTrasManual('conciliados_o');
+  } catch (err) { alert('⚠ ' + err.message); }
+};
+
+window.confirmarTodos = async valor => {
+  try {
+    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ todos: valor }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    refrescarTrasManual('conciliados_o');
+  } catch (err) { alert('⚠ ' + err.message); }
+};
+
+function pintarTabla() {
+  const filtro = $('#buscador').value.toLowerCase();
+  const thead = $('#tabla thead'), tbody = $('#tabla tbody');
+  let cols = [], filas = [];
+
+  if (tabActiva === 'conciliados_e' || tabActiva === 'conciliados_o') {
+    cols = ['Fecha banco', 'Comprobante', 'Descripción banco', 'Débito', 'Crédito',
+            'Asiento', 'Fecha mayor', 'Referencia', 'Comentario', 'Método'];
+    if (tabActiva === 'conciliados_o') cols.push('Confirmado en FES');
+    filas = datos[tabActiva].map(m => {
+      const f = [
+        m.banco.fecha, m.banco.comprobante, m.banco.descripcion,
+        { num: m.banco.debito }, { num: m.banco.credito },
+        m.asiento.asiento, m.asiento.fecha, m.asiento.referencia, m.asiento.comentario,
+        { html: `<span class="metodo">${esc(m.metodo)}</span>` }];
+      if (tabActiva === 'conciliados_o')
+        f.push({ html: m.confirmado
+          ? `<button class="mini" style="background:var(--verde)"
+               onclick="confirmarMatch('${esc(m.banco.id)}', false)">✔ Confirmado</button>`
+          : `<button class="secundario" style="padding:4px 10px;font-size:12px;"
+               onclick="confirmarMatch('${esc(m.banco.id)}', true)">Confirmar</button>` });
+      return f;
+    });
+  } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios') {
+    cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo'];
+    filas = datos[tabActiva].map(b => [b.fecha, b.comprobante, b.descripcion, b.detalle,
+      { num: b.debito }, { num: b.credito }, b.archivo]);
+  } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
+    cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
+    filas = datos[tabActiva].map(a => [a.asiento, a.fecha, a.referencia, a.comentario,
+      { num: a.debe }, { num: a.haber }]);
+  } else if (tabActiva === 'nota_debito') {
+    cols = ['Período', 'Concepto', 'Cant.', 'Importe', 'Observación'];
+    filas = [];
+    datos.nota_debito.forEach(p => {
+      p.categorias.forEach(c => {
+        let obs = '';
+        if (c.iva_esperado != null)
+          obs = `IVA esperado $ ${fmt(c.iva_esperado)} (dif ${fmt(c.importe - c.iva_esperado)})`;
+        filas.push([p.periodo, c.categoria, c.cantidad, { num: c.importe }, obs]);
+      });
+      filas.push([p.periodo, { html: '<b>TOTAL SEGÚN EXTRACTO</b>' }, '',
+                  { num: p.total_extracto }, '']);
+      p.asientos_mayor.forEach(a => {
+        filas.push([p.periodo,
+          { html: `<span class="metodo">mayor ${esc(a.hoja)}</span> ${esc(a.referencia)} — ${esc(a.comentario)}` },
+          '', { num: (a.haber || -a.debe) }, 'asiento del mayor']);
+      });
+      if (p.total_mayor != null) {
+        filas.push([p.periodo, { html: '<b>TOTAL SEGÚN MAYOR</b>' }, '', { num: p.total_mayor }, '']);
+        filas.push([p.periodo, { html: '<b>DIFERENCIA</b>' }, '', { num: p.diferencia },
+                    'extracto − mayor']);
+      }
+      filas.push(['', '', '', '', '']);
+    });
+  } else if (tabActiva === 'ia') {
+    cols = ['Movimientos banco', 'Asientos mayor', 'Confianza', 'Motivo', 'Acción'];
+    filas = datos.ia.sugerencias.map((s, i) => [
+      s.ids_banco.join(', '), s.ids_mayor.join(', '),
+      { html: `<span class="conf-${s.confianza}">${s.confianza}</span>` }, s.motivo,
+      { html: s.aceptada ? '<span class="conf-alta">✔ aceptada</span>'
+             : `<button class="mini" onclick="aceptarSugerencia(${i})">Aceptar</button>` }]);
+  }
+
+  thead.innerHTML = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+  tbody.innerHTML = filas
+    .filter(f => !filtro || f.some(c =>
+      String(typeof c === 'object' ? (c.num ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
+    .map(f => '<tr>' + f.map(c => {
+      if (c && typeof c === 'object') {
+        if ('html' in c) return `<td>${c.html}</td>`;
+        return `<td class="num">${c.num ? fmt(c.num) : ''}</td>`;
+      }
+      return `<td>${esc(c)}</td>`;
+    }).join('') + '</tr>').join('');
+}
+
+$('#buscador').addEventListener('input', pintarTabla);
+$('#btnExportar').addEventListener('click', () => {
+  if (datos) window.location = `/api/exportar/${datos.job_id}`;
+});
+
+/* ================= Conciliación manual ================= */
+let selBanco = new Set(), selMayor = new Set();
+
+function itemsBanco() {
+  let items = datos.banco_sin_contabilizar.map(x => ({ ...x, _origen: 'sin contabilizar' }));
+  if ($('#chkGastos').checked)
+    items = items.concat(datos.gastos_bancarios.map(x => ({ ...x, _origen: 'gasto' })));
+  return items;
+}
+function itemsMayor() {
+  return datos.e_sin_banco.map(x => ({ ...x, _origen: 'E' }))
+    .concat(datos.o_pendientes_sin_banco.map(x => ({ ...x, _origen: 'O pend.' })));
+}
+
+function pintarManual() {
+  // si hay exactamente 1 seleccionado de un lado, el otro se ordena por
+  // cercanía de importe (ayuda a encontrar la contrapartida)
+  const unicoB = selBanco.size === 1 ?
+    itemsBanco().find(x => selBanco.has(x.id)) : null;
+  const unicoM = selMayor.size === 1 ?
+    itemsMayor().find(x => selMayor.has(x.id)) : null;
+
+  const fB = $('#filtroBanco').value.toLowerCase(), lB = $('#ladoBanco').value;
+  let listaB = itemsBanco().filter(x =>
+    (!lB || (lB === 'debito' ? x.debito : x.credito)) &&
+    (!fB || `${x.fecha} ${x.comprobante} ${x.descripcion} ${x.detalle}`.toLowerCase().includes(fB)));
+  if (unicoM) {
+    const objetivo = unicoM.debe || unicoM.haber;
+    listaB.sort((a, b) => Math.abs((a.debito || a.credito) - objetivo)
+                        - Math.abs((b.debito || b.credito) - objetivo));
+  }
+  const cabecera = (total, mostrados) =>
+    `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#fafbfc;border-bottom:1px solid var(--border);position:sticky;top:0;">
+      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}</div>`;
+
+  $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400)) +
+    (listaB.slice(0, 400).map(x => {
+    const imp = x.credito || x.debito;
+    const cls = x.credito ? 'cred' : 'deb';
+    const signo = x.credito ? '+' : '−';
+    return `<div class="item ${selBanco.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="banco">
+      <input type="checkbox" ${selBanco.has(x.id) ? 'checked' : ''}>
+      <div class="cuerpo"><div class="desc">${esc(x.descripcion)}</div>
+        <div class="meta">${esc(x.fecha ?? '')} · ${esc(x.comprobante ?? '')} ${esc(x.detalle || '')}</div></div>
+      <span class="badge">${esc(x._origen)}</span>
+      <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
+  }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:13px;">Sin ítems</div>');
+
+  const fM = $('#filtroMayor').value.toLowerCase(), lM = $('#ladoMayor').value;
+  let listaM = itemsMayor().filter(x =>
+    (!lM || (lM === 'debe' ? x.debe : x.haber)) &&
+    (!fM || `${x.fecha} ${x.asiento} ${x.referencia} ${x.comentario}`.toLowerCase().includes(fM)));
+  if (unicoB) {
+    const objetivo = unicoB.debito || unicoB.credito;
+    listaM.sort((a, b) => Math.abs((a.debe || a.haber) - objetivo)
+                        - Math.abs((b.debe || b.haber) - objetivo));
+  }
+  $('#listaMayor').innerHTML = listaM.slice(0, 400).map(x => {
+    const imp = x.debe || x.haber;
+    const cls = x.debe ? 'cred' : 'deb';
+    const signo = x.debe ? '+' : '−';
+    return `<div class="item ${selMayor.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="mayor">
+      <input type="checkbox" ${selMayor.has(x.id) ? 'checked' : ''}>
+      <div class="cuerpo"><div class="desc">${esc(x.referencia)} — ${esc(x.comentario)}</div>
+        <div class="meta">${esc(x.fecha ?? '')} · asiento ${esc(x.asiento)}</div></div>
+      <span class="badge">${esc(x._origen)}</span>
+      <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
+  }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:13px;">Sin ítems</div>';
+
+  actualizarBarra();
+  pintarMatchesManual();
+}
+
+function actualizarBarra() {
+  const b = itemsBanco().filter(x => selBanco.has(x.id));
+  const m = itemsMayor().filter(x => selMayor.has(x.id));
+  const netoB = b.reduce((s, x) => s + x.credito - x.debito, 0);
+  const netoM = m.reduce((s, x) => s + x.debe - x.haber, 0);
+  const dif = netoB - netoM;
+  $('#selBancoTxt').textContent = `${b.length} ítems — $ ${fmt(netoB)}`;
+  $('#selMayorTxt').textContent = `${m.length} ítems — $ ${fmt(netoM)}`;
+  const el = $('#selDifTxt');
+  el.textContent = `$ ${fmt(dif)}`;
+  el.className = Math.abs(dif) < 0.01 ? 'dif-ok' : 'dif-no';
+  $('#btnManual').disabled = !(b.length && m.length);
+}
+
+function pintarMatchesManual() {
+  const lista = datos.conciliados_manual || [];
+  $('#tituloManual').textContent = lista.length ?
+    `Conciliaciones manuales (${lista.length})` : 'Todavía no hay conciliaciones manuales';
+  $('#listaMatchesManual').innerHTML = lista.slice().reverse().map(m => `
+    <div class="match-manual">
+      <div class="detalle-m">
+        ${m.banco.map(b => `<div class="fila-m">🏦 ${esc(b.fecha ?? '')} ${esc(b.descripcion)}
+          — $ ${fmt(b.credito - b.debito)}</div>`).join('')}
+        ${m.mayor.map(a => `<div class="fila-m">📒 [${esc(a.hoja)}] ${esc(a.fecha ?? '')}
+          ${esc(a.referencia)} ${esc(a.comentario)} — $ ${fmt(a.debe - a.haber)}</div>`).join('')}
+        <div><b>Diferencia: $ ${fmt(m.diferencia)}</b>
+          ${m.fuente === 'ia' ? ' · <span class="conf-alta">sugerencia IA aceptada</span>' : ''}
+          ${m.regla_aprendida ? ' · <span class="metodo">🧠 regla aprendida para próximas conciliaciones</span>' : ''}
+          ${m.nota ? ` · ${esc(m.nota)}` : ''}</div>
+      </div>
+      <button onclick="deshacerManual('${m.match_id}')">↩ Deshacer</button>
+    </div>`).join('');
+}
+
+document.addEventListener('click', e => {
+  const item = e.target.closest('.item');
+  if (!item) return;
+  const set_ = item.dataset.lado === 'banco' ? selBanco : selMayor;
+  set_.has(item.dataset.id) ? set_.delete(item.dataset.id) : set_.add(item.dataset.id);
+  pintarManual();
+});
+
+['filtroBanco', 'filtroMayor'].forEach(id =>
+  $('#' + id).addEventListener('input', pintarManual));
+['ladoBanco', 'ladoMayor', 'chkGastos'].forEach(id =>
+  $('#' + id).addEventListener('change', pintarManual));
+$('#btnLimpiarSel').addEventListener('click', () => {
+  selBanco.clear(); selMayor.clear(); pintarManual();
+});
+
+async function aplicarManual(cuerpo, volverA) {
+  try {
+    const resp = await fetch(`/api/manual/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cuerpo),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    selBanco.clear(); selMayor.clear();
+    $('#notaManual').value = '';
+    refrescarTrasManual(volverA);
+  } catch (err) {
+    alert('⚠ ' + err.message);
+  }
+}
+
+function refrescarTrasManual(volverA) {
+  const tab = volverA || tabActiva;
+  mostrarResultados();
+  activarTab(tab);
+}
+
+$('#btnManual').addEventListener('click', () =>
+  aplicarManual({ ids_banco: [...selBanco], ids_mayor: [...selMayor],
+                  nota: $('#notaManual').value, fuente: 'manual' }, 'manual'));
+
+window.aceptarSugerencia = i => {
+  const s = datos.ia.sugerencias[i];
+  aplicarManual({ ids_banco: s.ids_banco, ids_mayor: s.ids_mayor,
+                  nota: s.motivo, fuente: 'ia', sugerencia_idx: i }, 'ia');
+};
+
+window.deshacerManual = async id => {
+  try {
+    const resp = await fetch(`/api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    refrescarTrasManual('manual');
+  } catch (err) {
+    alert('⚠ ' + err.message);
+  }
+};
+</script>
+</body>
+</html>

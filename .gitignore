@@ -1,0 +1,13 @@
+# Datos reales de conciliaciones (nunca subir al repo)
+datos/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Entorno
+.env
+*.xlsx
+*.pdf
