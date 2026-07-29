@@ -118,7 +118,7 @@ conciliador/
 | Categoría | Significado |
 |---|---|
 | Conciliados (E) | Movimiento del banco con asiento confirmado en la cuenta E |
-| Pendientes de confirmar (O) | Está en el banco y en la O: hay que confirmarlo en el FES para que pase a la E |
+| Pendientes de confirmar (O) | Está en el banco y en la O: hay que confirmarlo en el FBS para que pase a la E |
 | Banco sin contabilizar | Está en el extracto pero no aparece ni en E ni en O |
 | Gastos bancarios | Comisiones/impuestos del banco sin asiento individual |
 | Gastos por mes (ND) | Nota de débito mensual: gastos agrupados por categoría impositiva vs el asiento del mayor, con diferencia |
