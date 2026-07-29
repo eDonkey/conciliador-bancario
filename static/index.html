@@ -83,6 +83,7 @@
   .item .imp { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
   .item .imp.deb { color: var(--rojo); } .item .imp.cred { color: var(--verde); }
   .item .badge { font-size: 10px; border-radius: 5px; padding: 0 5px; background: var(--bg); color: var(--texto2); }
+  .item .badge.cierra { background: #e5f5ec; color: var(--verde); font-weight: 700; }
   .barra-sel { display:flex; align-items:center; gap: 16px; flex-wrap: wrap; background: #fafbfc; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 12px; font-size: 13.5px; }
   .barra-sel .dif-ok { color: var(--verde); font-weight: 700; }
   .barra-sel .dif-no { color: var(--ambar); font-weight: 700; }
@@ -161,6 +162,8 @@
               <option value="credito">Solo créditos</option>
             </select>
             <label><input type="checkbox" id="chkGastos"> incluir gastos bancarios</label>
+            <label title="Al seleccionar asientos del mayor, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
+              <input type="checkbox" id="smartBanco" checked> 🎯 según selección</label>
           </div>
           <div class="lista-items" id="listaBanco"></div>
         </div>
@@ -173,6 +176,8 @@
               <option value="debe">Solo Debe</option>
               <option value="haber">Solo Haber</option>
             </select>
+            <label title="Al seleccionar movimientos del banco, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
+              <input type="checkbox" id="smartMayor" checked> 🎯 según selección</label>
           </div>
           <div class="lista-items" id="listaMayor"></div>
         </div>
@@ -453,28 +458,57 @@ function itemsMayor() {
     .concat(datos.o_pendientes_sin_banco.map(x => ({ ...x, _origen: 'O pend.' })));
 }
 
+const DIAS_CERCA = 20 * 86400000;   // ventana de ±20 días alrededor de la selección
+
 function pintarManual() {
-  // si hay exactamente 1 seleccionado de un lado, el otro se ordena por
-  // cercanía de importe (ayuda a encontrar la contrapartida)
-  const unicoB = selBanco.size === 1 ?
-    itemsBanco().find(x => selBanco.has(x.id)) : null;
-  const unicoM = selMayor.size === 1 ?
-    itemsMayor().find(x => selMayor.has(x.id)) : null;
+  // Al seleccionar en una columna, la contraria se filtra por fechas cercanas
+  // y se ordena por el importe que CIERRA la diferencia de lo seleccionado
+  // (sirve también armando grupos N a M: siempre rankea "lo que falta").
+  const selItemsB = itemsBanco().filter(x => selBanco.has(x.id));
+  const selItemsM = itemsMayor().filter(x => selMayor.has(x.id));
+  const netoSelB = selItemsB.reduce((s, x) => s + x.credito - x.debito, 0);
+  const netoSelM = selItemsM.reduce((s, x) => s + x.debe - x.haber, 0);
+
+  const fechasDe = items => items.map(x => x.fecha).filter(Boolean)
+                                 .map(f => new Date(f).getTime());
+  const cercaDe = (x, fechas) => !fechas.length || !x.fecha ||
+    fechas.some(t => Math.abs(new Date(x.fecha).getTime() - t) <= DIAS_CERCA);
+
+  // banco se guía por lo seleccionado en el mayor, y viceversa
+  const smartB = $('#smartBanco').checked && selItemsM.length > 0;
+  const smartM = $('#smartMayor').checked && selItemsB.length > 0;
+  const fechasRefB = fechasDe(selItemsM), fechasRefM = fechasDe(selItemsB);
+  const restanteB = netoSelM - netoSelB;   // lo que le falta al lado banco
+  const restanteM = netoSelB - netoSelM;   // lo que le falta al lado mayor
+
+  // "cierra": el importe del ítem completa exactamente la diferencia de la
+  // selección — esos siempre se muestran aunque la fecha esté lejos
+  const cierraB = x => smartB && !selBanco.has(x.id) && Math.abs(restanteB) > 0.005 &&
+    Math.abs((x.credito - x.debito) - restanteB) < 0.01;
+  const cierraM = x => smartM && !selMayor.has(x.id) && Math.abs(restanteM) > 0.005 &&
+    Math.abs((x.debe - x.haber) - restanteM) < 0.01;
 
   const fB = $('#filtroBanco').value.toLowerCase(), lB = $('#ladoBanco').value;
   let listaB = itemsBanco().filter(x =>
     (!lB || (lB === 'debito' ? x.debito : x.credito)) &&
-    (!fB || `${x.fecha} ${x.comprobante} ${x.descripcion} ${x.detalle}`.toLowerCase().includes(fB)));
-  if (unicoM) {
-    const objetivo = unicoM.debe || unicoM.haber;
-    listaB.sort((a, b) => Math.abs((a.debito || a.credito) - objetivo)
-                        - Math.abs((b.debito || b.credito) - objetivo));
+    (!fB || `${x.fecha} ${x.comprobante} ${x.descripcion} ${x.detalle}`.toLowerCase().includes(fB)) &&
+    (!smartB || selBanco.has(x.id) || cierraB(x) || cercaDe(x, fechasRefB)));
+  if (smartB) {
+    const neto = x => x.credito - x.debito;
+    listaB.sort((a, b) => {
+      const sa = selBanco.has(a.id), sb = selBanco.has(b.id);
+      if (sa !== sb) return sa ? -1 : 1;   // seleccionados siempre arriba
+      const d = Math.abs(neto(a) - restanteB) - Math.abs(neto(b) - restanteB);
+      if (Math.abs(d) > 0.005) return d;
+      return Math.abs(new Date(a.fecha || 0) - (fechasRefB[0] || 0))
+           - Math.abs(new Date(b.fecha || 0) - (fechasRefB[0] || 0));
+    });
   }
-  const cabecera = (total, mostrados) =>
+  const cabecera = (total, mostrados, smart) =>
     `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#fafbfc;border-bottom:1px solid var(--border);position:sticky;top:0;">
-      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}</div>`;
+      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}${smart ? ' · 🎯 ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
 
-  $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400)) +
+  $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400), smartB) +
     (listaB.slice(0, 400).map(x => {
     const imp = x.credito || x.debito;
     const cls = x.credito ? 'cred' : 'deb';
@@ -483,6 +517,7 @@ function pintarManual() {
       <input type="checkbox" ${selBanco.has(x.id) ? 'checked' : ''}>
       <div class="cuerpo"><div class="desc">${esc(x.descripcion)}</div>
         <div class="meta">${esc(x.fecha ?? '')} · ${esc(x.comprobante ?? '')} ${esc(x.detalle || '')}</div></div>
+      ${cierraB(x) ? '<span class="badge cierra">= cierra</span>' : ''}
       <span class="badge">${esc(x._origen)}</span>
       <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
   }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:13px;">Sin ítems</div>');
@@ -490,13 +525,21 @@ function pintarManual() {
   const fM = $('#filtroMayor').value.toLowerCase(), lM = $('#ladoMayor').value;
   let listaM = itemsMayor().filter(x =>
     (!lM || (lM === 'debe' ? x.debe : x.haber)) &&
-    (!fM || `${x.fecha} ${x.asiento} ${x.referencia} ${x.comentario}`.toLowerCase().includes(fM)));
-  if (unicoB) {
-    const objetivo = unicoB.debito || unicoB.credito;
-    listaM.sort((a, b) => Math.abs((a.debe || a.haber) - objetivo)
-                        - Math.abs((b.debe || b.haber) - objetivo));
+    (!fM || `${x.fecha} ${x.asiento} ${x.referencia} ${x.comentario}`.toLowerCase().includes(fM)) &&
+    (!smartM || selMayor.has(x.id) || cierraM(x) || cercaDe(x, fechasRefM)));
+  if (smartM) {
+    const neto = x => x.debe - x.haber;
+    listaM.sort((a, b) => {
+      const sa = selMayor.has(a.id), sb = selMayor.has(b.id);
+      if (sa !== sb) return sa ? -1 : 1;   // seleccionados siempre arriba
+      const d = Math.abs(neto(a) - restanteM) - Math.abs(neto(b) - restanteM);
+      if (Math.abs(d) > 0.005) return d;
+      return Math.abs(new Date(a.fecha || 0) - (fechasRefM[0] || 0))
+           - Math.abs(new Date(b.fecha || 0) - (fechasRefM[0] || 0));
+    });
   }
-  $('#listaMayor').innerHTML = listaM.slice(0, 400).map(x => {
+  $('#listaMayor').innerHTML = cabecera(listaM.length, Math.min(listaM.length, 400), smartM) +
+    (listaM.slice(0, 400).map(x => {
     const imp = x.debe || x.haber;
     const cls = x.debe ? 'cred' : 'deb';
     const signo = x.debe ? '+' : '−';
@@ -504,9 +547,10 @@ function pintarManual() {
       <input type="checkbox" ${selMayor.has(x.id) ? 'checked' : ''}>
       <div class="cuerpo"><div class="desc">${esc(x.referencia)} — ${esc(x.comentario)}</div>
         <div class="meta">${esc(x.fecha ?? '')} · asiento ${esc(x.asiento)}</div></div>
+      ${cierraM(x) ? '<span class="badge cierra">= cierra</span>' : ''}
       <span class="badge">${esc(x._origen)}</span>
       <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
-  }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:13px;">Sin ítems</div>';
+  }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:13px;">Sin ítems</div>');
 
   actualizarBarra();
   pintarMatchesManual();
@@ -556,7 +600,7 @@ document.addEventListener('click', e => {
 
 ['filtroBanco', 'filtroMayor'].forEach(id =>
   $('#' + id).addEventListener('input', pintarManual));
-['ladoBanco', 'ladoMayor', 'chkGastos'].forEach(id =>
+['ladoBanco', 'ladoMayor', 'chkGastos', 'smartBanco', 'smartMayor'].forEach(id =>
   $('#' + id).addEventListener('change', pintarManual));
 $('#btnLimpiarSel').addEventListener('click', () => {
   selBanco.clear(); selMayor.clear(); pintarManual();
