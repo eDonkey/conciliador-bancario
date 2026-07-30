@@ -11,6 +11,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import uuid
 
 from fastapi import Body, FastAPI, File, Form, UploadFile
@@ -31,6 +33,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
 os.makedirs(DATOS_DIR, exist_ok=True)
 RESULTADOS = {}  # job_id -> resultado serializado
+PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
 
 LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
 LISTAS_MAYOR = ["e_sin_banco", "o_pendientes_sin_banco"]
@@ -102,60 +105,115 @@ async def api_conciliar(
     mayor: UploadFile = File(...),
     usar_ia: str = Form("no"),
 ):
-    # --- parsear extractos -------------------------------------------------
-    parseados = []
-    for up in extractos:
-        data = await up.read()
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(data)
-            ruta = tmp.name
-        try:
-            parseados.append(parse_extracto(ruta, up.filename))
-        finally:
-            os.unlink(ruta)
-    parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or ""))
-    movs = [m for e in parseados for m in e["movimientos"]]
-
-    # --- parsear mayor ------------------------------------------------------
+    """Recibe los archivos, arranca el procesamiento en segundo plano y
+    devuelve el job_id de inmediato. El avance se consulta en /api/progreso."""
+    archivos = [(up.filename, await up.read()) for up in extractos]
     data_mayor = await mayor.read()
-    mayor_parsed = parse_mayor(data_mayor)
-    if "E" not in mayor_parsed or "O" not in mayor_parsed:
-        return JSONResponse(status_code=422, content={
-            "error": "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
-                     f"(hojas encontradas: {mayor_parsed['hojas']})"})
-    asientos_e = mayor_parsed["E"]["asientos"]
-    asientos_o = mayor_parsed["O"]["asientos"]
 
-    # --- conciliar (con las reglas aprendidas de conciliaciones anteriores) --
-    reglas = reglas_mod.cargar()
-    resultado = conciliar(movs, asientos_e, asientos_o, reglas_aprendidas=reglas)
-
-    # --- IA opcional sobre los residuales ------------------------------------
-    ia_sugerencias, ia_estado = [], "desactivada"
-    if usar_ia == "si":
-        if not ai_assist.disponible():
-            ia_estado = "sin_credenciales"
-        else:
-            try:
-                residual_mayor = (resultado["e_sin_banco"]
-                                  + resultado["o_pendientes_sin_banco"])
-                # los gastos bancarios no van a la IA: ya están explicados por
-                # la nota de débito mensual
-                residual_banco = resultado["banco_sin_contabilizar"]
-                ia_sugerencias = ai_assist.sugerir_matches(residual_banco, residual_mayor)
-                ia_estado = "ok"
-            except Exception as exc:  # noqa: BLE001 — mostrar el error al usuario
-                ia_estado = f"error: {exc}"
-
-    salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
-    salida["conciliados_manual"] = []
-    salida["resumen"]["conciliados_manual"] = 0
-    salida["resumen"]["reglas_disponibles"] = len(reglas)
     job_id = uuid.uuid4().hex[:12]
-    salida["job_id"] = job_id
-    RESULTADOS[job_id] = salida
-    _guardar(job_id)
-    return salida
+    total_mb = (sum(len(b) for _, b in archivos) + len(data_mayor)) / 1_000_000
+    est_base = 10 + total_mb * 14   # parseo + cruce, calibrado con datos reales
+    PROGRESO[job_id] = {"estado": "procesando", "fase": "Preparando el análisis",
+                        "porcentaje": 2, "eta_seg": round(est_base),
+                        "inicio": time.time()}
+    threading.Thread(target=_procesar_job,
+                     args=(job_id, archivos, data_mayor, usar_ia, est_base),
+                     daemon=True).start()
+    return {"job_id": job_id, "estado": "procesando"}
+
+
+def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
+    inicio = PROGRESO[job_id]["inicio"]
+
+    def prog(fase, pct, eta=None):
+        if eta is None:
+            eta = max(3, est_base - (time.time() - inicio))
+        PROGRESO[job_id] = {"estado": "procesando", "fase": fase,
+                            "porcentaje": round(pct), "eta_seg": round(eta),
+                            "inicio": inicio}
+
+    try:
+        # --- parsear extractos -------------------------------------------
+        parseados = []
+        n = len(archivos)
+        for i, (nombre, data) in enumerate(archivos):
+            prog(f"Leyendo extracto {i + 1} de {n}: {nombre}", 5 + 30 * i / n)
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(data)
+                ruta = tmp.name
+            try:
+                parseados.append(parse_extracto(ruta, nombre))
+            finally:
+                os.unlink(ruta)
+        parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or ""))
+        movs = [m for e in parseados for m in e["movimientos"]]
+
+        # --- parsear mayor -----------------------------------------------
+        prog("Leyendo el libro mayor", 38)
+        mayor_parsed = parse_mayor(data_mayor)
+        if "E" not in mayor_parsed or "O" not in mayor_parsed:
+            PROGRESO[job_id] = {"estado": "error", "mensaje":
+                "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
+                f"(hojas encontradas: {mayor_parsed['hojas']})"}
+            return
+
+        # --- conciliar ----------------------------------------------------
+        prog("Cruzando el extracto contra el mayor", 46)
+        reglas = reglas_mod.cargar()
+        resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
+                              mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas)
+
+        # --- IA (real o simulada) sobre los residuales --------------------
+        ia_sugerencias, ia_estado = [], "desactivada"
+        if usar_ia in ("si", "simular"):
+            residual_mayor = (resultado["e_sin_banco"]
+                              + resultado["o_pendientes_sin_banco"])
+            # los gastos bancarios no van a la IA: ya los explica la ND mensual
+            residual_banco = resultado["banco_sin_contabilizar"]
+            seg_tanda = 4 if usar_ia == "simular" else 45
+
+            def prog_ia(tanda, total):
+                prog(f"Análisis con IA — tanda {tanda} de {total}",
+                     58 + 38 * (tanda - 1) / total,
+                     eta=(total - tanda + 1) * seg_tanda)
+
+            if usar_ia == "simular":
+                ia_sugerencias = ai_assist.simular_sugerencias(
+                    residual_banco, residual_mayor, progreso=prog_ia)
+                ia_estado = "simulada"
+            elif not ai_assist.disponible():
+                ia_estado = "sin_credenciales"
+            else:
+                try:
+                    ia_sugerencias = ai_assist.sugerir_matches(
+                        residual_banco, residual_mayor, progreso=prog_ia)
+                    ia_estado = "ok"
+                except Exception as exc:  # noqa: BLE001 — mostrar el error
+                    ia_estado = f"error: {exc}"
+
+        prog("Preparando los resultados", 96, eta=4)
+        salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
+        salida["conciliados_manual"] = []
+        salida["resumen"]["conciliados_manual"] = 0
+        salida["resumen"]["reglas_disponibles"] = len(reglas)
+        salida["job_id"] = job_id
+        RESULTADOS[job_id] = salida
+        _guardar(job_id)
+        PROGRESO[job_id] = {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
+                            "fase": "Conciliación terminada", "inicio": inicio}
+    except Exception as exc:  # noqa: BLE001 — que el error llegue a la UI
+        PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
+
+
+@app.get("/api/progreso/{job_id}")
+def api_progreso(job_id: str):
+    p = PROGRESO.get(job_id)
+    if p:
+        return p
+    if _obtener(job_id):
+        return {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
+                "fase": "Conciliación terminada"}
+    return JSONResponse(status_code=404, content={"error": "Job no encontrado"})
 
 
 @app.get("/api/resultado/{job_id}")

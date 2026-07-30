@@ -84,6 +84,32 @@
   .item .imp.deb { color: var(--rojo); } .item .imp.cred { color: var(--verde); }
   .item .badge { font-size: 10px; border-radius: 5px; padding: 0 5px; background: var(--bg); color: var(--texto2); }
   .item .badge.cierra { background: #e5f5ec; color: var(--verde); font-weight: 700; }
+
+  /* --- overlay de progreso --- */
+  #overlay { position: fixed; inset: 0; background: rgba(23,32,42,.55);
+    backdrop-filter: blur(3px); display: flex; align-items: center;
+    justify-content: center; z-index: 100; }
+  #overlay.oculto { display: none; }
+  .ov-card { background: var(--panel); border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.28); width: 430px;
+    max-width: calc(100vw - 40px); padding: 30px 32px 24px;
+    border-top: 4px solid var(--rojo); text-align: center; }
+  .ov-anillo { width: 46px; height: 46px; margin: 2px auto 18px;
+    border-radius: 50%; border: 4px solid #eceff2;
+    border-top-color: var(--rojo); animation: g 1s linear infinite; }
+  .ov-card h3 { font-size: 16.5px; margin-bottom: 6px; }
+  #ovFase { font-size: 13px; color: var(--texto2); min-height: 18px; }
+  .ov-barra { height: 6px; background: #eceff2; border-radius: 4px;
+    margin: 18px 0 8px; overflow: hidden; }
+  #ovBarra { height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--rojo), #e8556d);
+    transition: width .6s ease; }
+  .ov-meta { display: flex; justify-content: space-between;
+    font-size: 12.5px; color: var(--texto2); }
+  #ovPct { font-weight: 600; color: var(--texto); }
+  .ov-nota { font-size: 11.5px; color: var(--texto2); margin-top: 16px;
+    line-height: 1.5; border-top: 1px solid var(--border); padding-top: 12px; }
+  #ovError { color: #8f1d1d; font-size: 13px; margin-top: 10px; }
   .barra-sel { display:flex; align-items:center; gap: 16px; flex-wrap: wrap; background: #fafbfc; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 12px; font-size: 13.5px; }
   .barra-sel .dif-ok { color: var(--verde); font-weight: 700; }
   .barra-sel .dif-no { color: var(--ambar); font-weight: 700; }
@@ -198,6 +224,20 @@
   </section>
 </main>
 
+<div id="overlay" class="oculto">
+  <div class="ov-card">
+    <div class="ov-anillo" id="ovAnillo"></div>
+    <h3 id="ovTitulo">Procesando conciliación</h3>
+    <p id="ovFase">Preparando el análisis</p>
+    <div class="ov-barra"><div id="ovBarra"></div></div>
+    <div class="ov-meta"><span id="ovPct">0%</span><span id="ovEta"></span></div>
+    <p class="ov-nota">El procesamiento continúa en el servidor. Si esta pestaña se
+      cierra, el resultado se puede retomar al volver a entrar.</p>
+    <div id="ovError" class="oculto"></div>
+    <button id="ovCerrar" class="secundario oculto" style="margin-top:12px;">Cerrar</button>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
@@ -241,24 +281,118 @@ $('#btnConciliar').addEventListener('click', async () => {
   const fd = new FormData();
   archivosPdf.forEach(f => fd.append('extractos', f));
   fd.append('mayor', archivoXls);
-  fd.append('usar_ia', $('#chkIa').checked ? 'si' : 'no');
+  const simular = new URLSearchParams(location.search).has('simular');
+  fd.append('usar_ia', $('#chkIa').checked ? (simular ? 'simular' : 'si') : 'no');
   $('#btnConciliar').disabled = true;
-  $('#estado').innerHTML = '<span class="spinner"></span>Procesando… (la IA puede tardar unos minutos)';
+  $('#estado').textContent = '';
   $('#avisos').innerHTML = '';
+  mostrarOverlay();
+  $('#ovFase').textContent = 'Subiendo archivos';
   try {
     const resp = await fetch('/api/conciliar', { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    mostrarResultados();
-    $('#estado').textContent = 'Listo ✔';
+    localStorage.setItem('ultimo_job', json.job_id);
+    seguirProgreso(json.job_id);
   } catch (err) {
-    $('#avisos').innerHTML = `<div class="aviso error">⚠ ${esc(err.message)}</div>`;
-    $('#estado').textContent = '';
-  } finally {
-    $('#btnConciliar').disabled = false;
+    errorOverlay(err.message);
   }
 });
+
+/* ============ overlay de progreso ============ */
+let pollTimer = null, tickTimer = null, etaBase = null, etaTs = 0;
+
+function mostrarOverlay() {
+  $('#overlay').classList.remove('oculto');
+  $('#ovError').classList.add('oculto');
+  $('#ovCerrar').classList.add('oculto');
+  $('#ovAnillo').style.display = '';
+  $('#ovTitulo').textContent = 'Procesando conciliación';
+  $('#ovBarra').style.width = '0%';
+  $('#ovPct').textContent = '0%';
+  $('#ovEta').textContent = '';
+}
+function ocultarOverlay() {
+  $('#overlay').classList.add('oculto');
+  clearInterval(pollTimer); clearInterval(tickTimer);
+  pollTimer = tickTimer = null;
+}
+const fmtEta = s => {
+  if (s == null) return '';
+  if (s <= 4) return 'finalizando';
+  if (s < 60) return `~${Math.round(s)} s restantes`;
+  return `~${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')} s restantes`;
+};
+
+function seguirProgreso(jobId) {
+  mostrarOverlay();
+  const consultar = async () => {
+    try {
+      const r = await fetch(`/api/progreso/${jobId}`);
+      const p = await r.json();
+      if (!r.ok) throw new Error(p.error || 'Job no encontrado');
+      if (p.estado === 'error') { errorOverlay(p.mensaje); return; }
+      $('#ovFase').textContent = p.fase || '';
+      $('#ovBarra').style.width = (p.porcentaje || 0) + '%';
+      $('#ovPct').textContent = (p.porcentaje || 0) + '%';
+      etaBase = p.eta_seg; etaTs = Date.now();
+      if (p.estado === 'listo') {
+        clearInterval(pollTimer); clearInterval(tickTimer);
+        await cargarResultado(jobId);
+        ocultarOverlay();
+      }
+    } catch (e) { errorOverlay(e.message); }
+  };
+  consultar();
+  pollTimer = setInterval(consultar, 1500);
+  tickTimer = setInterval(() => {
+    if (etaBase == null) return;
+    const resta = etaBase - (Date.now() - etaTs) / 1000;
+    $('#ovEta').textContent = fmtEta(Math.max(0, resta));
+  }, 1000);
+}
+
+function errorOverlay(msg) {
+  clearInterval(pollTimer); clearInterval(tickTimer);
+  $('#overlay').classList.remove('oculto');
+  $('#ovAnillo').style.display = 'none';
+  $('#ovTitulo').textContent = 'No se pudo completar la conciliación';
+  $('#ovFase').textContent = '';
+  $('#ovEta').textContent = '';
+  $('#ovError').textContent = msg;
+  $('#ovError').classList.remove('oculto');
+  $('#ovCerrar').classList.remove('oculto');
+  $('#btnConciliar').disabled = false;
+}
+
+async function cargarResultado(jobId) {
+  const r = await fetch(`/api/resultado/${jobId}`);
+  const json = await r.json();
+  if (!r.ok) throw new Error(json.error || 'Error al cargar el resultado');
+  datos = json;
+  mostrarResultados();
+  $('#estado').textContent = 'Listo';
+  $('#btnConciliar').disabled = false;
+}
+
+// Al entrar: si quedó un trabajo en curso o terminado, ofrecer retomarlo
+(async function retomarUltimoJob() {
+  const j = localStorage.getItem('ultimo_job');
+  if (!j) return;
+  try {
+    const r = await fetch(`/api/progreso/${j}`);
+    if (!r.ok) return;
+    const p = await r.json();
+    if (p.estado === 'procesando') {
+      seguirProgreso(j);
+      $('#btnConciliar').disabled = true;
+    } else if (p.estado === 'listo' && !datos) {
+      $('#avisos').innerHTML = `<div class="aviso info">Hay una conciliación previa disponible.
+        <button class="secundario" style="padding:4px 12px;font-size:12px;margin-left:8px;"
+          onclick="cargarResultado('${j}')">Retomar resultado</button></div>`;
+    }
+  } catch {}
+})();
 
 function mostrarResultados() {
   const r = datos.resumen;
@@ -297,6 +431,10 @@ function mostrarResultados() {
   if (ia.estado === 'sin_credenciales')
     avisos += `<div class="aviso info">ℹ La IA está activada pero no se encontró
       ANTHROPIC_API_KEY en el entorno. Se muestra la conciliación determinística.</div>`;
+  else if (ia.estado === 'simulada')
+    avisos += `<div class="aviso info">Las sugerencias de IA de este resultado son
+      SIMULADAS (parámetro ?simular en la URL): se generaron sin usar la API,
+      solo para pruebas de la interfaz.</div>`;
   else if (ia.estado.startsWith('error'))
     avisos += `<div class="aviso error">⚠ IA: ${esc(ia.estado)}</div>`;
   $('#avisos').innerHTML = avisos;

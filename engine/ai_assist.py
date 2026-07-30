@@ -96,8 +96,51 @@ def _fila_mayor(a):
     }
 
 
-def sugerir_matches(movs_banco, asientos_mayor):
-    """Pide a Claude sugerencias de conciliación. Devuelve lista de dicts."""
+def cantidad_tandas(movs_banco) -> int:
+    return max(1, -(-len(movs_banco) // MAX_BANCO))  # ceil
+
+
+def simular_sugerencias(movs_banco, asientos_mayor, progreso=None):
+    """Modo simulación: genera sugerencias de prueba SIN llamar a la API.
+    Emula la latencia por tandas para poder probar la interfaz de progreso."""
+    import time
+
+    if not movs_banco or not asientos_mayor:
+        return []
+    tandas = min(3, cantidad_tandas(movs_banco))
+    for t in range(tandas):
+        if progreso:
+            progreso(t + 1, tandas)
+        time.sleep(4)
+
+    sugerencias = []
+    confianzas = ["alta", "media", "baja"]
+    usados = set()
+    for i, m in enumerate(movs_banco[:12]):
+        candidato = None
+        for a in asientos_mayor:
+            if a.id in usados:
+                continue
+            lado_ok = (m.lado == "credito") == (a.lado == "debe")
+            if lado_ok:
+                if candidato is None or abs(a.importe - m.importe) < abs(candidato.importe - m.importe):
+                    candidato = a
+        if candidato is None:
+            continue
+        usados.add(candidato.id)
+        sugerencias.append({
+            "ids_banco": [m.id],
+            "ids_mayor": [candidato.id],
+            "confianza": confianzas[i % 3],
+            "motivo": f"SIMULACIÓN (sin IA): par de prueba por cercanía de importe "
+                      f"(${m.importe:,.2f} vs ${candidato.importe:,.2f}).",
+        })
+    return sugerencias
+
+
+def sugerir_matches(movs_banco, asientos_mayor, progreso=None):
+    """Pide a Claude sugerencias de conciliación. Devuelve lista de dicts.
+    `progreso(tanda, total)` se invoca al comenzar cada tanda."""
     import anthropic
 
     if not movs_banco or not asientos_mayor:
@@ -106,8 +149,11 @@ def sugerir_matches(movs_banco, asientos_mayor):
     _cargar_clave()
     client = anthropic.Anthropic()
     sugerencias = []
+    total_tandas = cantidad_tandas(movs_banco)
 
     for i in range(0, len(movs_banco), MAX_BANCO):
+        if progreso:
+            progreso(i // MAX_BANCO + 1, total_tandas)
         lote_banco = movs_banco[i:i + MAX_BANCO]
         lote_mayor = asientos_mayor[:MAX_MAYOR]
         prompt = (

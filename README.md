@@ -85,6 +85,17 @@ mayor, y apretá **Conciliar**. Al final podés **exportar todo a Excel**.
 4. (Opcional) Montar un **Volume** en `/app/datos` para que las conciliaciones
    guardadas y las reglas aprendidas sobrevivan a los redeploys.
 
+### Progreso y modo simulación
+
+El procesamiento corre en segundo plano en el servidor: la interfaz muestra un
+overlay con la fase actual, porcentaje y tiempo estimado restante
+(`GET /api/progreso/<job>`). Si se cierra la pestaña, el proceso sigue y al
+volver a entrar se ofrece retomar el resultado.
+
+Para probar la interfaz sin gastar API, entrá con **`?simular`** en la URL
+(p.ej. `http://localhost:8765/?simular`): con la casilla de IA activada, genera
+sugerencias de prueba marcadas como SIMULACIÓN, emulando la latencia por tandas.
+
 ### IA (opcional)
 
 Para habilitar las sugerencias con IA definí la variable de entorno
