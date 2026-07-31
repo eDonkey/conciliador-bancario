@@ -26,6 +26,7 @@ from parsers.mayor_xlsx import parse_mayor
 from engine.matcher import conciliar
 from engine import ai_assist
 from engine import reglas as reglas_mod
+from engine import equivalencias as eq_mod
 
 app = FastAPI(title="Conciliador bancario")
 
@@ -160,8 +161,10 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
         # --- conciliar ----------------------------------------------------
         prog("Cruzando el extracto contra el mayor", 46)
         reglas = reglas_mod.cargar()
+        equivalencias = eq_mod.cargar()
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
-                              mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas)
+                              mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
+                              equivalencias=equivalencias)
 
         # --- IA (real o simulada) sobre los residuales --------------------
         ia_sugerencias, ia_estado = [], "desactivada"
@@ -179,14 +182,16 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
 
             if usar_ia == "simular":
                 ia_sugerencias = ai_assist.simular_sugerencias(
-                    residual_banco, residual_mayor, progreso=prog_ia)
+                    residual_banco, residual_mayor, progreso=prog_ia,
+                    glosario=equivalencias)
                 ia_estado = "simulada"
             elif not ai_assist.disponible():
                 ia_estado = "sin_credenciales"
             else:
                 try:
                     ia_sugerencias = ai_assist.sugerir_matches(
-                        residual_banco, residual_mayor, progreso=prog_ia)
+                        residual_banco, residual_mayor, progreso=prog_ia,
+                        glosario=equivalencias)
                     ia_estado = "ok"
                 except Exception as exc:  # noqa: BLE001 — mostrar el error
                     ia_estado = f"error: {exc}"
@@ -203,6 +208,25 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
                             "fase": "Conciliación terminada", "inicio": inicio}
     except Exception as exc:  # noqa: BLE001 — que el error llegue a la UI
         PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
+
+
+@app.get("/api/equivalencias")
+def api_equivalencias():
+    """Diccionario de equivalencias de términos extracto ↔ sistema."""
+    return {"equivalencias": eq_mod.cargar()}
+
+
+@app.post("/api/equivalencias")
+def api_equivalencias_agregar(cuerpo: dict = Body(...)):
+    pares, error = eq_mod.agregar(cuerpo.get("extracto"), cuerpo.get("sistema"))
+    if error:
+        return JSONResponse(status_code=422, content={"error": error})
+    return {"equivalencias": pares}
+
+
+@app.delete("/api/equivalencias/{eq_id}")
+def api_equivalencias_eliminar(eq_id: str):
+    return {"equivalencias": eq_mod.eliminar(eq_id)}
 
 
 @app.get("/api/progreso/{job_id}")

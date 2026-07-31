@@ -111,8 +111,35 @@
     line-height: 1.5; border-top: 1px solid var(--border); padding-top: 12px; }
   #ovError { color: #8f1d1d; font-size: 13px; margin-top: 10px; }
 
+  /* --- diccionario de equivalencias --- */
+  .zona-derecha { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+  #modalEquiv { position: fixed; inset: 0; background: rgba(23,32,42,.55);
+    backdrop-filter: blur(3px); display: flex; align-items: center;
+    justify-content: center; z-index: 90; }
+  #modalEquiv.oculto { display: none; }
+  .eq-card { background: var(--panel); border-radius: 14px;
+    box-shadow: 0 24px 60px rgba(0,0,0,.28); width: 560px;
+    max-width: calc(100vw - 40px); padding: 26px 28px 22px;
+    border-top: 4px solid var(--azul); }
+  .eq-card h3 { font-size: 16.5px; margin-bottom: 4px; }
+  .eq-card .exp { font-size: 12.5px; color: var(--texto2); line-height: 1.5; }
+  .eq-lista { margin: 16px 0 14px; max-height: 260px; overflow-y: auto; }
+  .eq-fila { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px;
+    font-size: 13px; }
+  .eq-fila small { color: var(--texto2); font-size: 10.5px; display: block; }
+  .eq-fila .lado-eq { flex: 1; }
+  .eq-fila .flecha { color: var(--azul); font-weight: 700; }
+  .eq-fila .quitar { border: none; background: none; color: var(--rojo);
+    cursor: pointer; font-weight: 700; font-size: 14px; }
+  .eq-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    border-top: 1px solid var(--border); padding-top: 14px; }
+  .eq-add input { flex: 1; min-width: 140px; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: 7px; font-size: 13px; }
+  #eqError { color: #8f1d1d; font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+
   /* --- indicador de modo simulación --- */
-  .badge-sim { margin-left: auto; border: 1.5px solid var(--ambar);
+  .badge-sim { border: 1.5px solid var(--ambar);
     color: var(--ambar); background: #fdf6ec; border-radius: 8px;
     padding: 6px 14px; font-size: 12px; font-weight: 700;
     letter-spacing: .6px; white-space: nowrap; }
@@ -149,8 +176,11 @@
     <h1>Conciliador bancario</h1>
     <p>Extractos Santander vs. libro mayor (cuentas E y O) — conciliación automática con IA</p>
   </div>
-  <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
-    <small>la IA no consume API — sugerencias de prueba</small></span>
+  <div class="zona-derecha">
+    <button class="secundario" id="btnEquiv">📖 Equivalencias</button>
+    <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
+      <small>la IA no consume API — sugerencias de prueba</small></span>
+  </div>
 </header>
 
 <main>
@@ -237,6 +267,27 @@
     </div>
   </section>
 </main>
+
+<div id="modalEquiv" class="oculto">
+  <div class="eq-card">
+    <h3>📖 Diccionario de equivalencias</h3>
+    <p class="exp">El banco y el sistema contable a veces llaman distinto al mismo
+      concepto: <b>"HABERES"</b> en el extracto son los <b>"SUELDOS"</b> del sistema.
+      Cargá acá esas equivalencias y el conciliador las usa para cruzar
+      automáticamente (y la IA las recibe como glosario).</p>
+    <div class="eq-lista" id="eqLista"></div>
+    <div class="eq-add">
+      <input type="text" id="eqExtracto" placeholder="Término en el extracto (ej: haberes)">
+      <span class="flecha" style="color:var(--azul);font-weight:700;">≈</span>
+      <input type="text" id="eqSistema" placeholder="Término en el sistema (ej: sueldos)">
+      <button class="mini" id="eqAgregar">＋ Agregar</button>
+    </div>
+    <div id="eqError"></div>
+    <div style="text-align:right; margin-top:6px;">
+      <button class="secundario" id="eqCerrar">Cerrar</button>
+    </div>
+  </div>
+</div>
 
 <div id="overlay" class="oculto">
   <div class="ov-card">
@@ -447,6 +498,11 @@ function mostrarResultados() {
     avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
       conciliaciones manuales anteriores (método "regla aprendida").</div>`;
+  if (r.equivalencias_aplicadas)
+    avisos += `<div class="aviso info">📖 Se conciliaron automáticamente
+      <b>${r.equivalencias_aplicadas}</b> movimientos usando el diccionario de
+      equivalencias (p. ej. "haberes" en el extracto = "sueldos" en el sistema).
+      Podés ver el método "equivalencia" en las pestañas de conciliados.</div>`;
 
   const ia = datos.ia;
   if (ia.estado === 'sin_credenciales')
@@ -796,6 +852,70 @@ window.aceptarSugerencia = i => {
   const s = datos.ia.sugerencias[i];
   aplicarManual({ ids_banco: s.ids_banco, ids_mayor: s.ids_mayor,
                   nota: s.motivo, fuente: 'ia', sugerencia_idx: i }, 'ia');
+};
+
+/* ============ diccionario de equivalencias ============ */
+let equivalencias = [];
+
+function pintarEquiv() {
+  $('#btnEquiv').textContent = `📖 Equivalencias (${equivalencias.length})`;
+  $('#eqLista').innerHTML = equivalencias.map(p => `
+    <div class="eq-fila">
+      <span class="lado-eq"><b>${esc(p.extracto)}</b><small>en el extracto</small></span>
+      <span class="flecha">≈</span>
+      <span class="lado-eq"><b>${esc(p.sistema)}</b><small>en el sistema</small></span>
+      <button class="quitar" title="Eliminar" onclick="eliminarEquiv('${esc(p.id)}')">✕</button>
+    </div>`).join('') ||
+    '<p style="color:var(--texto2);font-size:13px;">Todavía no hay equivalencias cargadas.</p>';
+}
+
+async function cargarEquiv() {
+  try {
+    const r = await fetch('/api/equivalencias');
+    equivalencias = (await r.json()).equivalencias || [];
+    pintarEquiv();
+  } catch {}
+}
+cargarEquiv();
+
+$('#btnEquiv').addEventListener('click', () => {
+  $('#eqError').textContent = '';
+  $('#modalEquiv').classList.remove('oculto');
+  $('#eqExtracto').focus();
+});
+$('#eqCerrar').addEventListener('click', () => $('#modalEquiv').classList.add('oculto'));
+$('#modalEquiv').addEventListener('click', e => {
+  if (e.target.id === 'modalEquiv') $('#modalEquiv').classList.add('oculto');
+});
+
+async function agregarEquiv() {
+  const extracto = $('#eqExtracto').value.trim(), sistema = $('#eqSistema').value.trim();
+  $('#eqError').textContent = '';
+  try {
+    const resp = await fetch('/api/equivalencias', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ extracto, sistema }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    equivalencias = json.equivalencias;
+    $('#eqExtracto').value = ''; $('#eqSistema').value = '';
+    $('#eqExtracto').focus();
+    pintarEquiv();
+  } catch (err) { $('#eqError').textContent = '⚠ ' + err.message; }
+}
+$('#eqAgregar').addEventListener('click', agregarEquiv);
+['eqExtracto', 'eqSistema'].forEach(id =>
+  $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') agregarEquiv(); }));
+
+window.eliminarEquiv = async id => {
+  try {
+    const resp = await fetch(`/api/equivalencias/${id}`, { method: 'DELETE' });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    equivalencias = json.equivalencias;
+    pintarEquiv();
+  } catch (err) { $('#eqError').textContent = '⚠ ' + err.message; }
 };
 
 window.deshacerManual = async id => {

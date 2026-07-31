@@ -267,9 +267,11 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
     return matches, banco_libres, asiento_libres
 
 
-def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None):
+def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
+              equivalencias=None):
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
     from engine import reglas as reglas_mod
+    from engine import equivalencias as eq_mod
 
     pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
 
@@ -288,6 +290,17 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None):
         e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
         o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
         for p in pares_regla:
+            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+
+    # 2c) diccionario de equivalencias de vocabulario (p. ej. haberes ≈ sueldos)
+    pares_eq, usados_b, usados_a = eq_mod.aplicar(
+        banco_sin_nada, e_sin_banco + o_pend_sin_banco, equivalencias or [])
+    equivalencias_aplicadas = len({p["banco"].id for p in pares_eq})
+    if pares_eq:
+        banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
+        e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
+        o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
+        for p in pares_eq:
             (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
 
     # 3) clasificar restos del banco
@@ -323,6 +336,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None):
             "conciliados_e": len(matches_e),
             "en_o_pendientes_confirmar": len(matches_o),
             "reglas_aplicadas": reglas_aplicadas,
+            "equivalencias_aplicadas": equivalencias_aplicadas,
             "gastos_bancarios": {"cantidad": len(gastos_bancarios), "importe": tot(gastos_bancarios)},
             "banco_sin_contabilizar": {"cantidad": len(sin_contabilizar), "importe": tot(sin_contabilizar)},
             "e_sin_banco": {"cantidad": len(e_sin_banco), "importe": tot_a(e_sin_banco)},

@@ -100,7 +100,18 @@ def cantidad_tandas(movs_banco) -> int:
     return max(1, -(-len(movs_banco) // MAX_BANCO))  # ceil
 
 
-def simular_sugerencias(movs_banco, asientos_mayor, progreso=None):
+def _bloque_glosario(glosario) -> str:
+    """Texto del diccionario de equivalencias para incluir en el prompt."""
+    if not glosario:
+        return ""
+    lineas = "\n".join(f'- "{p["extracto"]}" (extracto) ≈ "{p["sistema"]}" (sistema)'
+                       for p in glosario)
+    return ("\n\nGLOSARIO DE EQUIVALENCIAS definido por el cliente — el mismo "
+            "concepto tiene distinto nombre en el extracto y en el sistema "
+            "contable; usalo para vincular movimientos:\n" + lineas)
+
+
+def simular_sugerencias(movs_banco, asientos_mayor, progreso=None, glosario=None):
     """Modo simulación: genera sugerencias de prueba SIN llamar a la API.
     Emula la latencia por tandas para poder probar la interfaz de progreso."""
     import time
@@ -138,7 +149,7 @@ def simular_sugerencias(movs_banco, asientos_mayor, progreso=None):
     return sugerencias
 
 
-def sugerir_matches(movs_banco, asientos_mayor, progreso=None):
+def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
     """Pide a Claude sugerencias de conciliación. Devuelve lista de dicts.
     `progreso(tanda, total)` se invoca al comenzar cada tanda."""
     import anthropic
@@ -161,6 +172,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None):
             + json.dumps([_fila_banco(m) for m in lote_banco], ensure_ascii=False)
             + "\n\nASIENTOS DEL MAYOR SIN CONTRAPARTIDA:\n"
             + json.dumps([_fila_mayor(a) for a in lote_mayor], ensure_ascii=False)
+            + _bloque_glosario(glosario)
         )
         try:
             # Con fallback del lado del servidor: si un clasificador de seguridad
