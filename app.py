@@ -218,6 +218,29 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
         PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
 
 
+@app.get("/api/diagnostico")
+def api_diagnostico():
+    """Qué ve el servidor del entorno de IA, sin exponer secretos. Sirve para
+    verificar que la clave llegó al proceso (p. ej. tras un deploy)."""
+    clave = os.environ.get("ANTHROPIC_API_KEY") or ""
+    token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+    return {
+        "ia_disponible": ai_assist.disponible(),
+        "ANTHROPIC_API_KEY": {
+            "presente": bool(clave.strip()),
+            "longitud": len(clave),
+            "formato_esperado": clave.strip().startswith("sk-ant-"),
+            "espacios_al_borde": clave != clave.strip(),
+            "entre_comillas": clave.strip()[:1] in ('"', "'") if clave.strip() else False,
+        },
+        "ANTHROPIC_AUTH_TOKEN_presente": bool(token.strip()),
+        "archivo_clave_local": os.path.exists(ai_assist.RUTA_CLAVE),
+        "variables_con_nombre_parecido": sorted(
+            k for k in os.environ
+            if "ANTHROPIC" in k.upper() or "API_KEY" in k.upper()),
+    }
+
+
 @app.get("/api/equivalencias")
 def api_equivalencias():
     """Diccionario de equivalencias de términos extracto ↔ sistema."""

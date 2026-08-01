@@ -525,8 +525,12 @@ function mostrarResultados() {
 
   const ia = datos.ia;
   if (ia.estado === 'sin_credenciales')
-    avisos += `<div class="aviso info">ℹ La IA está activada pero no se encontró
-      ANTHROPIC_API_KEY en el entorno. Se muestra la conciliación determinística.</div>`;
+    avisos += `<div class="aviso info">ℹ La IA está activada pero el servidor no ve
+      ANTHROPIC_API_KEY en su entorno. Se muestra la conciliación determinística.<br>
+      Si la clave está cargada en Railway: verificá que el cambio de variables se haya
+      <b>deployado</b> (Railway lo deja pendiente hasta apretar "Deploy"), que esté en el
+      service correcto, y luego revisá qué ve el servidor en
+      <a href="/api/diagnostico" target="_blank">/api/diagnostico</a>.</div>`;
   else if (ia.estado === 'simulada')
     avisos += `<div class="aviso info">Las sugerencias de IA de este resultado son
       SIMULADAS (parámetro ?simular en la URL): se generaron sin usar la API,
