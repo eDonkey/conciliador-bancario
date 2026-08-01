@@ -235,12 +235,10 @@ def api_diagnostico():
         },
         "ANTHROPIC_AUTH_TOKEN_presente": bool(token.strip()),
         "archivo_clave_local": os.path.exists(ai_assist.RUTA_CLAVE),
+        # repr() revela caracteres invisibles en el nombre (espacios al final)
         "variables_con_nombre_parecido": sorted(
-            k for k in os.environ
+            repr(k) for k in os.environ
             if "ANTHROPIC" in k.upper() or "API_KEY" in k.upper()),
-        # nombres (nunca valores) de todo el entorno del proceso, con repr()
-        # para revelar caracteres invisibles pegados por accidente
-        "todas_las_variables": sorted(repr(k) for k in os.environ),
     }
 
 
