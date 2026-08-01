@@ -238,6 +238,9 @@ def api_diagnostico():
         "variables_con_nombre_parecido": sorted(
             k for k in os.environ
             if "ANTHROPIC" in k.upper() or "API_KEY" in k.upper()),
+        # nombres (nunca valores) de todo el entorno del proceso, con repr()
+        # para revelar caracteres invisibles pegados por accidente
+        "todas_las_variables": sorted(repr(k) for k in os.environ),
     }
 
 
