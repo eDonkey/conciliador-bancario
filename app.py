@@ -552,7 +552,9 @@ def _generar_excel(datos):
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(BASE_DIR, "static", "index.html"))
+    # sin caché: tras cada deploy el navegador debe traer la interfaz nueva
+    return FileResponse(os.path.join(BASE_DIR, "static", "index.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
