@@ -66,9 +66,14 @@ def _recalcular_resumen(datos):
                     "importe": round(sum(imp_m(x) for x in datos[lista]), 2)}
     r["conciliados_manual"] = len(datos.get("conciliados_manual", []))
     movs_manual = sum(len(m["banco"]) for m in datos.get("conciliados_manual", []))
+    conciliados = r["conciliados_e"] + r["en_o_pendientes_confirmar"] + movs_manual
     r["porcentaje_conciliado"] = round(
-        100.0 * (r["conciliados_e"] + r["en_o_pendientes_confirmar"] + movs_manual)
-        / max(1, r["movimientos_banco"]), 1)
+        100.0 * conciliados / max(1, r["movimientos_banco"]), 1)
+    gastos_expl = sum(p.get("movimientos", 0) for p in datos.get("nota_debito", [])
+                      if p.get("total_mayor") is not None)
+    r["gastos_explicados"] = gastos_expl
+    r["porcentaje_explicado"] = round(
+        min(100.0, 100.0 * (conciliados + gastos_expl) / max(1, r["movimientos_banco"])), 1)
 
 
 def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
@@ -416,7 +421,9 @@ def _generar_excel(datos):
          f'{r["e_sin_banco"]["cantidad"]}  ($ {r["e_sin_banco"]["importe"]:,.2f})'),
         ("Pendientes en O sin movimiento en el banco",
          f'{r["o_pendientes_sin_banco"]["cantidad"]}  ($ {r["o_pendientes_sin_banco"]["importe"]:,.2f})'),
-        ("% del extracto conciliado", f'{r["porcentaje_conciliado"]}%'),
+        ("% del extracto conciliado asiento por asiento", f'{r["porcentaje_conciliado"]}%'),
+        ("% del extracto explicado (incluye gastos justificados por ND mensual)",
+         f'{r.get("porcentaje_explicado", r["porcentaje_conciliado"])}%'),
     ]
     ws.append(["Concepto", "Valor"])
     for c in ws[1]:

@@ -129,6 +129,7 @@ def resumen_nota_debito(gastos, asientos_libres):
         periodos.append({
             "periodo": etiqueta,
             "archivo": archivo,
+            "movimientos": len(items),
             "categorias": filas_cat,
             "conceptos": sorted(
                 [{"descripcion": k, **v, "importe": round(v["importe"], 2)}
@@ -141,6 +142,70 @@ def resumen_nota_debito(gastos, asientos_libres):
                           if (asientos_periodo or asientos_nc) else None,
         })
     return periodos, usados
+
+
+# --- Tolerancia de importe -------------------------------------------------
+# Diferencias chicas entre banco y mayor (comisión descontada en la misma
+# transferencia, redondeos de liquidación). Solo se acepta el par si el
+# candidato es ÚNICO en ambos sentidos dentro de la tolerancia.
+TOL_ABS = 100.0     # piso: ±$100
+TOL_PCT = 0.001     # 0,1% del importe
+TOL_TOPE = 2000.0   # techo absoluto
+TOL_DIAS = 45
+
+
+def _tolerancia(importe: float) -> float:
+    return min(max(TOL_ABS, importe * TOL_PCT), TOL_TOPE)
+
+
+def match_tolerancia(banco_libres, asiento_libres):
+    """Matches 1 a 1 con diferencia chica de importe. Devuelve
+    (pares, ids_banco_usados, ids_mayor_usados)."""
+    import bisect
+
+    por_lado_a = {"credito": [], "debito": []}
+    for a in asiento_libres:
+        lado_banco = 'credito' if a.lado == 'debe' else 'debito'
+        por_lado_a[lado_banco].append(a)
+    por_lado_b = {"credito": [], "debito": []}
+    for m in banco_libres:
+        por_lado_b[m.lado].append(m)
+    for d in (por_lado_a, por_lado_b):
+        for lista in d.values():
+            lista.sort(key=lambda x: x.importe)
+    imps_a = {k: [a.importe for a in v] for k, v in por_lado_a.items()}
+    imps_b = {k: [m.importe for m in v] for k, v in por_lado_b.items()}
+
+    def cerca(f1, f2):
+        return f1 and f2 and abs((f1 - f2).days) <= TOL_DIAS
+
+    def candidatos(importe, fecha, lista, imps):
+        tol = _tolerancia(importe)
+        out = []
+        i = bisect.bisect_left(imps, importe - tol)
+        while i < len(lista) and imps[i] <= importe + tol:
+            x = lista[i]
+            if abs(x.importe - importe) > 0.005 and cerca(fecha, x.fecha):
+                out.append(x)
+            i += 1
+        return out
+
+    pares, usados_b, usados_a = [], set(), set()
+    for m in banco_libres:
+        cands = candidatos(m.importe, m.fecha, por_lado_a[m.lado], imps_a[m.lado])
+        if len(cands) != 1 or cands[0].id in usados_a:
+            continue
+        a = cands[0]
+        # el asiento también debe tener a este movimiento como único candidato
+        reversos = candidatos(a.importe, a.fecha, por_lado_b[m.lado], imps_b[m.lado])
+        if len(reversos) != 1 or reversos[0].id != m.id:
+            continue
+        dif = round(m.importe - a.importe, 2)
+        pares.append({"banco": m, "asiento": a,
+                      "metodo": f"importe aproximado (dif $ {dif:+,.2f})"})
+        usados_b.add(m.id)
+        usados_a.add(a.id)
+    return pares, usados_b, usados_a
 
 
 def _numeros(texto: str) -> set[str]:
@@ -303,6 +368,17 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         for p in pares_eq:
             (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
 
+    # 2d) tolerancia estricta de importe (comisiones/redondeos), sin ambigüedad
+    pares_tol, usados_b, usados_a = match_tolerancia(
+        banco_sin_nada, e_sin_banco + o_pend_sin_banco)
+    aproximados = len(pares_tol)
+    if pares_tol:
+        banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
+        e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
+        o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
+        for p in pares_tol:
+            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+
     # 3) clasificar restos del banco
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
@@ -321,6 +397,13 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     tot = lambda ms: round(sum(x.importe for x in ms), 2)
     tot_a = lambda as_: round(sum(x.importe for x in as_), 2)
 
+    # % explicado: además de los conciliados, los gastos bancarios cuyo período
+    # cruzó contra una nota de débito del mayor están justificados aunque no
+    # tengan asiento 1 a 1.
+    gastos_explicados = sum(p["movimientos"] for p in nota_debito
+                            if p["total_mayor"] is not None)
+    explicados = len(matches_e) + len(matches_o) + gastos_explicados
+
     return {
         "nota_debito": nota_debito,
         "matches_e": matches_e,
@@ -337,12 +420,16 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
             "en_o_pendientes_confirmar": len(matches_o),
             "reglas_aplicadas": reglas_aplicadas,
             "equivalencias_aplicadas": equivalencias_aplicadas,
+            "aproximados": aproximados,
+            "gastos_explicados": gastos_explicados,
             "gastos_bancarios": {"cantidad": len(gastos_bancarios), "importe": tot(gastos_bancarios)},
             "banco_sin_contabilizar": {"cantidad": len(sin_contabilizar), "importe": tot(sin_contabilizar)},
             "e_sin_banco": {"cantidad": len(e_sin_banco), "importe": tot_a(e_sin_banco)},
             "o_pendientes_sin_banco": {"cantidad": len(o_pend_sin_banco), "importe": tot_a(o_pend_sin_banco)},
             "porcentaje_conciliado": round(
                 100.0 * (len(matches_e) + len(matches_o)) / max(1, len(movs_banco)), 1),
+            "porcentaje_explicado": round(
+                min(100.0, 100.0 * explicados / max(1, len(movs_banco))), 1),
             "nota_debito": {
                 "periodos": len(nota_debito),
                 "diferencia_total": round(

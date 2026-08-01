@@ -490,8 +490,11 @@ function mostrarResultados() {
       <div class="sub">$ ${fmt(r.e_sin_banco.importe)}</div></div>
     <div class="kpi azul"><div class="valor">${r.conciliados_manual || 0}</div>
       <div class="etiqueta">Conciliados manualmente</div></div>
-    <div class="kpi verde"><div class="valor">${r.porcentaje_conciliado}%</div>
-      <div class="etiqueta">Extracto conciliado</div></div>`;
+    <div class="kpi"><div class="valor">${r.porcentaje_conciliado}%</div>
+      <div class="etiqueta">Conciliado asiento por asiento</div></div>
+    <div class="kpi verde"><div class="valor">${r.porcentaje_explicado ?? r.porcentaje_conciliado}%</div>
+      <div class="etiqueta">Extracto explicado</div>
+      <div class="sub">incluye los gastos bancarios justificados por la ND mensual</div></div>`;
 
   let avisos = '';
   if (r.reglas_aplicadas)
