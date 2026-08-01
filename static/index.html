@@ -184,6 +184,12 @@
 </header>
 
 <main>
+  <div id="bannerSim" class="aviso error oculto" style="margin: 0 0 16px;">
+    ⚠ <b>Esta página está en MODO SIMULACIÓN</b> (la URL contiene <code>?simular</code>):
+    las sugerencias de IA serán de prueba, no reales.
+    <button class="secundario" style="padding:4px 12px; font-size:12px; margin-left:10px;"
+      onclick="location.href = location.pathname">Salir del modo simulación</button>
+  </div>
   <section class="tarjeta">
     <div class="grid-carga">
       <div class="zona" id="zonaPdf">
@@ -313,6 +319,7 @@ const MODO_SIMULACION = new URLSearchParams(location.search).has('simular');
 if (MODO_SIMULACION) {
   document.getElementById('badgeSim').classList.remove('oculto');
   document.getElementById('ovSim').classList.remove('oculto');
+  document.getElementById('bannerSim').classList.remove('oculto');
 }
 
 function configurarZona(zona, input, multiple, alCambiar) {
@@ -351,6 +358,15 @@ const fmt = n => n == null || n === '' ? '' :
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 $('#btnConciliar').addEventListener('click', async () => {
+  if (MODO_SIMULACION && $('#chkIa').checked) {
+    const seguir = confirm(
+      '⚠ MODO SIMULACIÓN\n\n' +
+      'La URL contiene ?simular: las sugerencias de IA serán DE PRUEBA, ' +
+      'generadas sin usar la API.\n\n' +
+      'Aceptar = continuar en modo simulación\n' +
+      'Cancelar = no conciliar (usá "Salir del modo simulación" para una corrida real)');
+    if (!seguir) return;
+  }
   const fd = new FormData();
   archivosPdf.forEach(f => fd.append('extractos', f));
   fd.append('mayor', archivoXls);

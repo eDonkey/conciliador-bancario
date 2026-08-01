@@ -203,6 +203,9 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
 
         prog("Preparando los resultados", 96, eta=4)
         salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
+        # auditoría: qué modo de IA llegó en el pedido (para diagnosticar
+        # corridas en simulación no intencionales)
+        salida["ia"]["modo_pedido"] = usar_ia
         salida["conciliados_manual"] = []
         salida["resumen"]["conciliados_manual"] = 0
         salida["resumen"]["reglas_disponibles"] = len(reglas)
