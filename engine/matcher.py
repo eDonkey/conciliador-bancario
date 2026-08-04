@@ -218,6 +218,29 @@ def _clave_rm(texto: str) -> str | None:
     return m.group(1).lstrip('0') if m else None
 
 
+def netear_contraasientos(asientos):
+    """Detecta pares asiento + contraasiento dentro de un mismo residual del
+    mayor: misma clave (RM o referencia), mismo importe, lados opuestos.
+    Son movimientos anulados que nunca van a aparecer en el extracto.
+
+    Devuelve (restantes, pares) donde pares es [{debe, haber}]."""
+    debe = defaultdict(list)
+    haber = defaultdict(list)
+    for a in asientos:
+        clave = (_clave_rm(a.comentario) or a.referencia.strip().upper(), round(a.importe, 2))
+        (debe if a.lado == 'debe' else haber)[clave].append(a)
+
+    pares, cancelados = [], set()
+    for clave, lista_d in debe.items():
+        lista_h = haber.get(clave, [])
+        for k in range(min(len(lista_d), len(lista_h))):
+            pares.append({"debe": lista_d[k], "haber": lista_h[k]})
+            cancelados.add(lista_d[k].id)
+            cancelados.add(lista_h[k].id)
+    restantes = [a for a in asientos if a.id not in cancelados]
+    return restantes, pares
+
+
 def netear_cuenta_o(asientos_o):
     """Cancela dentro de la O los pares confirmados (asiento + contrapartida).
 
@@ -333,10 +356,11 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
 
 
 def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
-              equivalencias=None):
+              equivalencias=None, terminos_gasto=None):
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
     from engine import reglas as reglas_mod
     from engine import equivalencias as eq_mod
+    from engine import gastos_conf
 
     pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
 
@@ -379,10 +403,11 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         for p in pares_tol:
             (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
 
-    # 3) clasificar restos del banco
+    # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario)
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
-        if GASTO_RE.search(m.descripcion):
+        if GASTO_RE.search(m.descripcion) or gastos_conf.es_gasto(m.descripcion,
+                                                                 terminos_gasto):
             gastos_bancarios.append(m)
         else:
             sin_contabilizar.append(m)
@@ -393,6 +418,10 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         gastos_bancarios, e_sin_banco + o_pend_sin_banco)
     e_sin_banco = [a for a in e_sin_banco if a.id not in ids_nd]
     o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in ids_nd]
+
+    # 5) contraasientos: pares anulados dentro del residual del mayor (asiento
+    #    y su contrapartida que nunca van a tener movimiento en el banco)
+    e_sin_banco, contraasientos = netear_contraasientos(e_sin_banco)
 
     tot = lambda ms: round(sum(x.importe for x in ms), 2)
     tot_a = lambda as_: round(sum(x.importe for x in as_), 2)
@@ -406,6 +435,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
 
     return {
         "nota_debito": nota_debito,
+        "contraasientos": contraasientos,
         "matches_e": matches_e,
         "matches_o": matches_o,
         "banco_sin_contabilizar": sin_contabilizar,
@@ -422,6 +452,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
             "equivalencias_aplicadas": equivalencias_aplicadas,
             "aproximados": aproximados,
             "gastos_explicados": gastos_explicados,
+            "contraasientos": len(contraasientos),
             "gastos_bancarios": {"cantidad": len(gastos_bancarios), "importe": tot(gastos_bancarios)},
             "banco_sin_contabilizar": {"cantidad": len(sin_contabilizar), "importe": tot(sin_contabilizar)},
             "e_sin_banco": {"cantidad": len(e_sin_banco), "importe": tot_a(e_sin_banco)},

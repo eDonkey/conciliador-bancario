@@ -27,6 +27,7 @@ from engine.matcher import conciliar
 from engine import ai_assist
 from engine import reglas as reglas_mod
 from engine import equivalencias as eq_mod
+from engine import gastos_conf
 
 app = FastAPI(title="Conciliador bancario")
 
@@ -101,6 +102,11 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
             {**p, "asientos_mayor": [a.to_dict() for a in p["asientos_mayor"]]}
             for p in resultado["nota_debito"]
         ],
+        "contraasientos": [
+            {"debe": p["debe"].to_dict(), "haber": p["haber"].to_dict()}
+            for p in resultado["contraasientos"]
+        ],
+        "excluidos_mayor": [],
         "ia": {"estado": ia_estado, "sugerencias": ia_sugerencias},
     }
 
@@ -167,9 +173,11 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
         prog("Cruzando el extracto contra el mayor", 46)
         reglas = reglas_mod.cargar()
         equivalencias = eq_mod.cargar()
+        terminos_gasto = gastos_conf.cargar()
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
                               mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias)
+                              equivalencias=equivalencias,
+                              terminos_gasto=terminos_gasto)
 
         # --- IA (real o simulada) sobre los residuales --------------------
         ia_sugerencias, ia_estado = [], "desactivada"
@@ -259,6 +267,98 @@ def api_equivalencias_agregar(cuerpo: dict = Body(...)):
 @app.delete("/api/equivalencias/{eq_id}")
 def api_equivalencias_eliminar(eq_id: str):
     return {"equivalencias": eq_mod.eliminar(eq_id)}
+
+
+@app.get("/api/gastos")
+def api_gastos():
+    """Conceptos definidos por el usuario que se clasifican como gasto bancario."""
+    return {"gastos": gastos_conf.cargar()}
+
+
+@app.post("/api/gastos")
+def api_gastos_agregar(cuerpo: dict = Body(...)):
+    """Agrega un concepto de gasto. Si viene job_id, además reclasifica en ese
+    resultado los movimientos de 'banco sin contabilizar' que lo contengan."""
+    terminos, error = gastos_conf.agregar(cuerpo.get("termino"))
+    if error:
+        return JSONResponse(status_code=422, content={"error": error})
+
+    datos, movidos = None, 0
+    job_id = cuerpo.get("job_id")
+    if job_id:
+        datos = _obtener(job_id)
+    if datos:
+        termino = gastos_conf.limpiar_termino(cuerpo.get("termino"))
+        se_mueven = [x for x in datos["banco_sin_contabilizar"]
+                     if gastos_conf.es_gasto(x["descripcion"], [{"termino": termino}])]
+        if se_mueven:
+            ids = {x["id"] for x in se_mueven}
+            datos["banco_sin_contabilizar"] = [
+                x for x in datos["banco_sin_contabilizar"] if x["id"] not in ids]
+            datos["gastos_bancarios"].extend(se_mueven)
+            datos["gastos_bancarios"].sort(key=lambda x: x["fecha"] or "")
+            movidos = len(se_mueven)
+            _recalcular_resumen(datos)
+            _guardar(job_id)
+    return {"gastos": terminos, "movidos": movidos, "datos": datos}
+
+
+@app.delete("/api/gastos/{term_id}")
+def api_gastos_eliminar(term_id: str):
+    return {"gastos": gastos_conf.eliminar(term_id)}
+
+
+@app.post("/api/excluir/{job_id}")
+def api_excluir(job_id: str, cuerpo: dict = Body(...)):
+    """Saca asientos del mayor de la conciliación (anulados, contraasientos que
+    la detección automática no encontró, etc.). Quedan referenciados y se
+    pueden restaurar."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    ids = set(cuerpo.get("ids_mayor") or [])
+    if not ids:
+        return JSONResponse(status_code=422, content={"error": "No hay asientos seleccionados"})
+
+    items = []
+    for lista in LISTAS_MAYOR:
+        for x in datos[lista]:
+            if x["id"] in ids:
+                items.append({**x, "_origen": lista})
+    if len(items) != len(ids):
+        return JSONResponse(status_code=409, content={
+            "error": "Algunos asientos ya no están disponibles"})
+    for lista in LISTAS_MAYOR:
+        datos[lista] = [x for x in datos[lista] if x["id"] not in ids]
+
+    datos.setdefault("excluidos_mayor", []).append({
+        "excl_id": uuid.uuid4().hex[:10],
+        "mayor": items,
+        "nota": (cuerpo.get("nota") or "").strip(),
+    })
+    _recalcular_resumen(datos)
+    _guardar(job_id)
+    return datos
+
+
+@app.delete("/api/excluir/{job_id}/{excl_id}")
+def api_excluir_deshacer(job_id: str, excl_id: str):
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    entrada = next((e for e in datos.get("excluidos_mayor", [])
+                    if e["excl_id"] == excl_id), None)
+    if not entrada:
+        return JSONResponse(status_code=404, content={"error": "Exclusión no encontrada"})
+    datos["excluidos_mayor"] = [e for e in datos["excluidos_mayor"]
+                                if e["excl_id"] != excl_id]
+    for x in entrada["mayor"]:
+        origen = x.pop("_origen", "e_sin_banco")
+        datos[origen].append(x)
+        datos[origen].sort(key=lambda i: i["fecha"] or "")
+    _recalcular_resumen(datos)
+    _guardar(job_id)
+    return datos
 
 
 @app.get("/api/progreso/{job_id}")
@@ -490,6 +590,16 @@ def _generar_excel(datos):
     hoja("Mayor E sin banco", cols_mayor, [fila_mayor(a) for a in datos["e_sin_banco"]])
     hoja("O pendientes sin banco", cols_mayor,
          [fila_mayor(a) for a in datos["o_pendientes_sin_banco"]])
+
+    filas_x = []
+    for p in datos.get("contraasientos", []):
+        filas_x.append(fila_mayor(p["debe"]) + ("contraasiento (automático)",))
+        filas_x.append(fila_mayor(p["haber"]) + ("contraasiento (automático)",))
+    for e in datos.get("excluidos_mayor", []):
+        motivo = "excluido manualmente" + (f' — {e["nota"]}' if e["nota"] else "")
+        for a in e["mayor"]:
+            filas_x.append(fila_mayor(a) + (motivo,))
+    hoja("Contraasientos y excluidos", cols_mayor + ["Motivo"], filas_x)
 
     # Nota de débito mensual (gastos bancarios agrupados)
     filas_nd = []

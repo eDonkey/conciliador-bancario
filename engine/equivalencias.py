@@ -8,7 +8,10 @@ cuyo texto no coincide pero cuyo concepto sí (con importes que cierren).
 También se le pasan a la IA como glosario.
 
 Cada par es direccional: `extracto` debe aparecer en el texto del movimiento
-bancario y `sistema` en el texto del asiento del mayor.
+bancario y `sistema` en el texto del asiento del mayor. `extracto` admite
+VARIOS términos separados por coma ("compras en el exterior, compras tarjeta
+debito, reintegro tarjeta" ≈ "gasto de representacion"): cualquier movimiento
+que contenga alguno de ellos participa, y los grupos pueden mezclar términos.
 """
 import json
 import os
@@ -60,11 +63,17 @@ def _guardar(pares: list[dict], ruta: str):
         json.dump(pares, f, ensure_ascii=False, indent=1)
 
 
+def terminos_extracto(par: dict) -> list[str]:
+    """Términos del lado extracto (admite varios separados por coma)."""
+    return [t.strip() for t in (par.get("extracto") or "").split(",") if t.strip()]
+
+
 def agregar(extracto: str, sistema: str, ruta: str = RUTA_DEFAULT) -> tuple[list[dict], str | None]:
     """Agrega un par al diccionario. Devuelve (lista, error)."""
-    extracto = (extracto or "").strip()
+    partes = [t.strip() for t in (extracto or "").split(",") if t.strip()]
+    extracto = ", ".join(partes)
     sistema = (sistema or "").strip()
-    if len(extracto) < 3 or len(sistema) < 3:
+    if not partes or any(len(t) < 3 for t in partes) or len(sistema) < 3:
         return cargar(ruta), "Cada término necesita al menos 3 caracteres"
     pares = cargar(ruta)
     if any(_norm(p["extracto"]) == _norm(extracto) and _norm(p["sistema"]) == _norm(sistema)
@@ -102,15 +111,18 @@ def aplicar(banco_libres, asiento_libres, pares):
     matches = []
     usados_b, usados_a = set(), set()
 
-    # a qué pares responde cada movimiento/asiento
-    pares_b = {m.id: [p for p in pares if contiene(_texto_banco(m), p["extracto"])]
+    # a qué pares responde cada movimiento/asiento (extracto admite varios términos)
+    pares_b = {m.id: [p for p in pares
+                      if any(contiene(_texto_banco(m), t) for t in terminos_extracto(p))]
                for m in banco_libres}
     pares_a = {a.id: {p["id"] for p in pares if contiene(_texto_mayor(a), p["sistema"])}
                for a in asiento_libres}
 
-    def etiqueta(p, grupo=False):
-        base = f'equivalencia: {p["extracto"]} ≈ {p["sistema"]}'
-        return base + (" (grupo)" if grupo else "")
+    def etiqueta(p, grupo=None):
+        terms = terminos_extracto(p)
+        lado_b = terms[0] + ", …" if len(terms) > 1 else terms[0]
+        base = f'equivalencia: {lado_b} ≈ {p["sistema"]}'
+        return base + (f" (grupo {grupo})" if grupo else "")
 
     # --- 1 a 1: mismo importe/lado + equivalencia --------------------------
     idx = defaultdict(list)
@@ -127,31 +139,36 @@ def aplicar(banco_libres, asiento_libres, pares):
                 usados_a.add(candidato.id)
                 break
 
-    # --- grupos por día: N banco -> 1 asiento ------------------------------
-    grupos_b = defaultdict(list)
-    for m in banco_libres:
-        if m.id in usados_b:
-            continue
-        for p in pares_b[m.id]:
-            grupos_b[(p["id"], m.fecha)].append((p, m))
-    for (pid, fecha), items in grupos_b.items():
-        if len(items) < 2 or fecha is None:
-            continue
-        p = items[0][0]
-        movs = [m for _, m in items]
-        if any(m.id in usados_b for m in movs):
-            continue
-        neto = round(sum(x.credito - x.debito for x in movs), 2)
-        for a in asiento_libres:
-            if a.id in usados_a or pid not in pares_a[a.id]:
+    # --- grupos: N banco -> 1 asiento, primero por día y después por mes ---
+    # (los resúmenes tipo "gasto de representación" agrupan un mes entero de
+    # compras de tarjeta en un solo asiento)
+    for nombre_ventana, clave_fecha in (("día", lambda f: f),
+                                        ("mes", lambda f: (f.year, f.month))):
+        grupos_b = defaultdict(list)
+        for m in banco_libres:
+            if m.id in usados_b or m.fecha is None:
                 continue
-            neto_a = round(a.debe - a.haber, 2)
-            if abs(neto - neto_a) < 0.01 and neto != 0:
-                for x in movs:
-                    matches.append({"banco": x, "asiento": a, "metodo": etiqueta(p, grupo=True)})
-                    usados_b.add(x.id)
-                usados_a.add(a.id)
-                break
+            for p in pares_b[m.id]:
+                grupos_b[(p["id"], clave_fecha(m.fecha))].append((p, m))
+        for (pid, _), items in grupos_b.items():
+            if len(items) < 2:
+                continue
+            p = items[0][0]
+            movs = [m for _, m in items]
+            if any(m.id in usados_b for m in movs):
+                continue
+            neto = round(sum(x.credito - x.debito for x in movs), 2)
+            for a in asiento_libres:
+                if a.id in usados_a or pid not in pares_a[a.id]:
+                    continue
+                neto_a = round(a.debe - a.haber, 2)
+                if abs(neto - neto_a) < 0.01 and neto != 0:
+                    for x in movs:
+                        matches.append({"banco": x, "asiento": a,
+                                        "metodo": etiqueta(p, grupo=nombre_ventana)})
+                        usados_b.add(x.id)
+                    usados_a.add(a.id)
+                    break
 
     # --- grupos por día: 1 banco -> N asientos ------------------------------
     grupos_a = defaultdict(list)
@@ -173,7 +190,7 @@ def aplicar(banco_libres, asiento_libres, pares):
             neto_b = round(m.credito - m.debito, 2)
             if abs(neto - neto_b) < 0.01 and neto != 0:
                 for x in items:
-                    matches.append({"banco": m, "asiento": x, "metodo": etiqueta(p, grupo=True)})
+                    matches.append({"banco": m, "asiento": x, "metodo": etiqueta(p, grupo="día")})
                     usados_a.add(x.id)
                 usados_b.add(m.id)
                 break

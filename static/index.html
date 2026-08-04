@@ -113,10 +113,10 @@
 
   /* --- diccionario de equivalencias --- */
   .zona-derecha { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-  #modalEquiv { position: fixed; inset: 0; background: rgba(23,32,42,.55);
+  #modalEquiv, #modalGastos { position: fixed; inset: 0; background: rgba(23,32,42,.55);
     backdrop-filter: blur(3px); display: flex; align-items: center;
     justify-content: center; z-index: 90; }
-  #modalEquiv.oculto { display: none; }
+  #modalEquiv.oculto, #modalGastos.oculto { display: none; }
   .eq-card { background: var(--panel); border-radius: 14px;
     box-shadow: 0 24px 60px rgba(0,0,0,.28); width: 560px;
     max-width: calc(100vw - 40px); padding: 26px 28px 22px;
@@ -178,6 +178,7 @@
   </div>
   <div class="zona-derecha">
     <button class="secundario" id="btnEquiv">📖 Equivalencias</button>
+    <button class="secundario" id="btnGastos">🏦 Gastos</button>
     <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
       <small>la IA no consume API — sugerencias de prueba</small></span>
   </div>
@@ -221,7 +222,11 @@
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <input class="buscador" id="buscador" placeholder="Filtrar en la tabla…">
         <span id="accionesTab"></span>
-        <button class="secundario export" id="btnExportar">⬇ Exportar a Excel</button>
+        <span class="export" style="display:flex; gap:8px;">
+          <button class="secundario" id="btnCompartir"
+            title="Copia el link de esta conciliación para compartirla con otro usuario">🔗 Copiar link</button>
+          <button class="secundario" id="btnExportar">⬇ Exportar a Excel</button>
+        </span>
       </div>
       <div class="contenedor-tabla"><table id="tabla"><thead></thead><tbody></tbody></table></div>
     </div>
@@ -236,6 +241,11 @@
               <option value="">Débitos y créditos</option>
               <option value="debito">Solo débitos</option>
               <option value="credito">Solo créditos</option>
+            </select>
+            <select id="ordenBanco" title="Orden de la lista (cuando 🎯 no está activo)">
+              <option value="fecha">Por fecha</option>
+              <option value="imp_desc">Importe ↓</option>
+              <option value="imp_asc">Importe ↑</option>
             </select>
             <label><input type="checkbox" id="chkGastos"> incluir gastos bancarios</label>
             <label title="Al seleccionar asientos del mayor, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
@@ -252,6 +262,11 @@
               <option value="debe">Solo Debe</option>
               <option value="haber">Solo Haber</option>
             </select>
+            <select id="ordenMayor" title="Orden de la lista (cuando 🎯 no está activo)">
+              <option value="fecha">Por fecha</option>
+              <option value="imp_desc">Importe ↓</option>
+              <option value="imp_asc">Importe ↑</option>
+            </select>
             <label title="Al seleccionar movimientos del banco, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
               <input type="checkbox" id="smartMayor" checked> 🎯 según selección</label>
           </div>
@@ -264,6 +279,8 @@
         <span>Diferencia: <span id="selDifTxt" class="dif-ok">$ 0,00</span></span>
         <input type="text" id="notaManual" placeholder="Nota (opcional)">
         <button class="mini" id="btnManual" disabled>✔ Conciliar selección</button>
+        <button class="secundario" id="btnExcluir" disabled style="padding:5px 12px; font-size:12px;"
+          title="Sacar de la conciliación los asientos del mayor seleccionados (anulados / contraasientos). Quedan referenciados en su solapa y se pueden restaurar.">🚫 Excluir del mayor</button>
         <button class="secundario" id="btnLimpiarSel" style="padding:5px 12px; font-size:12px;">Limpiar</button>
       </div>
       <div class="matches-manual">
@@ -280,10 +297,14 @@
     <p class="exp">El banco y el sistema contable a veces llaman distinto al mismo
       concepto: <b>"HABERES"</b> en el extracto son los <b>"SUELDOS"</b> del sistema.
       Cargá acá esas equivalencias y el conciliador las usa para cruzar
-      automáticamente (y la IA las recibe como glosario).</p>
+      automáticamente (y la IA las recibe como glosario).<br>
+      Del lado del extracto podés poner <b>varios términos separados por coma</b>
+      — p. ej. <i>"compras en el exterior, compras tarjeta debito, reintegro
+      tarjeta"</i> ≈ <i>"gasto de representacion"</i> — y el conciliador agrupa
+      todos esos movimientos (por día o por mes) contra el asiento único del mayor.</p>
     <div class="eq-lista" id="eqLista"></div>
     <div class="eq-add">
-      <input type="text" id="eqExtracto" placeholder="Término en el extracto (ej: haberes)">
+      <input type="text" id="eqExtracto" placeholder="Término(s) en el extracto, separados por coma">
       <span class="flecha" style="color:var(--azul);font-weight:700;">≈</span>
       <input type="text" id="eqSistema" placeholder="Término en el sistema (ej: sueldos)">
       <button class="mini" id="eqAgregar">＋ Agregar</button>
@@ -291,6 +312,26 @@
     <div id="eqError"></div>
     <div style="text-align:right; margin-top:6px;">
       <button class="secundario" id="eqCerrar">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalGastos" class="oculto">
+  <div class="eq-card" style="border-top-color: var(--ambar);">
+    <h3>🏦 Gastos bancarios definidos por ustedes</h3>
+    <p class="exp">Cuando el banco inventa un concepto nuevo (p. ej.
+      <b>"Percep perc rg 5617 30%"</b>) y aparece en "Banco sin contabilizar",
+      cargalo acá: pasa a clasificarse como gasto bancario en esta y en todas
+      las conciliaciones futuras, sin depender de los programadores.
+      Los números se ignoran solos (sirve para cualquier alícuota o período).</p>
+    <div class="eq-lista" id="gasLista"></div>
+    <div class="eq-add">
+      <input type="text" id="gasTermino" placeholder="Concepto del extracto (ej: percep perc rg 5617 30%)">
+      <button class="mini" id="gasAgregar">＋ Agregar</button>
+    </div>
+    <div id="gasError"></div>
+    <div style="text-align:right; margin-top:6px;">
+      <button class="secundario" id="gasCerrar">Cerrar</button>
     </div>
   </div>
 </div>
@@ -458,13 +499,26 @@ async function cargarResultado(jobId) {
   const json = await r.json();
   if (!r.ok) throw new Error(json.error || 'Error al cargar el resultado');
   datos = json;
+  // la URL identifica la conciliación: se puede compartir con otro usuario
+  const params = new URLSearchParams(location.search);
+  params.set('job', jobId);
+  history.replaceState(null, '', '?' + params.toString());
+  localStorage.setItem('ultimo_job', jobId);
   mostrarResultados();
   $('#estado').textContent = 'Listo';
   $('#btnConciliar').disabled = false;
 }
 
-// Al entrar: si quedó un trabajo en curso o terminado, ofrecer retomarlo
+// Al entrar: primero un ?job compartido por link; si no, el último trabajo propio
 (async function retomarUltimoJob() {
+  const compartido = new URLSearchParams(location.search).get('job');
+  if (compartido) {
+    try { await cargarResultado(compartido); return; }
+    catch (e) {
+      $('#avisos').innerHTML = `<div class="aviso error">⚠ No se encontró la
+        conciliación del link (${esc(e.message)}). Puede haberse borrado del servidor.</div>`;
+    }
+  }
   const j = localStorage.getItem('ultimo_job');
   if (!j) return;
   try {
@@ -549,6 +603,9 @@ function mostrarResultados() {
     ['o_pendientes_sin_banco', 'O pendientes sin banco', datos.o_pendientes_sin_banco.length],
     ['manual', ' Conciliar manualmente', (datos.conciliados_manual || []).length],
   ];
+  const nExcl = (datos.contraasientos || []).length * 2 + (datos.excluidos_mayor || [])
+    .reduce((s, e) => s + e.mayor.length, 0);
+  if (nExcl) tabs.push(['excluidos', 'Contraasientos y excluidos', nExcl]);
   if (ia.sugerencias.length) tabs.push(['ia', 'Sugerencias IA', ia.sugerencias.length]);
   $('#tabs').innerHTML = tabs.map(([id, nombre, n]) =>
     `<button data-tab="${id}">${nombre} <span class="n">${n}</span></button>`).join('');
@@ -625,8 +682,31 @@ function pintarTabla() {
     });
   } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios') {
     cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo'];
-    filas = datos[tabActiva].map(b => [b.fecha, b.comprobante, b.descripcion, b.detalle,
-      { num: b.debito }, { num: b.credito }, b.archivo]);
+    if (tabActiva === 'banco_sin_contabilizar') cols.push('');
+    filas = datos[tabActiva].map(b => {
+      const f = [b.fecha, b.comprobante, b.descripcion, b.detalle,
+        { num: b.debito }, { num: b.credito }, b.archivo];
+      if (tabActiva === 'banco_sin_contabilizar')
+        f.push({ html: `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+          title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras"
+          onclick="marcarGasto('${esc(b.descripcion).replace(/'/g, '&#39;')}')">→ gasto</button>` });
+      return f;
+    });
+  } else if (tabActiva === 'excluidos') {
+    cols = ['Hoja', 'Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber', 'Motivo', ''];
+    filas = [];
+    (datos.contraasientos || []).forEach(p => {
+      [p.debe, p.haber].forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
+        a.comentario, { num: a.debe }, { num: a.haber },
+        { html: '<span class="metodo">contraasiento (auto)</span>' }, '']));
+    });
+    (datos.excluidos_mayor || []).forEach(e => {
+      e.mayor.forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
+        a.comentario, { num: a.debe }, { num: a.haber },
+        { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}` },
+        { html: `<button class="secundario" style="padding:3px 8px;font-size:11px;"
+           onclick="deshacerExclusion('${e.excl_id}')">↩ Restaurar</button>` }]));
+    });
   } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
     filas = datos[tabActiva].map(a => [a.asiento, a.fecha, a.referencia, a.comentario,
@@ -680,6 +760,15 @@ function pintarTabla() {
 $('#buscador').addEventListener('input', pintarTabla);
 $('#btnExportar').addEventListener('click', () => {
   if (datos) window.location = `/api/exportar/${datos.job_id}`;
+});
+$('#btnCompartir').addEventListener('click', async () => {
+  if (!datos) return;
+  const url = `${location.origin}${location.pathname}?job=${datos.job_id}`;
+  try { await navigator.clipboard.writeText(url); }
+  catch { prompt('Copiá el link:', url); return; }
+  const b = $('#btnCompartir');
+  b.textContent = '✔ Link copiado';
+  setTimeout(() => { b.textContent = '🔗 Copiar link'; }, 2000);
 });
 
 /* ================= Conciliación manual ================= */
@@ -741,6 +830,12 @@ function pintarManual() {
       return Math.abs(new Date(a.fecha || 0) - (fechasRefB[0] || 0))
            - Math.abs(new Date(b.fecha || 0) - (fechasRefB[0] || 0));
     });
+  } else {
+    const impB = x => x.credito || x.debito;
+    const ordB = $('#ordenBanco').value;
+    if (ordB === 'imp_desc') listaB.sort((a, b) => impB(b) - impB(a));
+    else if (ordB === 'imp_asc') listaB.sort((a, b) => impB(a) - impB(b));
+    else listaB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   const cabecera = (total, mostrados, smart) =>
     `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#fafbfc;border-bottom:1px solid var(--border);position:sticky;top:0;">
@@ -775,6 +870,12 @@ function pintarManual() {
       return Math.abs(new Date(a.fecha || 0) - (fechasRefM[0] || 0))
            - Math.abs(new Date(b.fecha || 0) - (fechasRefM[0] || 0));
     });
+  } else {
+    const impM = x => x.debe || x.haber;
+    const ordM = $('#ordenMayor').value;
+    if (ordM === 'imp_desc') listaM.sort((a, b) => impM(b) - impM(a));
+    else if (ordM === 'imp_asc') listaM.sort((a, b) => impM(a) - impM(b));
+    else listaM.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   $('#listaMayor').innerHTML = cabecera(listaM.length, Math.min(listaM.length, 400), smartM) +
     (listaM.slice(0, 400).map(x => {
@@ -806,6 +907,7 @@ function actualizarBarra() {
   el.textContent = `$ ${fmt(dif)}`;
   el.className = Math.abs(dif) < 0.01 ? 'dif-ok' : 'dif-no';
   $('#btnManual').disabled = !(b.length && m.length);
+  $('#btnExcluir').disabled = !(m.length && !b.length);
 }
 
 function pintarMatchesManual() {
@@ -838,8 +940,58 @@ document.addEventListener('click', e => {
 
 ['filtroBanco', 'filtroMayor'].forEach(id =>
   $('#' + id).addEventListener('input', pintarManual));
-['ladoBanco', 'ladoMayor', 'chkGastos', 'smartBanco', 'smartMayor'].forEach(id =>
+['ladoBanco', 'ladoMayor', 'chkGastos', 'smartBanco', 'smartMayor',
+ 'ordenBanco', 'ordenMayor'].forEach(id =>
   $('#' + id).addEventListener('change', pintarManual));
+
+$('#btnExcluir').addEventListener('click', async () => {
+  if (!confirm(`Se van a excluir ${selMayor.size} asiento(s) del mayor de la conciliación.\n` +
+    'Quedan referenciados en la solapa "Contraasientos y excluidos" y se pueden restaurar.')) return;
+  try {
+    const resp = await fetch(`/api/excluir/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids_mayor: [...selMayor], nota: $('#notaManual').value }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    selMayor.clear();
+    $('#notaManual').value = '';
+    refrescarTrasManual('manual');
+  } catch (err) { alert('⚠ ' + err.message); }
+});
+
+window.deshacerExclusion = async id => {
+  try {
+    const resp = await fetch(`/api/excluir/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    const quedan = (datos.contraasientos || []).length + (datos.excluidos_mayor || []).length;
+    refrescarTrasManual(quedan ? 'excluidos' : 'e_sin_banco');
+  } catch (err) { alert('⚠ ' + err.message); }
+};
+
+window.marcarGasto = async desc => {
+  if (!confirm(`"${desc}"\n\n¿Clasificar este concepto como gasto bancario?\n` +
+    'Se aplica ahora a los movimientos que lo contengan y queda registrado para todas las conciliaciones futuras (los números del texto se ignoran).')) return;
+  try {
+    const resp = await fetch('/api/gastos', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ termino: desc, job_id: datos ? datos.job_id : null }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    gastosConf = json.gastos;
+    pintarGastos();
+    if (json.datos) {
+      datos = json.datos;
+      refrescarTrasManual('banco_sin_contabilizar');
+    }
+    alert(json.movidos ? `Listo: ${json.movidos} movimiento(s) pasaron a Gastos bancarios.`
+                       : 'Concepto registrado para futuras conciliaciones.');
+  } catch (err) { alert('⚠ ' + err.message); }
+};
 $('#btnLimpiarSel').addEventListener('click', () => {
   selBanco.clear(); selMayor.clear(); pintarManual();
 });
@@ -939,6 +1091,67 @@ window.eliminarEquiv = async id => {
     equivalencias = json.equivalencias;
     pintarEquiv();
   } catch (err) { $('#eqError').textContent = '⚠ ' + err.message; }
+};
+
+/* ============ gastos bancarios configurables ============ */
+let gastosConf = [];
+
+function pintarGastos() {
+  $('#btnGastos').textContent = `🏦 Gastos (${gastosConf.length})`;
+  $('#gasLista').innerHTML = gastosConf.map(t => `
+    <div class="eq-fila">
+      <span class="lado-eq"><b>${esc(t.termino)}</b><small>se clasifica como gasto bancario</small></span>
+      <button class="quitar" title="Eliminar" onclick="eliminarGasto('${esc(t.id)}')">✕</button>
+    </div>`).join('') ||
+    '<p style="color:var(--texto2);font-size:13px;">Todavía no cargaron conceptos propios. También podés usar el botón "→ gasto" en la solapa "Banco sin contabilizar".</p>';
+}
+
+async function cargarGastos() {
+  try {
+    const r = await fetch('/api/gastos');
+    gastosConf = (await r.json()).gastos || [];
+    pintarGastos();
+  } catch {}
+}
+cargarGastos();
+
+$('#btnGastos').addEventListener('click', () => {
+  $('#gasError').textContent = '';
+  $('#modalGastos').classList.remove('oculto');
+  $('#gasTermino').focus();
+});
+$('#gasCerrar').addEventListener('click', () => $('#modalGastos').classList.add('oculto'));
+$('#modalGastos').addEventListener('click', e => {
+  if (e.target.id === 'modalGastos') $('#modalGastos').classList.add('oculto');
+});
+
+async function agregarGasto() {
+  $('#gasError').textContent = '';
+  try {
+    const resp = await fetch('/api/gastos', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ termino: $('#gasTermino').value,
+                             job_id: datos ? datos.job_id : null }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    gastosConf = json.gastos;
+    $('#gasTermino').value = '';
+    pintarGastos();
+    if (json.datos) { datos = json.datos; refrescarTrasManual(tabActiva); }
+  } catch (err) { $('#gasError').textContent = '⚠ ' + err.message; }
+}
+$('#gasAgregar').addEventListener('click', agregarGasto);
+$('#gasTermino').addEventListener('keydown', e => { if (e.key === 'Enter') agregarGasto(); });
+
+window.eliminarGasto = async id => {
+  try {
+    const resp = await fetch(`/api/gastos/${id}`, { method: 'DELETE' });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    gastosConf = json.gastos;
+    pintarGastos();
+  } catch (err) { $('#gasError').textContent = '⚠ ' + err.message; }
 };
 
 window.deshacerManual = async id => {
