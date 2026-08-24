@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conciliación diaria — grupo Nave</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6ea;
+    --texto: #1d2733; --texto2: #5b6875;
+    --rojo: #C8102E; --verde: #1a7f4b; --ambar: #b26a00; --azul: #1f5fbf;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--texto); }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 28px; display:flex; align-items:center; gap:12px; }
+  header .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--azul); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header p { font-size: 12.5px; color: var(--texto2); }
+  header a.volver { margin-left:auto; font-size: 13px; color: var(--azul); text-decoration:none; border:1px solid var(--border); border-radius:8px; padding: 8px 14px; background:#fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
+  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-bottom: 18px; }
+  .zona { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; transition: .15s; }
+  .zona:hover, .zona.arrastrando { border-color: var(--azul); background: #f3f7fd; }
+  .zona h3 { font-size: 15px; margin-bottom: 4px; }
+  .zona p { font-size: 12.5px; color: var(--texto2); }
+  ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: 13px; }
+  ul.archivos li { padding: 6px 10px; background: var(--bg); border-radius: 6px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
+  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; }
+  .acciones { display:flex; align-items:center; gap:14px; margin-top: 16px; flex-wrap: wrap; }
+  button.principal { background: var(--azul); color:#fff; border:none; padding: 11px 24px; border-radius: 8px; font-size: 14.5px; font-weight:600; cursor:pointer; }
+  button.principal:disabled { background:#cbd2d9; cursor:not-allowed; }
+  button.secundario { background:#fff; color: var(--texto); border:1px solid var(--border); padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor:pointer; }
+  .contenedor-tabla { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--texto2); white-space: nowrap; background:#fafbfc; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  select { padding: 6px 8px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; max-width: 320px; }
+  .chip { font-size: 11px; border-radius: 6px; padding: 2px 8px; white-space:nowrap; font-weight: 600; }
+  .chip.extracto { background:#eef4ff; color: var(--azul); }
+  .chip.fbs { background:#f3eefe; color:#6b3fc2; }
+  .chip.err { background:#fdecec; color:#8f1d1d; }
+  .chip.ok { background:#e5f5ec; color: var(--verde); }
+  .chip.warn { background:#fdf6ec; color: var(--ambar); }
+  .oculto { display:none; }
+  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 12px; }
+  .aviso.error { background:#fdecec; color:#8f1d1d; }
+  .aviso.info { background:#eef4ff; color:#1d3f7a; }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--azul); border-radius:50%; animation: g .8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  @keyframes g { to { transform: rotate(360deg); } }
+  h2.seccion { font-size: 16px; margin-bottom: 10px; }
+  .pct { font-weight: 700; }
+  .pct.alto { color: var(--verde); } .pct.medio { color: var(--ambar); } .pct.bajo { color: var(--rojo); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">D</div>
+  <div>
+    <h1>Conciliación diaria — grupo Nave</h1>
+    <p>Extractos del día de cada banco + reportes FBS (mayor E y O) — cruce por cuenta</p>
+  </div>
+  <a class="volver" href="/">← Conciliador mensual</a>
+</header>
+
+<main>
+  <section class="tarjeta" id="cargaCard">
+    <div class="zona" id="zona">
+      <h3>Extractos diarios y reportes FBS</h3>
+      <p>Arrastrá o hacé clic — todos juntos: los extractos de cada banco (Santander/Río,
+        BBVA/Francés, Galicia, Macro, Ciudad) y los FBS por cuenta (mayor E y mayor O).
+        El sistema identifica solo qué es cada archivo.</p>
+      <input type="file" id="inputArchivos" multiple hidden>
+      <ul class="archivos" id="listaArchivos"></ul>
+    </div>
+    <div class="acciones">
+      <button class="principal" id="btnIdentificar" disabled>Identificar archivos</button>
+      <span id="estadoCarga"></span>
+    </div>
+  </section>
+
+  <section class="tarjeta oculto" id="identCard">
+    <h2 class="seccion">Paso 2 — Confirmá qué es cada archivo</h2>
+    <p style="font-size:12.5px;color:var(--texto2);margin-bottom:10px;">
+      Las cuentas detectadas automáticamente ya vienen seleccionadas. Asigná a mano las que
+      falten (la primera vez los FBS necesitan asignación: el vínculo queda aprendido para siempre).</p>
+    <div class="contenedor-tabla"><table id="tablaIdent"><thead></thead><tbody></tbody></table></div>
+    <div class="acciones">
+      <button class="principal" id="btnConciliar">Conciliar el día</button>
+      <span id="estadoConciliar"></span>
+    </div>
+  </section>
+
+  <section class="tarjeta oculto" id="tableroCard">
+    <h2 class="seccion">Tablero del día <span id="fechaProc" style="font-weight:400;color:var(--texto2);font-size:13px;"></span></h2>
+    <div class="contenedor-tabla"><table id="tablaTablero"><thead></thead><tbody></tbody></table></div>
+    <div id="sinAsignar"></div>
+    <div class="acciones">
+      <button class="secundario" id="btnCopiarTablero">🔗 Copiar link del tablero</button>
+      <button class="secundario" onclick="location.href = location.pathname">＋ Nueva conciliación diaria</button>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let archivos = [], staging = null, cuentas = [], grupo = null;
+
+fetch('/api/cuentas').then(r => r.json()).then(j => { cuentas = j.cuentas; });
+
+const zona = $('#zona'), input = $('#inputArchivos');
+zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
+zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
+zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
+zona.addEventListener('drop', e => { e.preventDefault(); zona.classList.remove('arrastrando'); agregar([...e.dataTransfer.files]); });
+input.addEventListener('change', () => agregar([...input.files]));
+
+function agregar(fs) { archivos = archivos.concat(fs); pintarArchivos(); }
+window.quitar = (i, e) => { e.stopPropagation(); archivos.splice(i, 1); pintarArchivos(); };
+function pintarArchivos() {
+  $('#listaArchivos').innerHTML = archivos.map((f, i) =>
+    `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)">✕</button></li>`).join('');
+  $('#btnIdentificar').disabled = !archivos.length;
+}
+
+$('#btnIdentificar').addEventListener('click', async () => {
+  $('#estadoCarga').innerHTML = '<span class="spinner"></span>Analizando archivos…';
+  $('#btnIdentificar').disabled = true;
+  try {
+    const fd = new FormData();
+    archivos.forEach(f => fd.append('archivos', f));
+    const resp = await fetch('/api/diario/identificar', { method: 'POST', body: fd });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    staging = json;
+    $('#estadoCarga').textContent = '';
+    pintarIdent();
+  } catch (err) {
+    $('#estadoCarga').textContent = '⚠ ' + err.message;
+    $('#btnIdentificar').disabled = false;
+  }
+});
+
+function selectorCuenta(a) {
+  const ops = cuentas.map(c =>
+    `<option value="${esc(c.id)}" ${a.cuenta_id === c.id ? 'selected' : ''}>${esc(c.etiqueta)}</option>`);
+  return `<select data-archivo="${esc(a.archivo)}">
+    <option value="ignorar" ${!a.cuenta_id ? 'selected' : ''}>— elegir cuenta / ignorar —</option>
+    ${ops.join('')}</select>`;
+}
+
+function pintarIdent() {
+  $('#identCard').classList.remove('oculto');
+  const thead = $('#tablaIdent thead'), tbody = $('#tablaIdent tbody');
+  thead.innerHTML = '<tr><th>Archivo</th><th>Detectado</th><th>Movs</th><th>Rango</th><th>Cuenta</th></tr>';
+  tbody.innerHTML = staging.archivos.map(a => {
+    let det;
+    if (a.tipo === 'extracto')
+      det = `<span class="chip extracto">extracto ${esc(a.banco || '?')}</span>
+             ${a.cuenta_detectada ? ' ' + esc(a.cuenta_detectada) : ' <span class="chip warn">sin nro adentro</span>'}
+             ${a.moneda ? ' ' + esc(a.moneda) : ''}`;
+    else if (a.tipo === 'fbs')
+      det = `<span class="chip fbs">FBS mayor ${esc(a.hoja || '?')}</span> ${esc(a.nombre_fbs || '')}
+             <span style="color:var(--texto2)">cód. ${esc(a.codigo_fbs || '?')}</span>`;
+    else
+      det = `<span class="chip err">no reconocido</span> ${esc(a.error || '')}`;
+    return `<tr>
+      <td>${esc(a.archivo)}</td>
+      <td>${det}</td>
+      <td class="num">${a.cantidad || ''}</td>
+      <td style="white-space:nowrap">${esc(a.desde || '')}${a.hasta && a.hasta !== a.desde ? ' → ' + esc(a.hasta) : ''}</td>
+      <td>${a.tipo === 'desconocido' ? '—' : selectorCuenta(a)}</td>
+    </tr>`;
+  }).join('');
+  $('#identCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('#btnConciliar').addEventListener('click', async () => {
+  const asignaciones = {};
+  document.querySelectorAll('#tablaIdent select').forEach(s => {
+    asignaciones[s.dataset.archivo] = s.value;
+  });
+  $('#estadoConciliar').innerHTML = '<span class="spinner"></span>Conciliando cuenta por cuenta…';
+  $('#btnConciliar').disabled = true;
+  try {
+    const resp = await fetch(`/api/diario/conciliar/${staging.staging_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asignaciones }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    grupo = json;
+    history.replaceState(null, '', `?grupo=${grupo.grupo_id}`);
+    $('#estadoConciliar').textContent = '';
+    pintarTablero();
+  } catch (err) {
+    $('#estadoConciliar').textContent = '⚠ ' + err.message;
+    $('#btnConciliar').disabled = false;
+  }
+});
+
+function chipEstado(f) {
+  if (f.estado === 'ok') {
+    const p = f.resumen.porcentaje_explicado;
+    const cls = p >= 85 ? 'ok' : (p >= 60 ? 'warn' : 'err');
+    return `<span class="chip ${cls}">conciliada ${p}%</span>`;
+  }
+  if (f.estado === 'sin_fbs') return '<span class="chip warn">falta el FBS</span>';
+  if (f.estado === 'sin_extracto') return '<span class="chip warn">falta el extracto</span>';
+  return `<span class="chip err">${esc(f.estado)}</span>`;
+}
+
+function pintarTablero() {
+  $('#identCard').classList.add('oculto');
+  $('#cargaCard').classList.add('oculto');
+  $('#tableroCard').classList.remove('oculto');
+  $('#fechaProc').textContent = `procesado el ${grupo.procesado}`;
+  const thead = $('#tablaTablero thead'), tbody = $('#tablaTablero tbody');
+  thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th><th>Movs del día</th>
+    <th>Conciliados</th><th>Gastos banc.</th><th>Sin contabilizar</th>
+    <th>FBS sin banco</th><th></th></tr>`;
+  tbody.innerHTML = grupo.cuentas.map(f => {
+    const r = f.resumen || {};
+    return `<tr>
+      <td>${esc(f.etiqueta)}</td>
+      <td>${chipEstado(f)}</td>
+      <td class="num">${r.movimientos_banco ?? ''}</td>
+      <td class="num">${r.conciliados ?? ''}</td>
+      <td class="num">${r.gastos_bancarios ?? ''}</td>
+      <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
+      <td class="num">${r.mayor_sin_banco ?? ''}</td>
+      <td>${f.job_id ? `<a href="/?job=${esc(f.job_id)}" target="_blank"
+        style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
+    </tr>`;
+  }).join('');
+  $('#sinAsignar').innerHTML = grupo.sin_asignar.length ?
+    `<div class="aviso info">Archivos no procesados: ${grupo.sin_asignar.map(x =>
+      `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '';
+  $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
+}
+
+$('#btnCopiarTablero').addEventListener('click', async () => {
+  const url = `${location.origin}${location.pathname}?grupo=${grupo.grupo_id}`;
+  try { await navigator.clipboard.writeText(url); } catch { prompt('Copiá el link:', url); return; }
+  $('#btnCopiarTablero').textContent = '✔ Link copiado';
+  setTimeout(() => { $('#btnCopiarTablero').textContent = '🔗 Copiar link del tablero'; }, 2000);
+});
+
+// al entrar con ?grupo=... se retoma el tablero guardado
+(async function retomar() {
+  const g = new URLSearchParams(location.search).get('grupo');
+  if (!g) return;
+  try {
+    const resp = await fetch(`/api/diario/${g}`);
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'no encontrado');
+    grupo = json;
+    pintarTablero();
+  } catch (err) {
+    document.querySelector('main').insertAdjacentHTML('afterbegin',
+      `<div class="aviso error">⚠ No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);
+  }
+})();
+</script>
+</body>
+</html>

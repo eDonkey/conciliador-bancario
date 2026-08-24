@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import uuid
+from datetime import date
 
 from fastapi import Body, FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -28,6 +29,8 @@ from engine import ai_assist
 from engine import reglas as reglas_mod
 from engine import equivalencias as eq_mod
 from engine import gastos_conf
+from engine import cuentas as cuentas_mod
+from parsers import diarios
 
 app = FastAPI(title="Conciliador bancario")
 
@@ -36,6 +39,7 @@ DATOS_DIR = os.path.join(BASE_DIR, "datos")
 os.makedirs(DATOS_DIR, exist_ok=True)
 RESULTADOS = {}  # job_id -> resultado serializado
 PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
+STAGING = {}     # staging_id -> archivos parseados del modo diario
 
 LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
 LISTAS_MAYOR = ["e_sin_banco", "o_pendientes_sin_banco"]
@@ -267,6 +271,166 @@ def api_equivalencias_agregar(cuerpo: dict = Body(...)):
 @app.delete("/api/equivalencias/{eq_id}")
 def api_equivalencias_eliminar(eq_id: str):
     return {"equivalencias": eq_mod.eliminar(eq_id)}
+
+
+@app.get("/api/cuentas")
+def api_cuentas():
+    """Cuentas bancarias del grupo con su etiqueta y mapeo FBS."""
+    cuentas = cuentas_mod.cargar()
+    return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
+            "bancos": cuentas_mod.BANCOS}
+
+
+@app.post("/api/diario/identificar")
+async def api_diario_identificar(archivos: list[UploadFile] = File(...)):
+    """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
+    deja lo parseado en memoria para el paso de conciliación."""
+    cuentas = cuentas_mod.cargar()
+    staging_id = uuid.uuid4().hex[:10]
+    parseados, resumen = {}, []
+    for up in archivos:
+        data = await up.read()
+        info = diarios.identificar(up.filename, data)
+        parseados[up.filename] = info
+        cuenta = None
+        if info["tipo"] == "extracto":
+            cuenta = cuentas_mod.buscar_por_numero(
+                cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
+        elif info["tipo"] == "fbs":
+            cuenta = cuentas_mod.buscar_por_fbs(cuentas, info.get("codigo_fbs"))
+        resumen.append({
+            "archivo": up.filename, "tipo": info["tipo"],
+            "banco": info.get("banco"), "moneda": info.get("moneda"),
+            "cuenta_detectada": info.get("cuenta"),
+            "hoja": info.get("hoja"), "codigo_fbs": info.get("codigo_fbs"),
+            "nombre_fbs": info.get("nombre_fbs"),
+            "cantidad": info.get("cantidad", 0),
+            "desde": info["desde"].isoformat() if info.get("desde") else None,
+            "hasta": info["hasta"].isoformat() if info.get("hasta") else None,
+            "cuenta_id": cuenta["id"] if cuenta else None,
+            "error": info.get("error"),
+        })
+    STAGING[staging_id] = {"archivos": parseados, "resumen": resumen}
+    return {"staging_id": staging_id, "archivos": resumen}
+
+
+def _resumen_mini(r):
+    return {
+        "movimientos_banco": r["movimientos_banco"],
+        "conciliados": r["conciliados_e"] + r["en_o_pendientes_confirmar"]
+                       + r.get("conciliados_manual", 0),
+        "porcentaje_explicado": r.get("porcentaje_explicado", r["porcentaje_conciliado"]),
+        "banco_sin_contabilizar": r["banco_sin_contabilizar"]["cantidad"],
+        "gastos_bancarios": r["gastos_bancarios"]["cantidad"],
+        "mayor_sin_banco": r["e_sin_banco"]["cantidad"] + r["o_pendientes_sin_banco"]["cantidad"],
+    }
+
+
+@app.post("/api/diario/conciliar/{staging_id}")
+def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
+    """Modo diario, paso 2: con las asignaciones archivo→cuenta confirmadas,
+    corre una conciliación por cuenta (mismo motor y mismos aprendizajes que
+    el modo mensual) y devuelve el tablero del día."""
+    stag = STAGING.get(staging_id)
+    if not stag:
+        return JSONResponse(status_code=404, content={
+            "error": "La identificación expiró (el servidor se reinició). Volvé a subir los archivos."})
+    asignaciones = cuerpo.get("asignaciones") or {}
+    cuentas = cuentas_mod.cargar()
+    por_id = {c["id"]: c for c in cuentas}
+
+    # agrupar archivos por cuenta y aprender mapeos FBS nuevos
+    grupos = {}
+    sin_asignar = []
+    for fila in stag["resumen"]:
+        nombre = fila["archivo"]
+        cid = asignaciones.get(nombre, fila.get("cuenta_id"))
+        if not cid or cid == "ignorar" or fila["tipo"] == "desconocido":
+            sin_asignar.append({"archivo": nombre, "tipo": fila["tipo"],
+                                "motivo": fila.get("error") or "sin cuenta asignada"})
+            continue
+        info = stag["archivos"][nombre]
+        g = grupos.setdefault(cid, {"movs": [], "e": [], "o": [], "archivos": []})
+        g["archivos"].append(nombre)
+        if fila["tipo"] == "extracto":
+            g["movs"].extend(info["movimientos"])
+        else:
+            (g["e"] if info.get("hoja") != "O" else g["o"]).extend(info["asientos"])
+            if fila.get("codigo_fbs") and por_id.get(cid) and \
+               fila["codigo_fbs"] not in (por_id[cid].get("fbs_e"), por_id[cid].get("fbs_o")):
+                cuentas = cuentas_mod.mapear_fbs(cid, info.get("hoja") or "E",
+                                                 fila["codigo_fbs"], fila.get("nombre_fbs"))
+                por_id = {c["id"]: c for c in cuentas}
+
+    reglas = reglas_mod.cargar()
+    equivalencias = eq_mod.cargar()
+    terminos_gasto = gastos_conf.cargar()
+
+    tablero = []
+    for cid, g in grupos.items():
+        etiqueta = cuentas_mod.etiqueta(por_id[cid]) if cid in por_id else cid
+        if not g["movs"]:
+            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_extracto",
+                            "archivos": g["archivos"]})
+            continue
+        if not g["e"] and not g["o"]:
+            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_fbs",
+                            "archivos": g["archivos"],
+                            "resumen": {"movimientos_banco": len(g["movs"])}})
+            continue
+        # dedupe de movimientos (mismo movimiento en hoja "del día" e "históricos")
+        vistos, movs = set(), []
+        for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
+            clave = (m.fecha, m.descripcion, round(m.credito - m.debito, 2), m.saldo)
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            m.id = f"B#{len(movs) + 1}"
+            movs.append(m)
+        resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
+                              equivalencias=equivalencias, terminos_gasto=terminos_gasto)
+        fechas = [m.fecha for m in movs if m.fecha]
+        extractos_meta = [{"archivo": ", ".join(g["archivos"]),
+                           "desde": min(fechas) if fechas else None,
+                           "hasta": max(fechas) if fechas else None}]
+        job_id = uuid.uuid4().hex[:12]
+        salida = _serializar(resultado, extractos_meta, [], "desactivada")
+        salida["conciliados_manual"] = []
+        salida["resumen"]["conciliados_manual"] = 0
+        salida["resumen"]["reglas_disponibles"] = len(reglas)
+        salida["job_id"] = job_id
+        salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
+        RESULTADOS[job_id] = salida
+        _guardar(job_id)
+        tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "ok",
+                        "job_id": job_id, "archivos": g["archivos"],
+                        "resumen": _resumen_mini(salida["resumen"])})
+
+    grupo_id = uuid.uuid4().hex[:10]
+    grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
+             "cuentas": sorted(tablero, key=lambda x: x["etiqueta"]),
+             "sin_asignar": sin_asignar}
+    with open(os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json"), "w", encoding="utf-8") as f:
+        json.dump(grupo, f, ensure_ascii=False)
+    STAGING.pop(staging_id, None)
+    return grupo
+
+
+@app.get("/api/diario/{grupo_id}")
+def api_diario_grupo(grupo_id: str):
+    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
+    if not os.path.exists(ruta):
+        return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
+    with open(ruta, encoding="utf-8") as f:
+        grupo = json.load(f)
+    # refrescar los números con el estado actual de cada job (conciliaciones
+    # manuales posteriores incluidas)
+    for fila in grupo["cuentas"]:
+        if fila.get("job_id"):
+            datos = _obtener(fila["job_id"])
+            if datos:
+                fila["resumen"] = _resumen_mini(datos["resumen"])
+    return grupo
 
 
 @app.get("/api/gastos")
@@ -658,6 +822,12 @@ def _generar_excel(datos):
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+@app.get("/diario")
+def pagina_diario():
+    return FileResponse(os.path.join(BASE_DIR, "static", "diario.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/")

@@ -177,6 +177,7 @@
     <p>Extractos Santander vs. libro mayor (cuentas E y O) — conciliación automática con IA</p>
   </div>
   <div class="zona-derecha">
+    <a href="/diario" class="secundario" style="text-decoration:none; padding: 9px 18px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; color:var(--texto); background:#fff;">📅 Modo diario</a>
     <button class="secundario" id="btnEquiv">📖 Equivalencias</button>
     <button class="secundario" id="btnGastos">🏦 Gastos</button>
     <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
@@ -567,6 +568,10 @@ function mostrarResultados() {
       <div class="sub">incluye los gastos bancarios justificados por la ND mensual</div></div>`;
 
   let avisos = '';
+  if (datos.cuenta)
+    avisos += `<div class="aviso info">📅 Conciliación del <b>modo diario</b> —
+      cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
+      (manual, reglas, equivalencias) aprende igual que en el modo mensual.</div>`;
   if (r.reglas_aplicadas)
     avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
