@@ -297,7 +297,11 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...)):
             cuenta = cuentas_mod.buscar_por_numero(
                 cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
         elif info["tipo"] == "fbs":
-            cuenta = cuentas_mod.buscar_por_fbs(cuentas, info.get("codigo_fbs"))
+            idents = list((info.get("codigos") or {}).values()) + [info.get("nombre_fbs")]
+            cuenta = next((c for c in (cuentas_mod.buscar_por_fbs(cuentas, i)
+                                       for i in idents if i) if c), None)
+            if cuenta is None:  # el nombre interno a veces trae el nro real
+                cuenta = cuentas_mod.buscar_por_nombre_fbs(cuentas, info.get("nombre_fbs"))
         resumen.append({
             "archivo": up.filename, "tipo": info["tipo"],
             "banco": info.get("banco"), "moneda": info.get("moneda"),
@@ -355,11 +359,17 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         if fila["tipo"] == "extracto":
             g["movs"].extend(info["movimientos"])
         else:
-            (g["e"] if info.get("hoja") != "O" else g["o"]).extend(info["asientos"])
-            if fila.get("codigo_fbs") and por_id.get(cid) and \
-               fila["codigo_fbs"] not in (por_id[cid].get("fbs_e"), por_id[cid].get("fbs_o")):
-                cuentas = cuentas_mod.mapear_fbs(cid, info.get("hoja") or "E",
-                                                 fila["codigo_fbs"], fila.get("nombre_fbs"))
+            # un archivo FBS puede traer la hoja E, la O, o las dos juntas
+            g["e"].extend(a for a in info["asientos"] if a.hoja == "E")
+            g["o"].extend(a for a in info["asientos"] if a.hoja == "O")
+            cods = info.get("codigos") or {}
+            if por_id.get(cid):
+                for letra in set(info.get("hoja") or "E") & {"E", "O"}:
+                    ident = cods.get(letra) or fila.get("nombre_fbs")
+                    if ident and ident not in (por_id[cid].get("fbs_e"),
+                                               por_id[cid].get("fbs_o")):
+                        cuentas = cuentas_mod.mapear_fbs(cid, letra, ident,
+                                                         fila.get("nombre_fbs"))
                 por_id = {c["id"]: c for c in cuentas}
 
     reglas = reglas_mod.cargar()
@@ -378,13 +388,16 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                             "archivos": g["archivos"],
                             "resumen": {"movimientos_banco": len(g["movs"])}})
             continue
-        # dedupe de movimientos (mismo movimiento en hoja "del día" e "históricos")
-        vistos, movs = set(), []
+        # dedupe SOLO entre archivos distintos (p. ej. el extracto "del día" y el
+        # "histórico" subidos por separado). Dentro de un mismo archivo, filas
+        # idénticas son movimientos reales (comisiones repetidas) y se conservan.
+        vistos, movs = {}, []
         for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
-            clave = (m.fecha, m.descripcion, round(m.credito - m.debito, 2), m.saldo)
-            if clave in vistos:
+            clave = (m.fecha, m.descripcion, round(m.credito - m.debito, 2),
+                     m.saldo, m.comprobante)
+            if clave in vistos and vistos[clave] != m.archivo:
                 continue
-            vistos.add(clave)
+            vistos.setdefault(clave, m.archivo)
             m.id = f"B#{len(movs) + 1}"
             movs.append(m)
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,

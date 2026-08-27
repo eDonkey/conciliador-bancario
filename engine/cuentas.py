@@ -84,12 +84,20 @@ def etiqueta(c: dict) -> str:
     return f'{c["empresa"]} — {BANCOS.get(c["banco"], c["banco"])} {c["numero"]} ({c["moneda"]})'
 
 
-def buscar_por_numero(cuentas, banco, digitos, moneda=None):
-    """Matchea la cuenta detectada en un extracto contra la tabla, comparando
-    dígitos sin ceros a la izquierda (los bancos agregan prefijos)."""
-    if not digitos:
+def _segmentos(s: str) -> tuple:
+    """Segmentos numéricos como enteros: '742-000483/5' -> (742, 483, 5).
+    Ignora los ceros de relleno que cada banco pone distinto."""
+    return tuple(int(x) for x in re.findall(r'\d+', s or ''))
+
+
+def buscar_por_numero(cuentas, banco, numero, moneda=None):
+    """Matchea la cuenta detectada en un extracto contra la tabla: por dígitos
+    sin ceros a la izquierda, o por segmentos numéricos ('742-483-5' matchea
+    '742-000483/5')."""
+    if not numero:
         return None
-    d = digitos.lstrip('0')
+    d = _digits(numero).lstrip('0')
+    seg = _segmentos(numero)
     for c in cuentas:
         if banco and c["banco"] != banco:
             continue
@@ -97,6 +105,8 @@ def buscar_por_numero(cuentas, banco, digitos, moneda=None):
             continue
         cd = _digits(c["numero"]).lstrip('0')
         if cd == d or (len(d) >= 6 and (cd.endswith(d) or d.endswith(cd))):
+            return c
+        if len(seg) >= 2 and seg == _segmentos(c["numero"]):
             return c
     return None
 
@@ -106,6 +116,26 @@ def buscar_por_fbs(cuentas, codigo):
         if codigo and codigo in (c.get("fbs_e"), c.get("fbs_o")):
             return c
     return None
+
+
+BANCO_KW = {"santander": ("SANTANDER", "RIO ALEM"), "frances": ("BBVA", "FRANCES"),
+            "galicia": ("GALICIA",), "macro": ("MACRO",), "ciudad": ("CIUDAD",)}
+
+
+def buscar_por_nombre_fbs(cuentas, nombre):
+    """Algunos FBS traen el número real de cuenta en el nombre interno
+    ('CIT - BANCO SANTANDER CC $ 742-000483/5'): banco por palabra clave,
+    moneda por el símbolo, número por segmentos."""
+    if not nombre:
+        return None
+    up = nombre.upper()
+    banco = next((b for b, kws in BANCO_KW.items()
+                  if any(k in up for k in kws)), None)
+    moneda = "USD" if re.search(r'U\$S|USD|DOLAR', up) else ("ARS" if "$" in up else None)
+    m = re.search(r'\b(\d{3,4})[-. ](\d{1,6})[-/. ](\d)\b', nombre)
+    if not m:
+        return None
+    return buscar_por_numero(cuentas, banco, "-".join(m.groups()), moneda)
 
 
 def mapear_fbs(cuenta_id, hoja, codigo, nombre_fbs=None, ruta: str = RUTA_DEFAULT):

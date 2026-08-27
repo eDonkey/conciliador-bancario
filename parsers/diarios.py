@@ -44,7 +44,7 @@ def _fecha(s):
         return s.date()
     if isinstance(s, date):
         return s
-    if isinstance(s, float) and s > 20000:
+    if isinstance(s, float) and 20000 < s < 80000:   # serial Excel plausible
         return BASE_EXCEL + timedelta(days=int(s))
     m = re.match(r'(\d{2})[/-](\d{2})[/-](\d{4})', str(s or ''))
     if m:
@@ -209,6 +209,40 @@ def _parse_macro(nombre, wb):
             "movimientos": movs}
 
 
+# --- Santander exportado a .xlsx (mismas columnas que el texto tabulado) ----
+
+CUENTA_TXT_RE = re.compile(r'\b(\d{3})[-. ](\d{1,6})[-/.](\d)\b')
+
+
+def _parse_rio_xlsx(nombre, wb):
+    ws = wb.worksheets[0]
+    filas = list(ws.iter_rows(values_only=True))
+    moneda = None
+    hdr = None
+    movs, seq = [], 0
+    for f in filas:
+        c0 = str(f[0] or '')
+        if 'Cuenta corriente en' in c0 or 'Cuenta Corriente en' in c0:
+            moneda = 'USD' if 'lares' in c0 or 'U$S' in c0.upper() else 'ARS'
+        elif c0 == 'Fecha' and 'Cod. Operativo' in [str(x).strip() for x in f]:
+            hdr = {str(x).strip(): i for i, x in enumerate(f) if x}
+        elif hdr and _fecha(f[0]) and not c0.startswith('Saldo'):
+            seq += 1
+            desc, _, det = str(f[hdr['Concepto']] or '').partition('  - ')
+            saldo = f[hdr.get('Saldo', -1)] if 'Saldo' in hdr else 0
+            movs.append(_mov(seq, nombre, _fecha(f[hdr['Fecha']]), desc,
+                             float(str(f[hdr['Importe']] or 0).replace(',', '')),
+                             float(str(saldo or 0).replace(',', '') or 0),
+                             comprobante=str(f[hdr['Referencia']] or '') or None))
+    # el número de cuenta no viene adentro: está en el nombre de hoja/archivo
+    m = CUENTA_TXT_RE.search(f"{ws.title} {nombre}")
+    cuenta = '-'.join(m.groups()) if m else None
+    if moneda is None and re.search(r'CC\s*\$', f"{ws.title} {nombre}"):
+        moneda = 'ARS'
+    return {"banco": "santander", "cuenta": cuenta, "moneda": moneda,
+            "movimientos": movs}
+
+
 # --- FBS: Consulta del Mayor (hoja E u O) -----------------------------------
 
 def _parse_fbs(nombre, wb):
@@ -232,10 +266,54 @@ def _parse_fbs(nombre, wb):
             debe=round(float(v[4] or 0.0), 2),
             haber=round(float(v[5] or 0.0), 2)))
     return {"tipo": "fbs", "hoja": letra, "codigo_fbs": codigo,
+            "codigos": {letra or "E": codigo} if codigo else {},
             "nombre_fbs": (nom.group(1).strip() if nom else hoja.name[:60]),
             "desde": _fecha(rango.group(1)) if rango else None,
             "hasta": _fecha(rango.group(2)) if rango else None,
             "asientos": asientos}
+
+
+def _parse_fbs_xlsx(nombre, wb):
+    """FBS exportado a .xlsx: puede traer las hojas E y O en el mismo archivo
+    ("Hoja E"/"Hoja O") y sin código de cuenta; el identificador que queda para
+    el mapeo es el nombre interno ("Cuenta: CIT - BANCO SANTANDER...")."""
+    asientos, hojas = [], []
+    codigos = {}
+    nombre_fbs = None
+    for ws in wb.worksheets:
+        filas = list(ws.iter_rows(values_only=True))
+        texto0 = ' '.join(str(v) for f in filas[:8] for v in f if v)
+        if 'Consulta del Mayor' not in texto0:
+            continue
+        m = FBS_HOJA_RE.search(ws.title) or FBS_HOJA_RE.search(texto0)
+        letra = m.group(1) if m else None
+        if letra is None:
+            t = re.search(r'\b(E|O)\b', ws.title.upper())
+            letra = t.group(1) if t else ('O' if not hojas else 'E')
+        if m:
+            codigos[letra] = m.group(2)
+        hojas.append(letra)
+        for f in filas[:8]:
+            c0 = str(f[0] or '')
+            if c0.startswith('Cuenta:'):
+                crudo = c0.split('Cuenta:', 1)[1].strip()
+                nombre_fbs = re.split(r'\s*\((?:E|O)\)', crudo)[0].strip()[:80]
+        seq = 0
+        for f in filas:
+            fecha = _fecha(f[1])
+            if fecha is None or str(f[0] or '').startswith('Saldo') or f[0] is None:
+                continue
+            seq += 1
+            asientos.append(AsientoMayor(
+                id=f"{letra}#{seq}", hoja=letra,
+                asiento=str(f[0]).strip(), fecha=fecha,
+                referencia=str(f[2] or '').strip(),
+                comentario=str(f[3] or '').strip(),
+                debe=round(float(str(f[4] or 0).replace(',', '') or 0), 2),
+                haber=round(float(str(f[5] or 0).replace(',', '') or 0), 2)))
+    return {"tipo": "fbs", "hoja": ''.join(sorted(set(hojas))),
+            "codigo_fbs": next(iter(codigos.values()), None), "codigos": codigos,
+            "nombre_fbs": nombre_fbs, "asientos": asientos}
 
 
 # --- identificación ---------------------------------------------------------
@@ -258,8 +336,22 @@ def identificar(nombre: str, data: bytes) -> dict:
                 out = {"tipo": "extracto", **_parse_macro(nombre, wb)}
             else:
                 out = {"tipo": "extracto", **_parse_bbva(nombre, wb)}
-        elif data[:2] == b'PK':                      # xlsx
-            out = {"tipo": "extracto", **_parse_galicia(nombre, data)}
+        elif data[:2] == b'PK':                      # xlsx: FBS, Galicia o Santander
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True,
+                                        data_only=True)
+            celdas0 = ' '.join(str(v) for ws in wb.worksheets
+                               for f in list(ws.iter_rows(values_only=True))[:8]
+                               for v in f if v)
+            if 'Consulta del Mayor' in celdas0:
+                out = _parse_fbs_xlsx(nombre, wb)
+            elif 'Grupo de Conceptos' in celdas0 or 'Movimientos' in wb.sheetnames:
+                out = {"tipo": "extracto", **_parse_galicia(nombre, data)}
+            elif 'Cod. Operativo' in celdas0:
+                out = {"tipo": "extracto", **_parse_rio_xlsx(nombre, wb)}
+            else:
+                return {"tipo": "desconocido", "error":
+                        "Excel no reconocido: no parece Galicia, Santander ni FBS"}
         elif _es_rio(data):
             out = {"tipo": "extracto", **_parse_rio(nombre, data)}
         elif data[:6].decode('latin-1', errors='replace').startswith('Cuenta'):
