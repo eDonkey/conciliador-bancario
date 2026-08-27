@@ -572,6 +572,13 @@ function mostrarResultados() {
     avisos += `<div class="aviso info">📅 Conciliación del <b>modo diario</b> —
       cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
       (manual, reglas, equivalencias) aprende igual que en el modo mensual.</div>`;
+  if (datos.arrastre)
+    avisos += `<div class="aviso info">↩ Se arrastraron
+      <b>${datos.arrastre.movimientos}</b> movimientos del banco y
+      <b>${datos.arrastre.asientos}</b> asientos del FBS que quedaron pendientes
+      de la conciliación anterior de esta cuenta (figuran como
+      "(pendiente de días anteriores)"). Lo que cruce hoy se concilia solo;
+      lo que no, se vuelve a arrastrar mañana.</div>`;
   if (r.reglas_aplicadas)
     avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus

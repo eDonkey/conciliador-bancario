@@ -318,6 +318,86 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...)):
     return {"staging_id": staging_id, "archivos": resumen}
 
 
+RUTA_ARRASTRE = os.path.join(DATOS_DIR, "arrastre_diario.json")
+
+
+def _cargar_arrastre() -> dict:
+    if os.path.exists(RUTA_ARRASTRE):
+        try:
+            with open(RUTA_ARRASTRE, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _guardar_arrastre(d: dict):
+    with open(RUTA_ARRASTRE, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+
+
+def _fecha_iso(s):
+    from datetime import date as _d
+    return _d.fromisoformat(s) if s else None
+
+
+def _reconstruir_mov(d, seq):
+    from parsers.santander_pdf import MovimientoBanco
+    archivo = d.get("archivo") or ""
+    if not archivo.startswith("(pendiente"):
+        archivo = f"(pendiente de días anteriores) {archivo}"
+    return MovimientoBanco(
+        id=f"P#{seq}", fecha=_fecha_iso(d.get("fecha")),
+        comprobante=d.get("comprobante"), descripcion=d.get("descripcion") or "",
+        detalle=d.get("detalle") or "", debito=d.get("debito") or 0.0,
+        credito=d.get("credito") or 0.0, saldo=d.get("saldo") or 0.0,
+        archivo=archivo, pagina=0)
+
+
+def _reconstruir_asiento(d, seq):
+    from parsers.mayor_xlsx import AsientoMayor
+    return AsientoMayor(
+        id=f"P{d.get('hoja', 'E')}#{seq}", hoja=d.get("hoja", "E"),
+        asiento=d.get("asiento"), fecha=_fecha_iso(d.get("fecha")),
+        referencia=d.get("referencia") or "", comentario=d.get("comentario") or "",
+        debe=d.get("debe") or 0.0, haber=d.get("haber") or 0.0)
+
+
+def _aplicar_arrastre(cid, movs, g, arrastre):
+    """Suma al cruce los residuales de la conciliación anterior de la cuenta:
+    movimientos del banco sin contabilizar y asientos FBS sin banco, salteando
+    los que ya vienen en los archivos de hoy. Devuelve (n_movs, n_asientos)."""
+    prev = _obtener(arrastre.get(cid) or "")
+    if not prev:
+        return 0, 0
+    seq = 0
+    claves_m = {(m.fecha, m.descripcion, round(m.credito - m.debito, 2), m.comprobante)
+                for m in movs}
+    n_movs = 0
+    for d in prev.get("banco_sin_contabilizar", []):
+        clave = (_fecha_iso(d.get("fecha")), d.get("descripcion") or "",
+                 round((d.get("credito") or 0) - (d.get("debito") or 0), 2),
+                 d.get("comprobante"))
+        if clave in claves_m:
+            continue
+        seq += 1
+        movs.append(_reconstruir_mov(d, seq))
+        n_movs += 1
+    claves_a = {(a.hoja, str(a.asiento), a.fecha, round(a.debe, 2), round(a.haber, 2))
+                for a in g["e"] + g["o"]}
+    n_asientos = 0
+    for lista, dest in (("e_sin_banco", g["e"]), ("o_pendientes_sin_banco", g["o"])):
+        for d in prev.get(lista, []):
+            clave = (d.get("hoja", "E"), str(d.get("asiento")), _fecha_iso(d.get("fecha")),
+                     round(d.get("debe") or 0, 2), round(d.get("haber") or 0, 2))
+            if clave in claves_a:
+                continue
+            seq += 1
+            dest.append(_reconstruir_asiento(d, seq))
+            n_asientos += 1
+    return n_movs, n_asientos
+
+
 def _resumen_mini(r):
     return {
         "movimientos_banco": r["movimientos_banco"],
@@ -327,6 +407,9 @@ def _resumen_mini(r):
         "banco_sin_contabilizar": r["banco_sin_contabilizar"]["cantidad"],
         "gastos_bancarios": r["gastos_bancarios"]["cantidad"],
         "mayor_sin_banco": r["e_sin_banco"]["cantidad"] + r["o_pendientes_sin_banco"]["cantidad"],
+        "arrastrados": r.get("arrastrados", 0),
+        "arrastrados_movs": r.get("arrastrados_movs", 0),
+        "arrastrados_asientos": r.get("arrastrados_asientos", 0),
     }
 
 
@@ -376,18 +459,10 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     equivalencias = eq_mod.cargar()
     terminos_gasto = gastos_conf.cargar()
 
+    arrastre = _cargar_arrastre()
     tablero = []
     for cid, g in grupos.items():
         etiqueta = cuentas_mod.etiqueta(por_id[cid]) if cid in por_id else cid
-        if not g["movs"]:
-            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_extracto",
-                            "archivos": g["archivos"]})
-            continue
-        if not g["e"] and not g["o"]:
-            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_fbs",
-                            "archivos": g["archivos"],
-                            "resumen": {"movimientos_banco": len(g["movs"])}})
-            continue
         # dedupe SOLO entre archivos distintos (p. ej. el extracto "del día" y el
         # "histórico" subidos por separado). Dentro de un mismo archivo, filas
         # idénticas son movimientos reales (comisiones repetidas) y se conservan.
@@ -400,6 +475,18 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             vistos.setdefault(clave, m.archivo)
             m.id = f"B#{len(movs) + 1}"
             movs.append(m)
+        # arrastre: los pendientes de la conciliación anterior de esta cuenta
+        # entran al cruce de hoy (lo de ayer aparece en el FBS de hoy y viceversa)
+        arr_movs, arr_asientos = _aplicar_arrastre(cid, movs, g, arrastre)
+        if not movs:
+            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_extracto",
+                            "archivos": g["archivos"]})
+            continue
+        if not g["e"] and not g["o"]:
+            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_fbs",
+                            "archivos": g["archivos"],
+                            "resumen": {"movimientos_banco": len(movs)}})
+            continue
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias, terminos_gasto=terminos_gasto)
         fechas = [m.fecha for m in movs if m.fecha]
@@ -413,12 +500,20 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
+        if arr_movs or arr_asientos:
+            salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
+                                  "desde_job": arrastre.get(cid)}
+            salida["resumen"]["arrastrados"] = arr_movs + arr_asientos
+            salida["resumen"]["arrastrados_movs"] = arr_movs
+            salida["resumen"]["arrastrados_asientos"] = arr_asientos
         RESULTADOS[job_id] = salida
         _guardar(job_id)
+        arrastre[cid] = job_id   # la próxima conciliación arrastra desde acá
         tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "ok",
                         "job_id": job_id, "archivos": g["archivos"],
                         "resumen": _resumen_mini(salida["resumen"])})
 
+    _guardar_arrastre(arrastre)
     grupo_id = uuid.uuid4().hex[:10]
     grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
              "cuentas": sorted(tablero, key=lambda x: x["etiqueta"]),

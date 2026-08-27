@@ -65,11 +65,22 @@
 
 <main>
   <section class="tarjeta" id="cargaCard">
+    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:16px; font-size:12.5px; color:var(--texto2);">
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">1 · Subí todo junto</b><br>
+        Los extractos del día de cada banco y los reportes FBS (mayor E y O).
+        No hace falta ordenar ni renombrar nada.</div>
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">2 · El sistema identifica</b><br>
+        Detecta banco, cuenta y moneda de cada archivo. Solo pide ayuda la primera
+        vez que ve un FBS nuevo (y lo recuerda para siempre).</div>
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">3 · Lo pendiente se arrastra</b><br>
+        Lo que hoy no cruza (movimientos sin asiento, asientos sin movimiento)
+        entra automáticamente en la conciliación de mañana, hasta que aparezca
+        su contrapartida.</div>
+    </div>
     <div class="zona" id="zona">
       <h3>Extractos diarios y reportes FBS</h3>
       <p>Arrastrá o hacé clic — todos juntos: los extractos de cada banco (Santander/Río,
-        BBVA/Francés, Galicia, Macro, Ciudad) y los FBS por cuenta (mayor E y mayor O).
-        El sistema identifica solo qué es cada archivo.</p>
+        BBVA/Francés, Galicia, Macro, Ciudad) y los FBS por cuenta (mayor E y mayor O).</p>
       <input type="file" id="inputArchivos" multiple hidden>
       <ul class="archivos" id="listaArchivos"></ul>
     </div>
@@ -204,10 +215,12 @@ function chipEstado(f) {
   if (f.estado === 'ok') {
     const p = f.resumen.porcentaje_explicado;
     const cls = p >= 85 ? 'ok' : (p >= 60 ? 'warn' : 'err');
-    return `<span class="chip ${cls}">conciliada ${p}%</span>`;
+    return `<span class="chip ${cls}" title="Porcentaje de los movimientos del banco con justificación contable (conciliados + gastos bancarios justificados)">${p}% explicado</span>`;
   }
-  if (f.estado === 'sin_fbs') return '<span class="chip warn">falta el FBS</span>';
-  if (f.estado === 'sin_extracto') return '<span class="chip warn">falta el extracto</span>';
+  if (f.estado === 'sin_fbs')
+    return '<span class="chip warn" title="Llegó el extracto del banco pero no el reporte FBS (mayor E y O) de esta cuenta: no hay contra qué cruzar">falta el FBS</span>';
+  if (f.estado === 'sin_extracto')
+    return '<span class="chip warn" title="Llegó el FBS pero ningún extracto del banco de esta cuenta, y no había pendientes arrastrados para cruzar">falta el extracto</span>';
   return `<span class="chip err">${esc(f.estado)}</span>`;
 }
 
@@ -217,15 +230,24 @@ function pintarTablero() {
   $('#tableroCard').classList.remove('oculto');
   $('#fechaProc').textContent = `procesado el ${grupo.procesado}`;
   const thead = $('#tablaTablero thead'), tbody = $('#tablaTablero tbody');
-  thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th><th>Movs del día</th>
-    <th>Conciliados</th><th>Gastos banc.</th><th>Sin contabilizar</th>
-    <th>FBS sin banco</th><th></th></tr>`;
+  thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th>
+    <th title="Movimientos que trajeron los extractos subidos hoy">Movs del día</th>
+    <th title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">↩ Arrastrados</th>
+    <th title="Movimientos con asiento encontrado en el FBS (E u O)">Conciliados</th>
+    <th title="Comisiones, impuestos y percepciones del banco (no se registran asiento por asiento)">Gastos banc.</th>
+    <th title="Movimientos del banco que siguen sin asiento: quedan pendientes y se arrastran a mañana">Sin asiento aún</th>
+    <th title="Asientos del FBS que siguen sin movimiento del banco: también se arrastran">FBS sin banco</th><th></th></tr>`;
   tbody.innerHTML = grupo.cuentas.map(f => {
     const r = f.resumen || {};
+    const delDia = r.movimientos_banco != null ?
+      r.movimientos_banco - (r.arrastrados_movs || 0) : null;
+    const arr = (r.arrastrados_movs || 0) + (r.arrastrados_asientos || 0) ?
+      `${r.arrastrados_movs || 0} movs · ${r.arrastrados_asientos || 0} asientos` : '—';
     return `<tr>
       <td>${esc(f.etiqueta)}</td>
       <td>${chipEstado(f)}</td>
-      <td class="num">${r.movimientos_banco ?? ''}</td>
+      <td class="num">${delDia ?? ''}</td>
+      <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}</td>
       <td class="num">${r.conciliados ?? ''}</td>
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
@@ -234,9 +256,17 @@ function pintarTablero() {
         style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
     </tr>`;
   }).join('');
-  $('#sinAsignar').innerHTML = grupo.sin_asignar.length ?
+  $('#sinAsignar').innerHTML = (grupo.sin_asignar.length ?
     `<div class="aviso info">Archivos no procesados: ${grupo.sin_asignar.map(x =>
-      `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '';
+      `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '') +
+    `<div style="font-size:12px; color:var(--texto2); margin-top:12px; line-height:1.6;">
+      <b>Cómo leer el tablero:</b> "Sin asiento aún" y "FBS sin banco" no son errores —
+      son operaciones cuya contrapartida todavía no llegó (el asiento se carga después,
+      o el movimiento aparece en el extracto de mañana). Esos pendientes
+      <b>se arrastran automáticamente</b> a la próxima conciliación de la misma cuenta
+      y se cruzan solos cuando aparece la otra punta. En el detalle figuran como
+      "(pendiente de días anteriores)". El % explicado considera conciliados + gastos
+      bancarios justificados sobre el total de movimientos.</div>`;
   $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
 }
 
