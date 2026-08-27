@@ -578,7 +578,9 @@ function mostrarResultados() {
       <b>${datos.arrastre.asientos}</b> asientos del FBS que quedaron pendientes
       de la conciliación anterior de esta cuenta (figuran como
       "(pendiente de días anteriores)"). Lo que cruce hoy se concilia solo;
-      lo que no, se vuelve a arrastrar mañana.</div>`;
+      lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
+      ` <a href="/?job=${esc(datos.arrastre.desde_job)}" target="_blank"
+        style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
   if (r.reglas_aplicadas)
     avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus

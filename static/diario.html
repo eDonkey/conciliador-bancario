@@ -111,6 +111,15 @@
       <button class="secundario" onclick="location.href = location.pathname">＋ Nueva conciliación diaria</button>
     </div>
   </section>
+
+  <section class="tarjeta oculto" id="histCard">
+    <h2 class="seccion">📚 Memoria diaria</h2>
+    <p style="font-size:12.5px; color:var(--texto2); margin-bottom:10px;">
+      Cada conciliación diaria queda guardada acá para siempre. Los pendientes de un
+      día encadenan con el siguiente: si abrís un tablero viejo vas a ver qué quedó
+      sin cruzar ese día, y en los siguientes cómo se fue resolviendo.</p>
+    <div class="contenedor-tabla"><table id="tablaHist"><thead></thead><tbody></tbody></table></div>
+  </section>
 </main>
 
 <script>
@@ -267,6 +276,7 @@ function pintarTablero() {
       y se cruzan solos cuando aparece la otra punta. En el detalle figuran como
       "(pendiente de días anteriores)". El % explicado considera conciliados + gastos
       bancarios justificados sobre el total de movimientos.</div>`;
+  cargarHistorial();
   $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -276,6 +286,38 @@ $('#btnCopiarTablero').addEventListener('click', async () => {
   $('#btnCopiarTablero').textContent = '✔ Link copiado';
   setTimeout(() => { $('#btnCopiarTablero').textContent = '🔗 Copiar link del tablero'; }, 2000);
 });
+
+/* ============ memoria diaria (historial persistente) ============ */
+async function cargarHistorial() {
+  try {
+    const resp = await fetch('/api/diario');
+    const json = await resp.json();
+    if (!resp.ok || !json.grupos.length) return;
+    $('#histCard').classList.remove('oculto');
+    const actual = grupo && grupo.grupo_id;
+    $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Cuentas</th>
+      <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
+      <th title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
+      <th title="Movimientos procesados (incluye los arrastrados de días previos)">Movimientos</th>
+      <th title="Pendientes que venían arrastrados de días anteriores">↩ Arrastrados</th>
+      <th title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
+      <th>% explicado</th><th></th></tr>`;
+    $('#tablaHist tbody').innerHTML = json.grupos.map(g => `
+      <tr style="${g.grupo_id === actual ? 'background:#f3f7fd;' : ''}">
+        <td style="white-space:nowrap">${esc(g.procesado || '')}${g.hora ? ' · ' + esc(g.hora) : ''}
+          ${g.grupo_id === actual ? ' <span class="chip extracto">este tablero</span>' : ''}</td>
+        <td class="num">${g.cuentas}</td>
+        <td class="num">${g.conciliadas}</td>
+        <td class="num">${g.incompletas || ''}</td>
+        <td class="num">${g.movimientos || ''}</td>
+        <td class="num">${g.arrastrados || ''}</td>
+        <td class="num">${g.pendientes || ''}</td>
+        <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
+        <td><a href="?grupo=${esc(g.grupo_id)}" style="color:var(--azul)">Abrir tablero →</a></td>
+      </tr>`).join('');
+  } catch {}
+}
+cargarHistorial();
 
 // al entrar con ?grupo=... se retoma el tablero guardado
 (async function retomar() {

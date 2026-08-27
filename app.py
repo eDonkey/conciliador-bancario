@@ -516,12 +516,51 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     _guardar_arrastre(arrastre)
     grupo_id = uuid.uuid4().hex[:10]
     grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
+             "hora": time.strftime("%H:%M"),
              "cuentas": sorted(tablero, key=lambda x: x["etiqueta"]),
              "sin_asignar": sin_asignar}
     with open(os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json"), "w", encoding="utf-8") as f:
         json.dump(grupo, f, ensure_ascii=False)
     STAGING.pop(staging_id, None)
     return grupo
+
+
+@app.get("/api/diario")
+def api_diario_historial():
+    """La memoria diaria: todas las conciliaciones diarias guardadas, de la
+    más reciente a la más vieja, con su resumen. Los tableros nunca se borran
+    y los pendientes encadenan cada día con el siguiente."""
+    grupos = []
+    for nombre in os.listdir(DATOS_DIR):
+        if not (nombre.startswith("grupo_") and nombre.endswith(".json")):
+            continue
+        ruta = os.path.join(DATOS_DIR, nombre)
+        try:
+            with open(ruta, encoding="utf-8") as f:
+                g = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        cuentas = g.get("cuentas", [])
+        ok = [c for c in cuentas if c.get("estado") == "ok"]
+        r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
+        expl = [c["resumen"]["porcentaje_explicado"] for c in ok
+                if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
+        grupos.append({
+            "grupo_id": g.get("grupo_id"),
+            "procesado": g.get("procesado"), "hora": g.get("hora"),
+            "cuentas": len(cuentas), "conciliadas": len(ok),
+            "incompletas": len(cuentas) - len(ok),
+            "movimientos": sum(r(c, "movimientos_banco") for c in ok),
+            "arrastrados": sum(r(c, "arrastrados") for c in ok),
+            "pendientes": sum(r(c, "banco_sin_contabilizar") + r(c, "mayor_sin_banco")
+                              for c in ok),
+            "explicado_promedio": round(sum(expl) / len(expl), 1) if expl else None,
+            "_orden": os.path.getmtime(ruta),
+        })
+    grupos.sort(key=lambda x: x["_orden"], reverse=True)
+    for g in grupos:
+        g.pop("_orden")
+    return {"grupos": grupos}
 
 
 @app.get("/api/diario/{grupo_id}")
