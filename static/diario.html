@@ -240,6 +240,7 @@ function pintarTablero() {
   $('#fechaProc').textContent = `procesado el ${grupo.procesado}`;
   const thead = $('#tablaTablero thead'), tbody = $('#tablaTablero tbody');
   thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th>
+    <th title="Días que cubren los extractos subidos en esta corrida (pueden ser varios si se acumularon)">Período</th>
     <th title="Movimientos que trajeron los extractos subidos hoy">Movs del día</th>
     <th title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">↩ Arrastrados</th>
     <th title="Movimientos con asiento encontrado en el FBS (E u O)">Conciliados</th>
@@ -252,9 +253,14 @@ function pintarTablero() {
       r.movimientos_banco - (r.arrastrados_movs || 0) : null;
     const arr = (r.arrastrados_movs || 0) + (r.arrastrados_asientos || 0) ?
       `${r.arrastrados_movs || 0} movs · ${r.arrastrados_asientos || 0} asientos` : '—';
+    const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
+    const periodo = f.desde ?
+      (f.desde === f.hasta ? dia(f.desde) : `${dia(f.desde)} → ${dia(f.hasta)}`) : '';
     return `<tr>
       <td>${esc(f.etiqueta)}</td>
       <td>${chipEstado(f)}</td>
+      <td style="white-space:nowrap">${periodo}${f.desde && f.desde !== f.hasta ?
+        ' <span class="chip extracto" title="Esta corrida acumuló extractos de más de un día: se cruzan todos juntos (es lo correcto: un pago de un día puede tener su asiento al día siguiente)">varios días</span>' : ''}</td>
       <td class="num">${delDia ?? ''}</td>
       <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}</td>
       <td class="num">${r.conciliados ?? ''}</td>
@@ -292,8 +298,9 @@ async function cargarHistorial() {
   try {
     const resp = await fetch('/api/diario');
     const json = await resp.json();
-    if (!resp.ok || !json.grupos.length) return;
-    $('#histCard').classList.remove('oculto');
+    if (!resp.ok) return;
+    $('#histCard').classList.toggle('oculto', !json.grupos.length);
+    if (!json.grupos.length) return;
     const actual = grupo && grupo.grupo_id;
     $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Cuentas</th>
       <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
@@ -302,9 +309,12 @@ async function cargarHistorial() {
       <th title="Pendientes que venían arrastrados de días anteriores">↩ Arrastrados</th>
       <th title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
       <th>% explicado</th><th></th></tr>`;
+    const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
     $('#tablaHist tbody').innerHTML = json.grupos.map(g => `
       <tr style="${g.grupo_id === actual ? 'background:#f3f7fd;' : ''}">
         <td style="white-space:nowrap">${esc(g.procesado || '')}${g.hora ? ' · ' + esc(g.hora) : ''}
+          ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${dia(g.desde)}${
+            g.hasta && g.hasta !== g.desde ? ' al ' + dia(g.hasta) : ''}</small>` : ''}
           ${g.grupo_id === actual ? ' <span class="chip extracto">este tablero</span>' : ''}</td>
         <td class="num">${g.cuentas}</td>
         <td class="num">${g.conciliadas}</td>
@@ -313,11 +323,29 @@ async function cargarHistorial() {
         <td class="num">${g.arrastrados || ''}</td>
         <td class="num">${g.pendientes || ''}</td>
         <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
-        <td><a href="?grupo=${esc(g.grupo_id)}" style="color:var(--azul)">Abrir tablero →</a></td>
+        <td style="white-space:nowrap"><a href="?grupo=${esc(g.grupo_id)}" style="color:var(--azul)">Abrir tablero →</a>
+          <button onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
+            title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
+            style="border:none;background:none;color:var(--rojo);cursor:pointer;font-weight:700;margin-left:8px;">🗑</button></td>
       </tr>`).join('');
   } catch {}
 }
 cargarHistorial();
+
+window.eliminarGrupo = async (id, fecha) => {
+  if (!confirm(`¿Eliminar la corrida del ${fecha}?\n\n` +
+    'Se borra el tablero y el detalle de sus cuentas (incluido lo conciliado a mano ahí), ' +
+    'y el arrastre de cada cuenta vuelve a su corrida anterior.\n\n' +
+    'Usalo cuando se subió un archivo equivocado y hay que rehacer la carga. ' +
+    'Esta acción no se puede deshacer.')) return;
+  try {
+    const resp = await fetch(`/api/diario/${id}`, { method: 'DELETE' });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    if (grupo && grupo.grupo_id === id) { location.href = location.pathname; return; }
+    cargarHistorial();
+  } catch (err) { alert('⚠ ' + err.message); }
+};
 
 // al entrar con ?grupo=... se retoma el tablero guardado
 (async function retomar() {

@@ -489,7 +489,9 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             continue
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias, terminos_gasto=terminos_gasto)
-        fechas = [m.fecha for m in movs if m.fecha]
+        # período cubierto por los extractos de HOY (sin contar los arrastrados,
+        # que traen fechas de días anteriores)
+        fechas = [m.fecha for m in movs if m.fecha and m.id.startswith("B#")]
         extractos_meta = [{"archivo": ", ".join(g["archivos"]),
                            "desde": min(fechas) if fechas else None,
                            "hasta": max(fechas) if fechas else None}]
@@ -500,6 +502,8 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
+        # de qué job venía la cadena de esta cuenta (para poder deshacer corridas)
+        salida["arrastre_desde"] = arrastre.get(cid)
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
                                   "desde_job": arrastre.get(cid)}
@@ -511,6 +515,8 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         arrastre[cid] = job_id   # la próxima conciliación arrastra desde acá
         tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "ok",
                         "job_id": job_id, "archivos": g["archivos"],
+                        "desde": fechas and min(fechas).isoformat() or None,
+                        "hasta": fechas and max(fechas).isoformat() or None,
                         "resumen": _resumen_mini(salida["resumen"])})
 
     _guardar_arrastre(arrastre)
@@ -545,7 +551,10 @@ def api_diario_historial():
         r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
         expl = [c["resumen"]["porcentaje_explicado"] for c in ok
                 if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
+        fechas_mov = [c.get(k) for c in cuentas for k in ("desde", "hasta") if c.get(k)]
         grupos.append({
+            "desde": min(fechas_mov) if fechas_mov else None,
+            "hasta": max(fechas_mov) if fechas_mov else None,
             "grupo_id": g.get("grupo_id"),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
             "cuentas": len(cuentas), "conciliadas": len(ok),
@@ -578,6 +587,45 @@ def api_diario_grupo(grupo_id: str):
             if datos:
                 fila["resumen"] = _resumen_mini(datos["resumen"])
     return grupo
+
+
+@app.delete("/api/diario/{grupo_id}")
+def api_diario_eliminar(grupo_id: str):
+    """Elimina una corrida diaria completa (p. ej. se subió un extracto
+    equivocado): borra el tablero y los jobs de sus cuentas, y rebobina la
+    cadena de arrastre de cada cuenta a su corrida anterior."""
+    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
+    if not os.path.exists(ruta):
+        return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
+    with open(ruta, encoding="utf-8") as f:
+        grupo = json.load(f)
+
+    arrastre = _cargar_arrastre()
+    rebobinadas = []
+    for fila in grupo.get("cuentas", []):
+        job_id = fila.get("job_id")
+        if not job_id:
+            continue
+        datos = _obtener(job_id) or {}
+        cid = fila.get("cuenta_id")
+        # si esta corrida era el último eslabón del arrastre, volver al anterior
+        if cid and arrastre.get(cid) == job_id:
+            anterior = datos.get("arrastre_desde") or \
+                (datos.get("arrastre") or {}).get("desde_job")
+            if anterior and _obtener(anterior):
+                arrastre[cid] = anterior
+                rebobinadas.append({"cuenta_id": cid, "vuelve_a": anterior})
+            else:
+                arrastre.pop(cid, None)
+                rebobinadas.append({"cuenta_id": cid, "vuelve_a": None})
+        RESULTADOS.pop(job_id, None)
+        try:
+            os.remove(os.path.join(DATOS_DIR, f"{job_id}.json"))
+        except OSError:
+            pass
+    _guardar_arrastre(arrastre)
+    os.remove(ruta)
+    return {"ok": True, "grupo_id": grupo_id, "arrastre_rebobinado": rebobinadas}
 
 
 @app.get("/api/gastos")
