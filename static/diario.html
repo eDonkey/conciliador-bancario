@@ -262,7 +262,8 @@ function pintarTablero() {
       <td style="white-space:nowrap">${periodo}${f.desde && f.desde !== f.hasta ?
         ' <span class="chip extracto" title="Esta corrida acumuló extractos de más de un día: se cruzan todos juntos (es lo correcto: un pago de un día puede tener su asiento al día siguiente)">varios días</span>' : ''}</td>
       <td class="num">${delDia ?? ''}</td>
-      <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}</td>
+      <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}${r.omitidos ?
+        `<br><small title="Los archivos de hoy re-incluían ítems ya conciliados en corridas anteriores: se omiten para no duplicar">🧠 ${r.omitidos} ya conciliados, omitidos</small>` : ''}</td>
       <td class="num">${r.conciliados ?? ''}</td>
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
@@ -281,7 +282,10 @@ function pintarTablero() {
       <b>se arrastran automáticamente</b> a la próxima conciliación de la misma cuenta
       y se cruzan solos cuando aparece la otra punta. En el detalle figuran como
       "(pendiente de días anteriores)". El % explicado considera conciliados + gastos
-      bancarios justificados sobre el total de movimientos.</div>`;
+      bancarios justificados sobre el total de movimientos.
+      <b>Se puede subir acumulado sin miedo</b>: si el extracto o el mayor de hoy
+      re-incluyen días ya procesados (o directamente el mes entero), lo ya conciliado
+      se omite solo (🧠) y no se duplica nada.</div>`;
   cargarHistorial();
   $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
 }

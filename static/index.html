@@ -581,6 +581,12 @@ function mostrarResultados() {
       lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
       ` <a href="/?job=${esc(datos.arrastre.desde_job)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
+  if (datos.memoria_omitidos)
+    avisos += `<div class="aviso info">🧠 Los archivos de hoy traían de nuevo
+      <b>${datos.memoria_omitidos.movimientos}</b> movimientos y
+      <b>${datos.memoria_omitidos.asientos}</b> asientos que ya estaban conciliados
+      en corridas anteriores de esta cuenta: se omitieron automáticamente.
+      Subir el extracto o el mayor acumulado (incluso el mes entero) no duplica nada.</div>`;
   if (r.reglas_aplicadas)
     avisos += `<div class="aviso info"> Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus

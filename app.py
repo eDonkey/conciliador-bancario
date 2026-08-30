@@ -398,6 +398,80 @@ def _aplicar_arrastre(cid, movs, g, arrastre):
     return n_movs, n_asientos
 
 
+# --- memoria de conciliados: los archivos acumulativos no duplican ----------
+# El cliente sube el extracto del día pero el mayor FBS acumulado (o a fin de
+# mes, todo junto). Sin esto, lo ya conciliado en corridas anteriores
+# reaparecía como "sin banco"/"sin asiento". La memoria guarda, por cuenta,
+# cuántas veces se consumió cada movimiento/asiento, y las corridas nuevas
+# omiten esas repeticiones.
+RUTA_MEMORIA = os.path.join(DATOS_DIR, "memoria_conciliados.json")
+
+
+def _cargar_memoria() -> dict:
+    if os.path.exists(RUTA_MEMORIA):
+        try:
+            with open(RUTA_MEMORIA, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _guardar_memoria(m: dict):
+    with open(RUTA_MEMORIA, "w", encoding="utf-8") as f:
+        json.dump(m, f, ensure_ascii=False)
+
+
+def _clave_mov_dict(d) -> str:
+    neto = (d.get("credito") or 0) - (d.get("debito") or 0)
+    return f'{d.get("fecha") or ""}|{d.get("descripcion") or ""}|{neto:.2f}|{d.get("comprobante") or ""}'
+
+
+def _clave_mov_obj(m) -> str:
+    return (f'{m.fecha.isoformat() if m.fecha else ""}|{m.descripcion}|'
+            f'{m.credito - m.debito:.2f}|{m.comprobante or ""}')
+
+
+def _clave_asiento_dict(d) -> str:
+    return (f'{d.get("hoja") or ""}|{d.get("asiento") or ""}|{d.get("fecha") or ""}|'
+            f'{d.get("debe") or 0:.2f}|{d.get("haber") or 0:.2f}')
+
+
+def _clave_asiento_obj(a) -> str:
+    return (f'{a.hoja}|{a.asiento}|{a.fecha.isoformat() if a.fecha else ""}|'
+            f'{a.debe:.2f}|{a.haber:.2f}')
+
+
+def _cosechar_consumidos(prev: dict):
+    """Claves de todo lo ya conciliado/explicado en un job, en su estado
+    ACTUAL (incluye lo conciliado a mano después de la corrida)."""
+    movs, asientos = {}, {}
+
+    def add(d, k):
+        d[k] = d.get(k, 0) + 1
+
+    for m in prev.get("conciliados_e", []) + prev.get("conciliados_o", []):
+        add(movs, _clave_mov_dict(m["banco"]))
+        add(asientos, _clave_asiento_dict(m["asiento"]))
+    for m in prev.get("conciliados_manual", []):
+        for b in m.get("banco", []):
+            add(movs, _clave_mov_dict(b))
+        for a in m.get("mayor", []):
+            add(asientos, _clave_asiento_dict(a))
+    for b in prev.get("gastos_bancarios", []):
+        add(movs, _clave_mov_dict(b))
+    for p in prev.get("nota_debito", []):
+        for a in p.get("asientos_mayor", []):
+            add(asientos, _clave_asiento_dict(a))
+    for p in prev.get("contraasientos", []):
+        add(asientos, _clave_asiento_dict(p["debe"]))
+        add(asientos, _clave_asiento_dict(p["haber"]))
+    for e in prev.get("excluidos_mayor", []):
+        for a in e.get("mayor", []):
+            add(asientos, _clave_asiento_dict(a))
+    return movs, asientos
+
+
 def _resumen_mini(r):
     return {
         "movimientos_banco": r["movimientos_banco"],
@@ -410,6 +484,7 @@ def _resumen_mini(r):
         "arrastrados": r.get("arrastrados", 0),
         "arrastrados_movs": r.get("arrastrados_movs", 0),
         "arrastrados_asientos": r.get("arrastrados_asientos", 0),
+        "omitidos": r.get("omitidos", 0),
     }
 
 
@@ -460,14 +535,38 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     terminos_gasto = gastos_conf.cargar()
 
     arrastre = _cargar_arrastre()
+    memoria = _cargar_memoria()
     tablero = []
     for cid, g in grupos.items():
         etiqueta = cuentas_mod.etiqueta(por_id[cid]) if cid in por_id else cid
+
+        # memoria de conciliados: sumar lo consumido por la corrida anterior
+        # (en su estado actual, manuales incluidos) y omitir las repeticiones
+        # que traigan los archivos acumulativos de hoy
+        mem = memoria.setdefault(cid, {"movs": {}, "asientos": {}, "jobs": []})
+        mem.setdefault("jobs", [])
+        prev_id = arrastre.get(cid)
+        prev = _obtener(prev_id or "")
+        if prev and prev_id not in mem["jobs"]:   # cada corrida se cosecha una sola vez
+            c_movs, c_asientos = _cosechar_consumidos(prev)
+            for k, n in c_movs.items():
+                mem["movs"][k] = mem["movs"].get(k, 0) + n
+            for k, n in c_asientos.items():
+                mem["asientos"][k] = mem["asientos"].get(k, 0) + n
+            mem["jobs"].append(prev_id)
+
+        om_movs = om_asientos = 0
+        usados_mem = {}
         # dedupe SOLO entre archivos distintos (p. ej. el extracto "del día" y el
         # "histórico" subidos por separado). Dentro de un mismo archivo, filas
         # idénticas son movimientos reales (comisiones repetidas) y se conservan.
         vistos, movs = {}, []
         for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
+            k = _clave_mov_obj(m)
+            if usados_mem.get(k, 0) < mem["movs"].get(k, 0):
+                usados_mem[k] = usados_mem.get(k, 0) + 1
+                om_movs += 1
+                continue
             clave = (m.fecha, m.descripcion, round(m.credito - m.debito, 2),
                      m.saldo, m.comprobante)
             if clave in vistos and vistos[clave] != m.archivo:
@@ -475,6 +574,17 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             vistos.setdefault(clave, m.archivo)
             m.id = f"B#{len(movs) + 1}"
             movs.append(m)
+        usados_mem = {}
+        for lado in ("e", "o"):
+            filtrados = []
+            for a in g[lado]:
+                k = _clave_asiento_obj(a)
+                if usados_mem.get(k, 0) < mem["asientos"].get(k, 0):
+                    usados_mem[k] = usados_mem.get(k, 0) + 1
+                    om_asientos += 1
+                    continue
+                filtrados.append(a)
+            g[lado] = filtrados
         # arrastre: los pendientes de la conciliación anterior de esta cuenta
         # entran al cruce de hoy (lo de ayer aparece en el FBS de hoy y viceversa)
         arr_movs, arr_asientos = _aplicar_arrastre(cid, movs, g, arrastre)
@@ -504,6 +614,9 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
         # de qué job venía la cadena de esta cuenta (para poder deshacer corridas)
         salida["arrastre_desde"] = arrastre.get(cid)
+        if om_movs or om_asientos:
+            salida["memoria_omitidos"] = {"movimientos": om_movs, "asientos": om_asientos}
+            salida["resumen"]["omitidos"] = om_movs + om_asientos
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
                                   "desde_job": arrastre.get(cid)}
@@ -520,6 +633,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                         "resumen": _resumen_mini(salida["resumen"])})
 
     _guardar_arrastre(arrastre)
+    _guardar_memoria(memoria)
     grupo_id = uuid.uuid4().hex[:10]
     grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
              "hora": time.strftime("%H:%M"),
