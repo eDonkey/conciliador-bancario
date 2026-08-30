@@ -4,63 +4,102 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Conciliación diaria — grupo Nave</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6ea;
-    --texto: #1d2733; --texto2: #5b6875;
-    --rojo: #C8102E; --verde: #1a7f4b; --ambar: #b26a00; --azul: #1f5fbf;
+    --acento: #38bdf8;
+    --fondo1: #070b18; --fondo2: #0d1430;
+    --panel: rgba(255, 255, 255, 0.055);
+    --border: rgba(255, 255, 255, 0.12);
+    --texto: #e8ecf8; --texto2: #94a0c2;
+    --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --azul: var(--acento);
   }
   * { box-sizing: border-box; margin: 0; }
-  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--texto); }
-  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 28px; display:flex; align-items:center; gap:12px; }
-  header .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--azul); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; }
-  header h1 { font-size: 18px; font-weight: 600; }
-  header p { font-size: 12.5px; color: var(--texto2); }
-  header a.volver { margin-left:auto; font-size: 13px; color: var(--azul); text-decoration:none; border:1px solid var(--border); border-radius:8px; padding: 8px 14px; background:#fff; }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    background: radial-gradient(ellipse at 50% 0%, var(--fondo2), var(--fondo1) 70%) fixed;
+    color: var(--texto); min-height: 100vh;
+  }
+  body::before {
+    content: ""; position: fixed; inset: -2px; z-index: -1; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148, 163, 216, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 216, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+  }
+  header {
+    background: rgba(9, 13, 30, 0.75); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display:flex; align-items:center; gap:14px;
+    position: sticky; top: 0; z-index: 60;
+  }
+  header .logo {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--acento);
+    box-shadow: 0 0 14px var(--acento), 0 0 4px var(--acento);
+    flex-shrink: 0; font-size: 0;
+  }
+  header h1 { font-family: "Sora", sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.04em; }
+  header p { font-size: 11px; color: var(--texto2); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+  header a.volver { margin-left:auto; font-family: inherit; font-size: 13px; color: var(--texto); text-decoration:none; border:1px solid var(--border); border-radius:10px; padding: 8px 16px; background: rgba(255,255,255,0.06); transition: background .2s, border-color .2s; }
+  header a.volver:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
-  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; margin-bottom: 18px; }
-  .zona { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; transition: .15s; }
-  .zona:hover, .zona.arrastrando { border-color: var(--azul); background: #f3f7fd; }
-  .zona h3 { font-size: 15px; margin-bottom: 4px; }
+  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; margin-bottom: 18px; backdrop-filter: blur(14px); }
+  .zona { border: 1px dashed var(--border); border-radius: 12px; padding: 26px; text-align: center; cursor: pointer; transition: .2s; background: rgba(255,255,255,0.02); }
+  .zona:hover, .zona.arrastrando { border-color: var(--acento); background: rgba(56, 189, 248, 0.06); box-shadow: 0 0 30px rgba(56, 189, 248, 0.08) inset; }
+  .zona h3 { font-family: "Sora", sans-serif; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
   .zona p { font-size: 12.5px; color: var(--texto2); }
   ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: 13px; }
-  ul.archivos li { padding: 6px 10px; background: var(--bg); border-radius: 6px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
-  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; }
+  ul.archivos li { padding: 7px 11px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
+  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; font-size: 14px; }
   .acciones { display:flex; align-items:center; gap:14px; margin-top: 16px; flex-wrap: wrap; }
-  button.principal { background: var(--azul); color:#fff; border:none; padding: 11px 24px; border-radius: 8px; font-size: 14.5px; font-weight:600; cursor:pointer; }
-  button.principal:disabled { background:#cbd2d9; cursor:not-allowed; }
-  button.secundario { background:#fff; color: var(--texto); border:1px solid var(--border); padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor:pointer; }
+  button.principal {
+    font-family: inherit; border: none; color: #fff;
+    background: linear-gradient(160deg, var(--acento), color-mix(in srgb, var(--acento) 55%, #1a2447));
+    padding: 11px 24px; border-radius: 10px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: filter .2s; box-shadow: 0 6px 24px rgba(56, 189, 248, 0.25);
+  }
+  button.principal:hover { filter: brightness(1.15); }
+  button.principal:disabled { background: rgba(255,255,255,0.09); color: var(--texto2); cursor:not-allowed; box-shadow: none; }
+  button.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 8px 16px; border-radius: 10px; font-size: 13px; cursor:pointer; transition: background .2s, border-color .2s; }
+  button.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   .contenedor-tabla { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--texto2); white-space: nowrap; background:#fafbfc; }
-  td { padding: 8px 10px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; background: rgba(255,255,255,0.03); }
+  td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  select { padding: 6px 8px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; max-width: 320px; }
-  .chip { font-size: 11px; border-radius: 6px; padding: 2px 8px; white-space:nowrap; font-weight: 600; }
-  .chip.extracto { background:#eef4ff; color: var(--azul); }
-  .chip.fbs { background:#f3eefe; color:#6b3fc2; }
-  .chip.err { background:#fdecec; color:#8f1d1d; }
-  .chip.ok { background:#e5f5ec; color: var(--verde); }
-  .chip.warn { background:#fdf6ec; color: var(--ambar); }
+  td a { color: var(--acento); }
+  select { font-family: inherit; padding: 6px 8px; background: #10173a; color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; max-width: 320px; outline: none; }
+  .chip { font-size: 10.5px; border-radius: 99px; padding: 2px 9px; white-space:nowrap; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
+  .chip.extracto { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--acento); }
+  .chip.fbs { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.4); color: #c4b5fd; }
+  .chip.err { background: rgba(248, 81, 100, 0.12); border-color: rgba(248, 81, 100, 0.4); color: var(--rojo); }
+  .chip.ok { background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.4); color: var(--verde); }
+  .chip.warn { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); color: var(--ambar); }
   .oculto { display:none; }
-  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 12px; }
-  .aviso.error { background:#fdecec; color:#8f1d1d; }
-  .aviso.info { background:#eef4ff; color:#1d3f7a; }
-  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--azul); border-radius:50%; animation: g .8s linear infinite; vertical-align:-2px; margin-right:6px; }
+  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 10px; margin-top: 12px; line-height: 1.55; }
+  .aviso.error { background: rgba(248, 81, 100, 0.1); border: 1px solid rgba(248, 81, 100, 0.35); color: var(--rojo); }
+  .aviso.info { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--texto); }
+  input[type=checkbox] { accent-color: var(--acento); }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--acento); border-radius:50%; animation: g .8s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes g { to { transform: rotate(360deg); } }
-  h2.seccion { font-size: 16px; margin-bottom: 10px; }
+  h2.seccion { font-family: "Sora", sans-serif; font-size: 14.5px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 10px; }
   .pct { font-weight: 700; }
   .pct.alto { color: var(--verde); } .pct.medio { color: var(--ambar); } .pct.bajo { color: var(--rojo); }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">D</div>
+  <span class="logo" aria-hidden="true"></span>
   <div>
-    <h1>Conciliación diaria — grupo Nave</h1>
-    <p>Extractos del día de cada banco + reportes FBS (mayor E y O) — cruce por cuenta</p>
+    <h1>Conciliación diaria</h1>
+    <p>Extractos + reportes FBS por cuenta — Nave Motors</p>
   </div>
-  <a class="volver" href="/">← Conciliador mensual</a>
+  <a class="volver" href="/">Conciliador mensual</a>
 </header>
 
 <main>
@@ -107,13 +146,13 @@
     <div class="contenedor-tabla"><table id="tablaTablero"><thead></thead><tbody></tbody></table></div>
     <div id="sinAsignar"></div>
     <div class="acciones">
-      <button class="secundario" id="btnCopiarTablero">🔗 Copiar link del tablero</button>
-      <button class="secundario" onclick="location.href = location.pathname">＋ Nueva conciliación diaria</button>
+      <button class="secundario" id="btnCopiarTablero">Copiar link del tablero</button>
+      <button class="secundario" onclick="location.href = location.pathname">Nueva conciliación diaria</button>
     </div>
   </section>
 
   <section class="tarjeta oculto" id="histCard">
-    <h2 class="seccion">📚 Memoria diaria</h2>
+    <h2 class="seccion">Memoria diaria</h2>
     <p style="font-size:12.5px; color:var(--texto2); margin-bottom:10px;">
       Cada conciliación diaria queda guardada acá para siempre. Los pendientes de un
       día encadenan con el siguiente: si abrís un tablero viejo vas a ver qué quedó
@@ -140,7 +179,7 @@ function agregar(fs) { archivos = archivos.concat(fs); pintarArchivos(); }
 window.quitar = (i, e) => { e.stopPropagation(); archivos.splice(i, 1); pintarArchivos(); };
 function pintarArchivos() {
   $('#listaArchivos').innerHTML = archivos.map((f, i) =>
-    `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)">✕</button></li>`).join('');
+    `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)">×</button></li>`).join('');
   $('#btnIdentificar').disabled = !archivos.length;
 }
 
@@ -157,7 +196,7 @@ $('#btnIdentificar').addEventListener('click', async () => {
     $('#estadoCarga').textContent = '';
     pintarIdent();
   } catch (err) {
-    $('#estadoCarga').textContent = '⚠ ' + err.message;
+    $('#estadoCarga').textContent = err.message;
     $('#btnIdentificar').disabled = false;
   }
 });
@@ -215,7 +254,7 @@ $('#btnConciliar').addEventListener('click', async () => {
     $('#estadoConciliar').textContent = '';
     pintarTablero();
   } catch (err) {
-    $('#estadoConciliar').textContent = '⚠ ' + err.message;
+    $('#estadoConciliar').textContent = err.message;
     $('#btnConciliar').disabled = false;
   }
 });
@@ -242,7 +281,7 @@ function pintarTablero() {
   thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th>
     <th title="Días que cubren los extractos subidos en esta corrida (pueden ser varios si se acumularon)">Período</th>
     <th title="Movimientos que trajeron los extractos subidos hoy">Movs del día</th>
-    <th title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">↩ Arrastrados</th>
+    <th title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">Arrastrados</th>
     <th title="Movimientos con asiento encontrado en el FBS (E u O)">Conciliados</th>
     <th title="Comisiones, impuestos y percepciones del banco (no se registran asiento por asiento)">Gastos banc.</th>
     <th title="Movimientos del banco que siguen sin asiento: quedan pendientes y se arrastran a mañana">Sin asiento aún</th>
@@ -263,7 +302,7 @@ function pintarTablero() {
         ' <span class="chip extracto" title="Esta corrida acumuló extractos de más de un día: se cruzan todos juntos (es lo correcto: un pago de un día puede tener su asiento al día siguiente)">varios días</span>' : ''}</td>
       <td class="num">${delDia ?? ''}</td>
       <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}${r.omitidos ?
-        `<br><small title="Los archivos de hoy re-incluían ítems ya conciliados en corridas anteriores: se omiten para no duplicar">🧠 ${r.omitidos} ya conciliados, omitidos</small>` : ''}</td>
+        `<br><small title="Los archivos de hoy re-incluían ítems ya conciliados en corridas anteriores: se omiten para no duplicar">${r.omitidos} ya conciliados, omitidos</small>` : ''}</td>
       <td class="num">${r.conciliados ?? ''}</td>
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
@@ -285,7 +324,7 @@ function pintarTablero() {
       bancarios justificados sobre el total de movimientos.
       <b>Se puede subir acumulado sin miedo</b>: si el extracto o el mayor de hoy
       re-incluyen días ya procesados (o directamente el mes entero), lo ya conciliado
-      se omite solo (🧠) y no se duplica nada.</div>`;
+      se omite solo y no se duplica nada.</div>`;
   cargarHistorial();
   $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
 }
@@ -293,8 +332,8 @@ function pintarTablero() {
 $('#btnCopiarTablero').addEventListener('click', async () => {
   const url = `${location.origin}${location.pathname}?grupo=${grupo.grupo_id}`;
   try { await navigator.clipboard.writeText(url); } catch { prompt('Copiá el link:', url); return; }
-  $('#btnCopiarTablero').textContent = '✔ Link copiado';
-  setTimeout(() => { $('#btnCopiarTablero').textContent = '🔗 Copiar link del tablero'; }, 2000);
+  $('#btnCopiarTablero').textContent = 'Link copiado';
+  setTimeout(() => { $('#btnCopiarTablero').textContent = 'Copiar link del tablero'; }, 2000);
 });
 
 /* ============ memoria diaria (historial persistente) ============ */
@@ -310,12 +349,12 @@ async function cargarHistorial() {
       <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
       <th title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
       <th title="Movimientos procesados (incluye los arrastrados de días previos)">Movimientos</th>
-      <th title="Pendientes que venían arrastrados de días anteriores">↩ Arrastrados</th>
+      <th title="Pendientes que venían arrastrados de días anteriores">Arrastrados</th>
       <th title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
       <th>% explicado</th><th></th></tr>`;
     const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
     $('#tablaHist tbody').innerHTML = json.grupos.map(g => `
-      <tr style="${g.grupo_id === actual ? 'background:#f3f7fd;' : ''}">
+      <tr style="${g.grupo_id === actual ? 'background:rgba(56,189,248,0.07);' : ''}">
         <td style="white-space:nowrap">${esc(g.procesado || '')}${g.hora ? ' · ' + esc(g.hora) : ''}
           ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${dia(g.desde)}${
             g.hasta && g.hasta !== g.desde ? ' al ' + dia(g.hasta) : ''}</small>` : ''}
@@ -330,7 +369,7 @@ async function cargarHistorial() {
         <td style="white-space:nowrap"><a href="?grupo=${esc(g.grupo_id)}" style="color:var(--azul)">Abrir tablero →</a>
           <button onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
             title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
-            style="border:none;background:none;color:var(--rojo);cursor:pointer;font-weight:700;margin-left:8px;">🗑</button></td>
+            style="font-family:inherit;font-size:11px;border:1px solid rgba(248,81,100,0.4);background:rgba(248,81,100,0.12);color:var(--rojo);cursor:pointer;font-weight:600;margin-left:8px;border-radius:8px;padding:3px 9px;">Eliminar</button></td>
       </tr>`).join('');
   } catch {}
 }
@@ -348,7 +387,7 @@ window.eliminarGrupo = async (id, fecha) => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     if (grupo && grupo.grupo_id === id) { location.href = location.pathname; return; }
     cargarHistorial();
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 };
 
 // al entrar con ?grupo=... se retoma el tablero guardado
@@ -363,7 +402,7 @@ window.eliminarGrupo = async (id, fecha) => {
     pintarTablero();
   } catch (err) {
     document.querySelector('main').insertAdjacentHTML('afterbegin',
-      `<div class="aviso error">⚠ No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);
+      `<div class="aviso error">No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);
   }
 })();
 </script>

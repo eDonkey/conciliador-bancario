@@ -4,182 +4,238 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Conciliador bancario</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f6f7f9; --panel: #ffffff; --border: #e3e6ea;
-    --texto: #1d2733; --texto2: #5b6875;
-    --rojo: #C8102E; --verde: #1a7f4b; --ambar: #b26a00; --azul: #1f5fbf;
+    --acento: #38bdf8;
+    --fondo1: #070b18; --fondo2: #0d1430;
+    --bg: var(--fondo1);
+    --panel: rgba(255, 255, 255, 0.055);
+    --border: rgba(255, 255, 255, 0.12);
+    --texto: #e8ecf8; --texto2: #94a0c2;
+    --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --azul: var(--acento);
   }
   * { box-sizing: border-box; margin: 0; }
-  body { font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--texto); }
-  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 16px 28px; display:flex; align-items:center; gap:12px; }
-  header .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--rojo); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; }
-  header h1 { font-size: 18px; font-weight: 600; }
-  header p { font-size: 12.5px; color: var(--texto2); }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    background: radial-gradient(ellipse at 50% 0%, var(--fondo2), var(--fondo1) 70%) fixed;
+    color: var(--texto); min-height: 100vh;
+  }
+  body::before {
+    content: ""; position: fixed; inset: -2px; z-index: -1; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148, 163, 216, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 216, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+  }
+  header {
+    background: rgba(9, 13, 30, 0.75); backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px; display:flex; align-items:center; gap:14px;
+    position: sticky; top: 0; z-index: 60;
+  }
+  header .logo {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--acento);
+    box-shadow: 0 0 14px var(--acento), 0 0 4px var(--acento);
+    flex-shrink: 0; font-size: 0;
+  }
+  header h1 { font-family: "Sora", sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.04em; }
+  header p { font-size: 11px; color: var(--texto2); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
   main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
 
-  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
-  .zona { border: 2px dashed var(--border); border-radius: 10px; padding: 26px; text-align: center; cursor: pointer; transition: .15s; }
-  .zona:hover, .zona.arrastrando { border-color: var(--rojo); background: #fff5f6; }
-  .zona h3 { font-size: 15px; margin-bottom: 4px; }
+  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; backdrop-filter: blur(14px); }
+  .zona { border: 1px dashed var(--border); border-radius: 12px; padding: 26px; text-align: center; cursor: pointer; transition: .2s; background: rgba(255,255,255,0.02); }
+  .zona:hover, .zona.arrastrando { border-color: var(--acento); background: rgba(56, 189, 248, 0.06); box-shadow: 0 0 30px rgba(56, 189, 248, 0.08) inset; }
+  .zona h3 { font-family: "Sora", sans-serif; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
   .zona p { font-size: 12.5px; color: var(--texto2); }
   .grid-carga { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .grid-carga { grid-template-columns: 1fr; } }
   ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: 13px; }
-  ul.archivos li { padding: 6px 10px; background: var(--bg); border-radius: 6px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
-  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; }
+  ul.archivos li { padding: 7px 11px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
+  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; font-size: 14px; }
 
   .acciones { display:flex; align-items:center; gap:18px; margin-top: 18px; flex-wrap: wrap; }
-  button.principal { background: var(--rojo); color:#fff; border:none; padding: 12px 26px; border-radius: 8px; font-size: 15px; font-weight:600; cursor:pointer; }
-  button.principal:disabled { background:#cbd2d9; cursor:not-allowed; }
-  label.check { font-size: 13.5px; color: var(--texto2); display:flex; gap:8px; align-items:center; cursor:pointer; }
-  #estado { font-size: 13.5px; color: var(--texto2); }
-  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--rojo); border-radius:50%; animation: g .8s linear infinite; vertical-align: -2px; margin-right: 6px;}
+  button.principal {
+    font-family: inherit; border: none; color: #fff;
+    background: linear-gradient(160deg, var(--acento), color-mix(in srgb, var(--acento) 55%, #1a2447));
+    padding: 12px 26px; border-radius: 10px; font-size: 14.5px; font-weight: 600;
+    cursor: pointer; transition: filter .2s; box-shadow: 0 6px 24px rgba(56, 189, 248, 0.25);
+  }
+  button.principal:hover { filter: brightness(1.15); }
+  button.principal:disabled { background: rgba(255,255,255,0.09); color: var(--texto2); cursor: not-allowed; box-shadow: none; }
+  label.check { font-size: 13px; color: var(--texto2); display:flex; gap:8px; align-items:center; cursor:pointer; }
+  input[type=checkbox] { accent-color: var(--acento); }
+  #estado { font-size: 13px; color: var(--texto2); }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--acento); border-radius:50%; animation: g .8s linear infinite; vertical-align: -2px; margin-right: 6px;}
   @keyframes g { to { transform: rotate(360deg); } }
 
   .kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 22px 0 8px; }
-  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
-  .kpi .valor { font-size: 24px; font-weight: 700; }
-  .kpi .etiqueta { font-size: 12px; color: var(--texto2); margin-top: 2px; }
-  .kpi .sub { font-size: 11.5px; color: var(--texto2); }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; backdrop-filter: blur(10px); }
+  .kpi .valor { font-family: "Sora", sans-serif; font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .kpi .etiqueta { font-size: 10.5px; color: var(--texto2); margin-top: 3px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .kpi .sub { font-size: 11.5px; color: var(--texto2); margin-top: 2px; }
   .kpi.verde .valor { color: var(--verde); } .kpi.ambar .valor { color: var(--ambar); }
-  .kpi.rojo .valor { color: var(--rojo); } .kpi.azul .valor { color: var(--azul); }
+  .kpi.rojo .valor { color: var(--rojo); } .kpi.azul .valor { color: var(--acento); }
 
   nav.tabs { display:flex; gap: 4px; margin: 22px 0 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-  nav.tabs button { border:none; background:none; padding: 10px 14px; font-size: 13.5px; color: var(--texto2); cursor:pointer; border-bottom: 2px solid transparent; }
-  nav.tabs button.activa { color: var(--texto); font-weight: 600; border-bottom-color: var(--rojo); }
-  nav.tabs button .n { background: var(--bg); border-radius: 10px; padding: 1px 7px; font-size: 11px; margin-left: 4px; }
+  nav.tabs button { font-family: inherit; border:none; background:none; padding: 10px 14px; font-size: 13px; color: var(--texto2); cursor:pointer; border-bottom: 2px solid transparent; transition: color .2s; }
+  nav.tabs button:hover { color: var(--texto); }
+  nav.tabs button.activa { color: var(--texto); font-weight: 600; border-bottom-color: var(--acento); }
+  nav.tabs button .n { background: rgba(255,255,255,0.08); border: 1px solid var(--border); border-radius: 99px; padding: 1px 8px; font-size: 11px; margin-left: 4px; }
 
-  .panel-tabla { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 12px 12px; padding: 14px; }
-  .buscador { width: 100%; max-width: 340px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; margin-bottom: 10px; }
+  .panel-tabla { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 16px 16px; padding: 14px; backdrop-filter: blur(14px); }
+  .buscador { font-family: inherit; width: 100%; max-width: 340px; padding: 8px 12px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; margin-bottom: 10px; color: var(--texto); outline: none; }
+  .buscador:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  .buscador::placeholder { color: rgba(148, 160, 194, 0.6); }
   .contenedor-tabla { overflow-x: auto; max-height: 520px; overflow-y: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { position: sticky; top: 0; background: #fafbfc; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; color: var(--texto2); white-space: nowrap; }
-  td { padding: 7px 10px; border-bottom: 1px solid #f0f2f4; vertical-align: top; }
+  th { position: sticky; top: 0; background: #10173a; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; z-index: 2; }
+  td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  td .metodo { font-size: 11px; background: #eef4ff; color: var(--azul); border-radius: 6px; padding: 1px 6px; white-space:nowrap; }
+  td .metodo { font-size: 10.5px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--acento); border-radius: 99px; padding: 1px 8px; white-space:nowrap; }
   td .conf-alta { color: var(--verde); font-weight: 600; }
   td .conf-media { color: var(--ambar); font-weight: 600; }
   td .conf-baja { color: var(--texto2); }
   .oculto { display: none; }
 
   /* --- conciliación manual --- */
-  .panel-manual { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 12px 12px; padding: 14px; }
+  .panel-manual { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 16px 16px; padding: 14px; backdrop-filter: blur(14px); }
   .dual { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 900px) { .dual { grid-template-columns: 1fr; } }
-  .col-manual h4 { font-size: 13.5px; margin-bottom: 8px; }
+  .col-manual h4 { font-family: "Sora", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--texto2); margin-bottom: 8px; }
   .col-manual .filtros { display:flex; gap:8px; margin-bottom: 8px; flex-wrap: wrap; }
-  .col-manual .filtros input[type=text] { flex:1; min-width: 120px; padding: 7px 10px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; }
-  .col-manual .filtros select { padding: 7px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; }
+  .col-manual .filtros input[type=text] { font-family: inherit; flex:1; min-width: 120px; padding: 7px 10px; background: rgba(255,255,255,0.05); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--texto); outline: none; }
+  .col-manual .filtros input[type=text]:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  .col-manual .filtros input::placeholder { color: rgba(148, 160, 194, 0.6); }
+  .col-manual .filtros select { font-family: inherit; padding: 7px; background: #10173a; border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--texto); outline: none; }
   .col-manual .filtros label { font-size: 12px; color: var(--texto2); display:flex; align-items:center; gap:4px; }
-  .lista-items { border: 1px solid var(--border); border-radius: 8px; height: 380px; overflow-y: auto; }
-  .item { display:flex; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f0f2f4; font-size: 12.3px; cursor:pointer; align-items: flex-start; }
-  .item:hover { background: #fafbfc; }
-  .item.sel { background: #fff5f6; }
+  .lista-items { border: 1px solid var(--border); border-radius: 10px; height: 380px; overflow-y: auto; background: rgba(0,0,0,0.16); }
+  .item { display:flex; gap: 8px; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12.3px; cursor:pointer; align-items: flex-start; }
+  .item:hover { background: rgba(255,255,255,0.045); }
+  .item.sel { background: rgba(56, 189, 248, 0.12); }
   .item input { margin-top: 2px; }
   .item .cuerpo { flex: 1; min-width: 0; }
   .item .desc { overflow-wrap: anywhere; }
   .item .meta { color: var(--texto2); font-size: 11px; }
   .item .imp { font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
   .item .imp.deb { color: var(--rojo); } .item .imp.cred { color: var(--verde); }
-  .item .badge { font-size: 10px; border-radius: 5px; padding: 0 5px; background: var(--bg); color: var(--texto2); }
-  .item .badge.cierra { background: #e5f5ec; color: var(--verde); font-weight: 700; }
+  .item .badge { font-size: 10px; border-radius: 99px; padding: 0 7px; background: rgba(255,255,255,0.07); border: 1px solid var(--border); color: var(--texto2); white-space: nowrap; }
+  .item .badge.cierra { background: rgba(52, 211, 153, 0.14); border-color: rgba(52, 211, 153, 0.4); color: var(--verde); font-weight: 700; }
 
   /* --- overlay de progreso --- */
-  #overlay { position: fixed; inset: 0; background: rgba(23,32,42,.55);
-    backdrop-filter: blur(3px); display: flex; align-items: center;
+  #overlay { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
+    backdrop-filter: blur(8px); display: flex; align-items: center;
     justify-content: center; z-index: 100; }
   #overlay.oculto { display: none; }
-  .ov-card { background: var(--panel); border-radius: 14px;
-    box-shadow: 0 24px 60px rgba(0,0,0,.28); width: 430px;
+  .ov-card { background: rgba(12, 18, 40, 0.95); border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55); width: 430px;
     max-width: calc(100vw - 40px); padding: 30px 32px 24px;
-    border-top: 4px solid var(--rojo); text-align: center; }
+    text-align: center; backdrop-filter: blur(18px); }
   .ov-anillo { width: 46px; height: 46px; margin: 2px auto 18px;
-    border-radius: 50%; border: 4px solid #eceff2;
-    border-top-color: var(--rojo); animation: g 1s linear infinite; }
-  .ov-card h3 { font-size: 16.5px; margin-bottom: 6px; }
+    border-radius: 50%; border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: var(--acento); animation: g 1s linear infinite; }
+  .ov-card h3 { font-family: "Sora", sans-serif; font-size: 16px; font-weight: 700; margin-bottom: 6px; }
   #ovFase { font-size: 13px; color: var(--texto2); min-height: 18px; }
-  .ov-barra { height: 6px; background: #eceff2; border-radius: 4px;
+  .ov-barra { height: 6px; background: rgba(255,255,255,0.08); border-radius: 4px;
     margin: 18px 0 8px; overflow: hidden; }
   #ovBarra { height: 100%; width: 0%; border-radius: 4px;
-    background: linear-gradient(90deg, var(--rojo), #e8556d);
+    background: linear-gradient(90deg, var(--acento), #7c9cff);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
     transition: width .6s ease; }
   .ov-meta { display: flex; justify-content: space-between;
     font-size: 12.5px; color: var(--texto2); }
-  #ovPct { font-weight: 600; color: var(--texto); }
+  #ovPct { font-weight: 600; color: var(--texto); font-variant-numeric: tabular-nums; }
   .ov-nota { font-size: 11.5px; color: var(--texto2); margin-top: 16px;
     line-height: 1.5; border-top: 1px solid var(--border); padding-top: 12px; }
-  #ovError { color: #8f1d1d; font-size: 13px; margin-top: 10px; }
+  #ovError { color: var(--rojo); font-size: 13px; margin-top: 10px; }
 
   /* --- diccionario de equivalencias --- */
-  .zona-derecha { margin-left: auto; display: flex; gap: 12px; align-items: center; }
-  #modalEquiv, #modalGastos { position: fixed; inset: 0; background: rgba(23,32,42,.55);
-    backdrop-filter: blur(3px); display: flex; align-items: center;
+  .zona-derecha { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+  #modalEquiv, #modalGastos { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
+    backdrop-filter: blur(8px); display: flex; align-items: center;
     justify-content: center; z-index: 90; }
   #modalEquiv.oculto, #modalGastos.oculto { display: none; }
-  .eq-card { background: var(--panel); border-radius: 14px;
-    box-shadow: 0 24px 60px rgba(0,0,0,.28); width: 560px;
+  .eq-card { background: rgba(12, 18, 40, 0.95); border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.55); width: 560px;
     max-width: calc(100vw - 40px); padding: 26px 28px 22px;
-    border-top: 4px solid var(--azul); }
-  .eq-card h3 { font-size: 16.5px; margin-bottom: 4px; }
-  .eq-card .exp { font-size: 12.5px; color: var(--texto2); line-height: 1.5; }
+    backdrop-filter: blur(18px); }
+  .eq-card h3 { font-family: "Sora", sans-serif; font-size: 15.5px; font-weight: 700; margin-bottom: 4px; }
+  .eq-card .exp { font-size: 12.5px; color: var(--texto2); line-height: 1.55; }
   .eq-lista { margin: 16px 0 14px; max-height: 260px; overflow-y: auto; }
   .eq-fila { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-    border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border); border-radius: 10px; margin-bottom: 6px;
     font-size: 13px; }
   .eq-fila small { color: var(--texto2); font-size: 10.5px; display: block; }
   .eq-fila .lado-eq { flex: 1; }
-  .eq-fila .flecha { color: var(--azul); font-weight: 700; }
+  .eq-fila .flecha { color: var(--acento); font-weight: 700; }
   .eq-fila .quitar { border: none; background: none; color: var(--rojo);
     cursor: pointer; font-weight: 700; font-size: 14px; }
   .eq-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
     border-top: 1px solid var(--border); padding-top: 14px; }
-  .eq-add input { flex: 1; min-width: 140px; padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: 7px; font-size: 13px; }
-  #eqError { color: #8f1d1d; font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+  .eq-add input { font-family: inherit; flex: 1; min-width: 140px; padding: 8px 10px;
+    background: rgba(255,255,255,0.05); color: var(--texto); outline: none;
+    border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .eq-add input:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  .eq-add input::placeholder { color: rgba(148, 160, 194, 0.6); }
+  #eqError, #gasError { color: var(--rojo); font-size: 12.5px; margin-top: 8px; min-height: 16px; }
 
   /* --- indicador de modo simulación --- */
-  .badge-sim { border: 1.5px solid var(--ambar);
-    color: var(--ambar); background: #fdf6ec; border-radius: 8px;
-    padding: 6px 14px; font-size: 12px; font-weight: 700;
-    letter-spacing: .6px; white-space: nowrap; }
+  .badge-sim { border: 1px solid rgba(251, 191, 36, 0.5);
+    color: var(--ambar); background: rgba(251, 191, 36, 0.1); border-radius: 10px;
+    padding: 6px 14px; font-size: 11px; font-weight: 700;
+    letter-spacing: .08em; white-space: nowrap; }
   .badge-sim small { display: block; font-weight: 400; letter-spacing: 0;
-    font-size: 10.5px; margin-top: 1px; }
-  .sim-tag { display: inline-block; border: 1px solid var(--ambar);
-    color: var(--ambar); background: #fdf6ec; border-radius: 6px;
+    font-size: 10px; margin-top: 1px; color: var(--texto2); }
+  .sim-tag { display: inline-block; border: 1px solid rgba(251, 191, 36, 0.5);
+    color: var(--ambar); background: rgba(251, 191, 36, 0.1); border-radius: 99px;
     padding: 2px 10px; font-size: 11px; font-weight: 700;
-    letter-spacing: .5px; margin-bottom: 10px; }
-  .barra-sel { display:flex; align-items:center; gap: 16px; flex-wrap: wrap; background: #fafbfc; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 12px; font-size: 13.5px; }
+    letter-spacing: .05em; margin-bottom: 10px; }
+  .barra-sel { display:flex; align-items:center; gap: 16px; flex-wrap: wrap; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; margin-top: 12px; font-size: 13px; }
   .barra-sel .dif-ok { color: var(--verde); font-weight: 700; }
   .barra-sel .dif-no { color: var(--ambar); font-weight: 700; }
-  .barra-sel input[type=text] { padding: 7px 10px; border:1px solid var(--border); border-radius: 7px; font-size: 12.5px; width: 220px; }
+  .barra-sel input[type=text] { font-family: inherit; padding: 7px 10px; background: rgba(255,255,255,0.05); color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; width: 220px; outline: none; }
+  .barra-sel input[type=text]:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  .barra-sel input::placeholder { color: rgba(148, 160, 194, 0.6); }
   .matches-manual { margin-top: 16px; }
-  .matches-manual h4 { font-size: 13.5px; margin-bottom: 8px; }
-  .match-manual { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; display:flex; gap: 10px; align-items:flex-start; }
+  .matches-manual h4 { font-family: "Sora", sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--texto2); margin-bottom: 8px; }
+  .match-manual { background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-size: 12.5px; display:flex; gap: 10px; align-items:flex-start; }
   .match-manual .detalle-m { flex: 1; }
   .match-manual .fila-m { color: var(--texto2); }
-  .match-manual button { border: 1px solid var(--border); background:#fff; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor:pointer; color: var(--rojo); }
-  button.mini { border: none; background: var(--verde); color:#fff; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
-  button.mini:disabled { background: #cbd2d9; cursor: not-allowed; }
-  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 8px; margin-top: 14px; }
-  .aviso.error { background: #fdecec; color: #8f1d1d; }
-  .aviso.info { background: #eef4ff; color: #1d3f7a; }
+  .match-manual button { font-family: inherit; border: 1px solid rgba(248, 81, 100, 0.4); background: rgba(248, 81, 100, 0.12); border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor:pointer; color: var(--rojo); }
+  .match-manual button:hover { background: rgba(248, 81, 100, 0.22); }
+  button.mini { font-family: inherit; border: none; color: #06281c;
+    background: linear-gradient(160deg, #4ade9d, var(--verde)); font-weight: 600;
+    border-radius: 8px; padding: 5px 13px; font-size: 12px; cursor: pointer; transition: filter .2s; }
+  button.mini:hover { filter: brightness(1.1); }
+  button.mini:disabled { background: rgba(255,255,255,0.09); color: var(--texto2); cursor: not-allowed; }
+  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 10px; margin-top: 14px; line-height: 1.55; }
+  .aviso.error { background: rgba(248, 81, 100, 0.1); border: 1px solid rgba(248, 81, 100, 0.35); color: var(--rojo); }
+  .aviso.info { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--texto); }
+  .aviso a { color: var(--acento); }
   .export { margin-left:auto; }
-  button.secundario { background:#fff; color: var(--texto); border:1px solid var(--border); padding: 9px 18px; border-radius: 8px; font-size: 13.5px; cursor:pointer; }
-  button.secundario:hover { border-color: var(--texto2); }
+  button.secundario, a.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 9px 16px; border-radius: 10px; font-size: 13px; cursor:pointer; transition: background .2s, border-color .2s; text-decoration: none; display: inline-block; }
+  button.secundario:hover, a.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">C</div>
+  <span class="logo" aria-hidden="true"></span>
   <div>
     <h1>Conciliador bancario</h1>
-    <p>Extractos Santander vs. libro mayor (cuentas E y O) — conciliación automática con IA</p>
+    <p>Extractos vs. libro mayor — Nave Motors</p>
   </div>
   <div class="zona-derecha">
-    <a href="/diario" class="secundario" style="text-decoration:none; padding: 9px 18px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; color:var(--texto); background:#fff;">📅 Modo diario</a>
-    <button class="secundario" id="btnEquiv">📖 Equivalencias</button>
-    <button class="secundario" id="btnGastos">🏦 Gastos</button>
+    <a href="/diario" class="secundario">Modo diario</a>
+    <button class="secundario" id="btnEquiv">Equivalencias</button>
+    <button class="secundario" id="btnGastos">Gastos</button>
     <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
       <small>la IA no consume API — sugerencias de prueba</small></span>
   </div>
@@ -187,7 +243,7 @@
 
 <main>
   <div id="bannerSim" class="aviso error oculto" style="margin: 0 0 16px;">
-    ⚠ <b>Esta página está en MODO SIMULACIÓN</b> (la URL contiene <code>?simular</code>):
+    <b>Esta página está en MODO SIMULACIÓN</b> (la URL contiene <code>?simular</code>):
     las sugerencias de IA serán de prueba, no reales.
     <button class="secundario" style="padding:4px 12px; font-size:12px; margin-left:10px;"
       onclick="location.href = location.pathname">Salir del modo simulación</button>
@@ -225,8 +281,8 @@
         <span id="accionesTab"></span>
         <span class="export" style="display:flex; gap:8px;">
           <button class="secundario" id="btnCompartir"
-            title="Copia el link de esta conciliación para compartirla con otro usuario">🔗 Copiar link</button>
-          <button class="secundario" id="btnExportar">⬇ Exportar a Excel</button>
+            title="Copia el link de esta conciliación para compartirla con otro usuario">Copiar link</button>
+          <button class="secundario" id="btnExportar">Exportar a Excel</button>
         </span>
       </div>
       <div class="contenedor-tabla"><table id="tabla"><thead></thead><tbody></tbody></table></div>
@@ -243,14 +299,14 @@
               <option value="debito">Solo débitos</option>
               <option value="credito">Solo créditos</option>
             </select>
-            <select id="ordenBanco" title="Orden de la lista (cuando 🎯 no está activo)">
+            <select id="ordenBanco" title="Orden de la lista (cuando "según selección" no está activo)">
               <option value="fecha">Por fecha</option>
               <option value="imp_desc">Importe ↓</option>
               <option value="imp_asc">Importe ↑</option>
             </select>
             <label><input type="checkbox" id="chkGastos"> incluir gastos bancarios</label>
             <label title="Al seleccionar asientos del mayor, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
-              <input type="checkbox" id="smartBanco" checked> 🎯 según selección</label>
+              <input type="checkbox" id="smartBanco" checked> según selección</label>
           </div>
           <div class="lista-items" id="listaBanco"></div>
         </div>
@@ -263,13 +319,13 @@
               <option value="debe">Solo Debe</option>
               <option value="haber">Solo Haber</option>
             </select>
-            <select id="ordenMayor" title="Orden de la lista (cuando 🎯 no está activo)">
+            <select id="ordenMayor" title="Orden de la lista (cuando "según selección" no está activo)">
               <option value="fecha">Por fecha</option>
               <option value="imp_desc">Importe ↓</option>
               <option value="imp_asc">Importe ↑</option>
             </select>
             <label title="Al seleccionar movimientos del banco, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
-              <input type="checkbox" id="smartMayor" checked> 🎯 según selección</label>
+              <input type="checkbox" id="smartMayor" checked> según selección</label>
           </div>
           <div class="lista-items" id="listaMayor"></div>
         </div>
@@ -279,9 +335,9 @@
         <span>Mayor: <b id="selMayorTxt">0 ítems — $ 0,00</b></span>
         <span>Diferencia: <span id="selDifTxt" class="dif-ok">$ 0,00</span></span>
         <input type="text" id="notaManual" placeholder="Nota (opcional)">
-        <button class="mini" id="btnManual" disabled>✔ Conciliar selección</button>
+        <button class="mini" id="btnManual" disabled>Conciliar selección</button>
         <button class="secundario" id="btnExcluir" disabled style="padding:5px 12px; font-size:12px;"
-          title="Sacar de la conciliación los asientos del mayor seleccionados (anulados / contraasientos). Quedan referenciados en su solapa y se pueden restaurar.">🚫 Excluir del mayor</button>
+          title="Sacar de la conciliación los asientos del mayor seleccionados (anulados / contraasientos). Quedan referenciados en su solapa y se pueden restaurar.">Excluir del mayor</button>
         <button class="secundario" id="btnLimpiarSel" style="padding:5px 12px; font-size:12px;">Limpiar</button>
       </div>
       <div class="matches-manual">
@@ -294,7 +350,7 @@
 
 <div id="modalEquiv" class="oculto">
   <div class="eq-card">
-    <h3>📖 Diccionario de equivalencias</h3>
+    <h3>Diccionario de equivalencias</h3>
     <p class="exp">El banco y el sistema contable a veces llaman distinto al mismo
       concepto: <b>"HABERES"</b> en el extracto son los <b>"SUELDOS"</b> del sistema.
       Cargá acá esas equivalencias y el conciliador las usa para cruzar
@@ -308,7 +364,7 @@
       <input type="text" id="eqExtracto" placeholder="Término(s) en el extracto, separados por coma">
       <span class="flecha" style="color:var(--azul);font-weight:700;">≈</span>
       <input type="text" id="eqSistema" placeholder="Término en el sistema (ej: sueldos)">
-      <button class="mini" id="eqAgregar">＋ Agregar</button>
+      <button class="mini" id="eqAgregar">Agregar</button>
     </div>
     <div id="eqError"></div>
     <div style="text-align:right; margin-top:6px;">
@@ -319,7 +375,7 @@
 
 <div id="modalGastos" class="oculto">
   <div class="eq-card" style="border-top-color: var(--ambar);">
-    <h3>🏦 Gastos bancarios definidos por ustedes</h3>
+    <h3>Gastos bancarios definidos por ustedes</h3>
     <p class="exp">Cuando el banco inventa un concepto nuevo (p. ej.
       <b>"Percep perc rg 5617 30%"</b>) y aparece en "Banco sin contabilizar",
       cargalo acá: pasa a clasificarse como gasto bancario en esta y en todas
@@ -328,7 +384,7 @@
     <div class="eq-lista" id="gasLista"></div>
     <div class="eq-add">
       <input type="text" id="gasTermino" placeholder="Concepto del extracto (ej: percep perc rg 5617 30%)">
-      <button class="mini" id="gasAgregar">＋ Agregar</button>
+      <button class="mini" id="gasAgregar">Agregar</button>
     </div>
     <div id="gasError"></div>
     <div style="text-align:right; margin-top:6px;">
@@ -387,9 +443,9 @@ configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
 
 function pintarListas() {
   $('#listaPdf').innerHTML = archivosPdf.map((f, i) =>
-    `<li><span>${f.name}</span><button onclick="quitarPdf(${i}, event)">✕</button></li>`).join('');
+    `<li><span>${f.name}</span><button onclick="quitarPdf(${i}, event)">×</button></li>`).join('');
   $('#listaXls').innerHTML = archivoXls ?
-    `<li><span>${archivoXls.name}</span><button onclick="quitarXls(event)">✕</button></li>` : '';
+    `<li><span>${archivoXls.name}</span><button onclick="quitarXls(event)">×</button></li>` : '';
   $('#btnConciliar').disabled = !(archivosPdf.length && archivoXls);
 }
 window.quitarPdf = (i, e) => { e.stopPropagation(); archivosPdf.splice(i, 1); pintarListas(); };
@@ -402,7 +458,7 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 $('#btnConciliar').addEventListener('click', async () => {
   if (MODO_SIMULACION && $('#chkIa').checked) {
     const seguir = confirm(
-      '⚠ MODO SIMULACIÓN\n\n' +
+      'MODO SIMULACIÓN\n\n' +
       'La URL contiene ?simular: las sugerencias de IA serán DE PRUEBA, ' +
       'generadas sin usar la API.\n\n' +
       'Aceptar = continuar en modo simulación\n' +
@@ -516,7 +572,7 @@ async function cargarResultado(jobId) {
   if (compartido) {
     try { await cargarResultado(compartido); return; }
     catch (e) {
-      $('#avisos').innerHTML = `<div class="aviso error">⚠ No se encontró la
+      $('#avisos').innerHTML = `<div class="aviso error">No se encontró la
         conciliación del link (${esc(e.message)}). Puede haberse borrado del servidor.</div>`;
     }
   }
@@ -548,7 +604,7 @@ function mostrarResultados() {
       <div class="etiqueta">Conciliados con cuenta E</div></div>
     <div class="kpi ambar"><div class="valor">${r.en_o_pendientes_confirmar}</div>
       <div class="etiqueta">En O — falta confirmar en el sistema</div>
-      <div class="sub">${r.o_confirmados || 0} ya confirmados ✔</div></div>
+      <div class="sub">${r.o_confirmados || 0} ya confirmados</div></div>
     <div class="kpi"><div class="valor">${r.gastos_bancarios.cantidad}</div>
       <div class="etiqueta">Gastos/impuestos bancarios</div>
       <div class="sub">$ ${fmt(r.gastos_bancarios.importe)}${r.nota_debito && r.nota_debito.periodos ?
@@ -569,11 +625,11 @@ function mostrarResultados() {
 
   let avisos = '';
   if (datos.cuenta)
-    avisos += `<div class="aviso info">📅 Conciliación del <b>modo diario</b> —
+    avisos += `<div class="aviso info">Conciliación del <b>modo diario</b> —
       cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
       (manual, reglas, equivalencias) aprende igual que en el modo mensual.</div>`;
   if (datos.arrastre)
-    avisos += `<div class="aviso info">↩ Se arrastraron
+    avisos += `<div class="aviso info">Se arrastraron
       <b>${datos.arrastre.movimientos}</b> movimientos del banco y
       <b>${datos.arrastre.asientos}</b> asientos del FBS que quedaron pendientes
       de la conciliación anterior de esta cuenta (figuran como
@@ -582,7 +638,7 @@ function mostrarResultados() {
       ` <a href="/?job=${esc(datos.arrastre.desde_job)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
   if (datos.memoria_omitidos)
-    avisos += `<div class="aviso info">🧠 Los archivos de hoy traían de nuevo
+    avisos += `<div class="aviso info">Los archivos de hoy traían de nuevo
       <b>${datos.memoria_omitidos.movimientos}</b> movimientos y
       <b>${datos.memoria_omitidos.asientos}</b> asientos que ya estaban conciliados
       en corridas anteriores de esta cuenta: se omitieron automáticamente.
@@ -592,14 +648,14 @@ function mostrarResultados() {
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
       conciliaciones manuales anteriores (método "regla aprendida").</div>`;
   if (r.equivalencias_aplicadas)
-    avisos += `<div class="aviso info">📖 Se conciliaron automáticamente
+    avisos += `<div class="aviso info">Se conciliaron automáticamente
       <b>${r.equivalencias_aplicadas}</b> movimientos usando el diccionario de
       equivalencias (p. ej. "haberes" en el extracto = "sueldos" en el sistema).
       Podés ver el método "equivalencia" en las pestañas de conciliados.</div>`;
 
   const ia = datos.ia;
   if (ia.estado === 'sin_credenciales')
-    avisos += `<div class="aviso info">ℹ La IA está activada pero el servidor no ve
+    avisos += `<div class="aviso info">La IA está activada pero el servidor no ve
       ANTHROPIC_API_KEY en su entorno. Se muestra la conciliación determinística.<br>
       Si la clave está cargada en Railway: verificá que el cambio de variables se haya
       <b>deployado</b> (Railway lo deja pendiente hasta apretar "Deploy"), que esté en el
@@ -610,7 +666,7 @@ function mostrarResultados() {
       SIMULADAS (parámetro ?simular en la URL): se generaron sin usar la API,
       solo para pruebas de la interfaz.</div>`;
   else if (ia.estado.startsWith('error'))
-    avisos += `<div class="aviso error">⚠ IA: ${esc(ia.estado)}</div>`;
+    avisos += `<div class="aviso error">IA: ${esc(ia.estado)}</div>`;
   $('#avisos').innerHTML = avisos;
 
   const tabs = [
@@ -695,7 +751,7 @@ function pintarTabla() {
       if (tabActiva === 'conciliados_o')
         f.push({ html: m.confirmado
           ? `<button class="mini" style="background:var(--verde)"
-               onclick="confirmarMatch('${esc(m.banco.id)}', false)">✔ Confirmado</button>`
+               onclick="confirmarMatch('${esc(m.banco.id)}', false)">Confirmado</button>`
           : `<button class="secundario" style="padding:4px 10px;font-size:12px;"
                onclick="confirmarMatch('${esc(m.banco.id)}', true)">Confirmar</button>` });
       return f;
@@ -725,7 +781,7 @@ function pintarTabla() {
         a.comentario, { num: a.debe }, { num: a.haber },
         { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}` },
         { html: `<button class="secundario" style="padding:3px 8px;font-size:11px;"
-           onclick="deshacerExclusion('${e.excl_id}')">↩ Restaurar</button>` }]));
+           onclick="deshacerExclusion('${e.excl_id}')">Restaurar</button>` }]));
     });
   } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
@@ -787,8 +843,8 @@ $('#btnCompartir').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(url); }
   catch { prompt('Copiá el link:', url); return; }
   const b = $('#btnCompartir');
-  b.textContent = '✔ Link copiado';
-  setTimeout(() => { b.textContent = '🔗 Copiar link'; }, 2000);
+  b.textContent = 'Link copiado';
+  setTimeout(() => { b.textContent = 'Copiar link'; }, 2000);
 });
 
 /* ================= Conciliación manual ================= */
@@ -858,8 +914,8 @@ function pintarManual() {
     else listaB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   const cabecera = (total, mostrados, smart) =>
-    `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#fafbfc;border-bottom:1px solid var(--border);position:sticky;top:0;">
-      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}${smart ? ' · 🎯 ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
+    `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#10173a;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;">
+      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}${smart ? ' · ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
 
   $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400), smartB) +
     (listaB.slice(0, 400).map(x => {
@@ -946,7 +1002,7 @@ function pintarMatchesManual() {
           ${m.regla_aprendida ? ' · <span class="metodo">regla aprendida para próximas conciliaciones</span>' : ''}
           ${m.nota ? ` · ${esc(m.nota)}` : ''}</div>
       </div>
-      <button onclick="deshacerManual('${m.match_id}')">↩ Deshacer</button>
+      <button onclick="deshacerManual('${m.match_id}')">Deshacer</button>
     </div>`).join('');
 }
 
@@ -978,7 +1034,7 @@ $('#btnExcluir').addEventListener('click', async () => {
     selMayor.clear();
     $('#notaManual').value = '';
     refrescarTrasManual('manual');
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 });
 
 window.deshacerExclusion = async id => {
@@ -989,7 +1045,7 @@ window.deshacerExclusion = async id => {
     datos = json;
     const quedan = (datos.contraasientos || []).length + (datos.excluidos_mayor || []).length;
     refrescarTrasManual(quedan ? 'excluidos' : 'e_sin_banco');
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 };
 
 window.marcarGasto = async desc => {
@@ -1010,7 +1066,7 @@ window.marcarGasto = async desc => {
     }
     alert(json.movidos ? `Listo: ${json.movidos} movimiento(s) pasaron a Gastos bancarios.`
                        : 'Concepto registrado para futuras conciliaciones.');
-  } catch (err) { alert('⚠ ' + err.message); }
+  } catch (err) { alert(err.message); }
 };
 $('#btnLimpiarSel').addEventListener('click', () => {
   selBanco.clear(); selMayor.clear(); pintarManual();
@@ -1029,7 +1085,7 @@ async function aplicarManual(cuerpo, volverA) {
     $('#notaManual').value = '';
     refrescarTrasManual(volverA);
   } catch (err) {
-    alert('⚠ ' + err.message);
+    alert(err.message);
   }
 }
 
@@ -1053,13 +1109,13 @@ window.aceptarSugerencia = i => {
 let equivalencias = [];
 
 function pintarEquiv() {
-  $('#btnEquiv').textContent = `📖 Equivalencias (${equivalencias.length})`;
+  $('#btnEquiv').textContent = `Equivalencias (${equivalencias.length})`;
   $('#eqLista').innerHTML = equivalencias.map(p => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(p.extracto)}</b><small>en el extracto</small></span>
       <span class="flecha">≈</span>
       <span class="lado-eq"><b>${esc(p.sistema)}</b><small>en el sistema</small></span>
-      <button class="quitar" title="Eliminar" onclick="eliminarEquiv('${esc(p.id)}')">✕</button>
+      <button class="quitar" title="Eliminar" onclick="eliminarEquiv('${esc(p.id)}')">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:13px;">Todavía no hay equivalencias cargadas.</p>';
 }
@@ -1097,7 +1153,7 @@ async function agregarEquiv() {
     $('#eqExtracto').value = ''; $('#eqSistema').value = '';
     $('#eqExtracto').focus();
     pintarEquiv();
-  } catch (err) { $('#eqError').textContent = '⚠ ' + err.message; }
+  } catch (err) { $('#eqError').textContent = err.message; }
 }
 $('#eqAgregar').addEventListener('click', agregarEquiv);
 ['eqExtracto', 'eqSistema'].forEach(id =>
@@ -1110,18 +1166,18 @@ window.eliminarEquiv = async id => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     equivalencias = json.equivalencias;
     pintarEquiv();
-  } catch (err) { $('#eqError').textContent = '⚠ ' + err.message; }
+  } catch (err) { $('#eqError').textContent = err.message; }
 };
 
 /* ============ gastos bancarios configurables ============ */
 let gastosConf = [];
 
 function pintarGastos() {
-  $('#btnGastos').textContent = `🏦 Gastos (${gastosConf.length})`;
+  $('#btnGastos').textContent = `Gastos (${gastosConf.length})`;
   $('#gasLista').innerHTML = gastosConf.map(t => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(t.termino)}</b><small>se clasifica como gasto bancario</small></span>
-      <button class="quitar" title="Eliminar" onclick="eliminarGasto('${esc(t.id)}')">✕</button>
+      <button class="quitar" title="Eliminar" onclick="eliminarGasto('${esc(t.id)}')">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:13px;">Todavía no cargaron conceptos propios. También podés usar el botón "→ gasto" en la solapa "Banco sin contabilizar".</p>';
 }
@@ -1159,7 +1215,7 @@ async function agregarGasto() {
     $('#gasTermino').value = '';
     pintarGastos();
     if (json.datos) { datos = json.datos; refrescarTrasManual(tabActiva); }
-  } catch (err) { $('#gasError').textContent = '⚠ ' + err.message; }
+  } catch (err) { $('#gasError').textContent = err.message; }
 }
 $('#gasAgregar').addEventListener('click', agregarGasto);
 $('#gasTermino').addEventListener('keydown', e => { if (e.key === 'Enter') agregarGasto(); });
@@ -1171,7 +1227,7 @@ window.eliminarGasto = async id => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     gastosConf = json.gastos;
     pintarGastos();
-  } catch (err) { $('#gasError').textContent = '⚠ ' + err.message; }
+  } catch (err) { $('#gasError').textContent = err.message; }
 };
 
 window.deshacerManual = async id => {
@@ -1182,7 +1238,7 @@ window.deshacerManual = async id => {
     datos = json;
     refrescarTrasManual('manual');
   } catch (err) {
-    alert('⚠ ' + err.message);
+    alert(err.message);
   }
 };
 </script>
