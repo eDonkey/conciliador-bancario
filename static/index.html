@@ -158,10 +158,29 @@
 
   /* --- diccionario de equivalencias --- */
   .zona-derecha { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-  #modalEquiv, #modalGastos { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
+  #modalEquiv, #modalGastos, #modalAnalisis { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
     backdrop-filter: blur(8px); display: flex; align-items: center;
     justify-content: center; z-index: 90; }
-  #modalEquiv.oculto, #modalGastos.oculto { display: none; }
+  #modalEquiv.oculto, #modalGastos.oculto, #modalAnalisis.oculto { display: none; }
+
+  /* --- análisis IA de asientos pendientes --- */
+  .btn-info { width: 22px; height: 22px; border-radius: 50%;
+    border: 1px solid rgba(56, 189, 248, 0.5); background: rgba(56, 189, 248, 0.12);
+    color: var(--acento); font-family: "Sora", sans-serif; font-style: italic;
+    font-weight: 800; font-size: 12px; line-height: 1; cursor: pointer;
+    transition: background .2s; flex-shrink: 0; }
+  .btn-info:hover { background: rgba(56, 189, 248, 0.28); }
+  .pill-an { font-size: 10px; border-radius: 99px; padding: 1px 8px; font-weight: 700;
+    letter-spacing: .03em; border: 1px solid transparent; white-space: nowrap; }
+  .pill-an.ok { background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.4); color: var(--verde); }
+  .pill-an.corr { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); color: var(--ambar); }
+  textarea { font-family: inherit; width: 100%; background: rgba(255,255,255,0.05);
+    color: var(--texto); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 13px; outline: none; resize: vertical; }
+  textarea:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  textarea::placeholder { color: rgba(148, 160, 194, 0.6); }
+  body.claro textarea { background: #fff; }
+  body.claro .btn-info { background: rgba(9, 147, 227, 0.1); border-color: rgba(9, 147, 227, 0.4); }
   .eq-card { background: rgba(12, 18, 40, 0.95); border: 1px solid var(--border);
     border-radius: 20px;
     box-shadow: 0 30px 80px rgba(0,0,0,.55); width: 560px;
@@ -435,6 +454,31 @@
     <div id="gasError"></div>
     <div style="text-align:right; margin-top:6px;">
       <button class="secundario" id="gasCerrar">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalAnalisis" class="oculto">
+  <div class="eq-card">
+    <h3>Análisis del asiento pendiente</h3>
+    <div id="anAsiento" class="exp" style="margin-top:6px;"></div>
+    <div id="anCuerpo" style="margin:14px 0; font-size:13px;"></div>
+    <div id="anVeredicto" class="oculto">
+      <div style="font-weight:600; font-size:13.5px; margin-bottom:8px;">
+        ¿Esto está bien analizado y resuelto?</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="mini" id="anSi">Sí, convertir en regla</button>
+        <button class="secundario" id="anNo">No</button>
+      </div>
+      <div id="anCorreccion" class="oculto" style="margin-top:10px;">
+        <textarea id="anTexto" rows="3"
+          placeholder="Contanos por qué no está bien — el sistema aprende de esta corrección"></textarea>
+        <button class="mini" id="anEnviar" style="margin-top:8px;">Enviar corrección</button>
+      </div>
+    </div>
+    <div id="anEstado" class="exp" style="margin-top:10px;"></div>
+    <div style="text-align:right; margin-top:10px;">
+      <button class="secundario" id="anCerrar">Cerrar</button>
     </div>
   </div>
 </div>
@@ -844,8 +888,14 @@ function pintarTabla() {
     });
   } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
-    filas = datos[tabActiva].map(a => [a.asiento, a.fecha, a.referencia, a.comentario,
-      { num: a.debe }, { num: a.haber }]);
+    const conIA = tabActiva === 'o_pendientes_sin_banco';
+    if (conIA) cols.push('Análisis IA');
+    filas = datos[tabActiva].map(a => {
+      const f = [a.asiento, a.fecha, a.referencia, a.comentario,
+        { num: a.debe }, { num: a.haber }];
+      if (conIA) f.push({ html: celdaAnalisis(a) });
+      return f;
+    });
   } else if (tabActiva === 'nota_debito') {
     cols = ['Período', 'Concepto', 'Cant.', 'Importe', 'Observación'];
     filas = [];
@@ -891,6 +941,87 @@ function pintarTabla() {
       return `<td>${esc(c)}</td>`;
     }).join('') + '</tr>').join('');
 }
+
+/* ============ análisis IA de asientos pendientes ============ */
+let anId = null;
+
+function celdaAnalisis(a) {
+  const est = (datos.analisis || {})[a.id];
+  let badge = '';
+  if (est && est.veredicto === 'ok')
+    badge = '<span class="pill-an ok" title="Análisis confirmado: quedó como regla">regla</span>';
+  else if (est && est.veredicto === 'corregido')
+    badge = `<span class="pill-an corr" title="${esc(est.correccion)}">corregido</span>`;
+  else if (a.analisis_previo)
+    badge = `<span class="pill-an ${a.analisis_previo.veredicto === 'ok' ? 'ok' : 'corr'}"
+      title="${esc(a.analisis_previo.nota)}">${a.analisis_previo.veredicto === 'ok'
+      ? 'regla previa' : 'corregido antes'}</span>`;
+  return `<span style="display:flex; gap:6px; align-items:center;">
+    <button class="btn-info" title="Analizar con IA por qué este asiento quedó pendiente"
+      onclick="verAnalisis('${esc(a.id)}')">i</button>${badge}</span>`;
+}
+
+window.verAnalisis = async id => {
+  anId = id;
+  const a = datos.o_pendientes_sin_banco.find(x => x.id === id)
+         || datos.e_sin_banco.find(x => x.id === id);
+  $('#anAsiento').innerHTML = a ? `<b>[${esc(a.hoja)}] ${esc(a.referencia || 'sin ref.')}</b>
+    — ${esc(a.comentario || '')}<br>${esc(a.fecha || '')} · Debe $ ${fmt(a.debe)} · Haber $ ${fmt(a.haber)}` : '';
+  $('#anCuerpo').innerHTML = '<span class="spinner"></span>La IA está analizando este asiento…';
+  $('#anVeredicto').classList.add('oculto');
+  $('#anCorreccion').classList.add('oculto');
+  $('#anTexto').value = '';
+  $('#anEstado').textContent = '';
+  $('#modalAnalisis').classList.remove('oculto');
+  try {
+    const resp = await fetch(`/api/analizar/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_mayor: id, simular: MODO_SIMULACION }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    mostrarAnalisis(json.analisis);
+  } catch (err) {
+    $('#anCuerpo').innerHTML = `<div class="aviso error" style="margin-top:0">${esc(err.message)}</div>`;
+  }
+};
+
+function mostrarAnalisis(an) {
+  datos.analisis = datos.analisis || {};
+  datos.analisis[anId] = an;
+  $('#anCuerpo').innerHTML = `<div class="aviso info" style="margin-top:0">${esc(an.texto)}</div>`;
+  if (an.veredicto) {
+    $('#anVeredicto').classList.add('oculto');
+    $('#anEstado').textContent = an.veredicto === 'ok'
+      ? 'Confirmado: este análisis quedó como regla y se aplica a asientos similares.'
+      : `Corregido por ustedes: "${an.correccion}". El sistema tiene en cuenta esta corrección.`;
+  } else {
+    $('#anVeredicto').classList.remove('oculto');
+  }
+  if (tabActiva === 'o_pendientes_sin_banco') pintarTabla();
+}
+
+async function enviarVeredicto(ok, correccion) {
+  try {
+    const resp = await fetch(`/api/analizar/${datos.job_id}/veredicto`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_mayor: anId, ok, correccion }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    mostrarAnalisis(json.analisis);
+  } catch (err) { $('#anEstado').textContent = err.message; }
+}
+$('#anSi').addEventListener('click', () => enviarVeredicto(true, ''));
+$('#anNo').addEventListener('click', () => {
+  $('#anCorreccion').classList.remove('oculto');
+  $('#anTexto').focus();
+});
+$('#anEnviar').addEventListener('click', () => enviarVeredicto(false, $('#anTexto').value));
+$('#anCerrar').addEventListener('click', () => $('#modalAnalisis').classList.add('oculto'));
+$('#modalAnalisis').addEventListener('click', e => {
+  if (e.target.id === 'modalAnalisis') $('#modalAnalisis').classList.add('oculto');
+});
 
 $('#buscador').addEventListener('input', pintarTabla);
 $('#btnExportar').addEventListener('click', () => {

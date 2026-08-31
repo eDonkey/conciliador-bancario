@@ -30,6 +30,7 @@ from engine import reglas as reglas_mod
 from engine import equivalencias as eq_mod
 from engine import gastos_conf
 from engine import cuentas as cuentas_mod
+from engine import analisis as analisis_mod
 from parsers import diarios
 
 app = FastAPI(title="Conciliador bancario")
@@ -222,6 +223,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
         salida["resumen"]["conciliados_manual"] = 0
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
+        analisis_mod.anotar_residuales(salida)
         RESULTADOS[job_id] = salida
         _guardar(job_id)
         PROGRESO[job_id] = {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
@@ -252,6 +254,69 @@ def api_diagnostico():
             repr(k) for k in os.environ
             if "ANTHROPIC" in k.upper() or "API_KEY" in k.upper()),
     }
+
+
+@app.post("/api/analizar/{job_id}")
+def api_analizar(job_id: str, cuerpo: dict = Body(...)):
+    """Análisis con IA de un asiento pendiente: por qué quedó sin banco.
+    Cachea el resultado en el job para no repetir la llamada."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    id_mayor = cuerpo.get("id_mayor")
+    asiento = next((x for lista in LISTAS_MAYOR for x in datos[lista]
+                    if x["id"] == id_mayor), None)
+    if not asiento:
+        return JSONResponse(status_code=404, content={"error": "Asiento no encontrado"})
+
+    cache = datos.setdefault("analisis", {})
+    if id_mayor in cache and not cuerpo.get("rehacer"):
+        return {"analisis": cache[id_mayor]}
+
+    aprendidos = analisis_mod.cargar()
+    correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
+    try:
+        texto = analisis_mod.analizar_asiento(
+            asiento, datos.get("banco_sin_contabilizar", []), correcciones,
+            cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
+            simular=bool(cuerpo.get("simular")))
+    except Exception as exc:  # noqa: BLE001 — mostrar el error en la UI
+        return JSONResponse(status_code=503, content={"error": str(exc)})
+
+    cache[id_mayor] = {"texto": texto, "fecha": date.today().isoformat(),
+                       "veredicto": None, "correccion": ""}
+    _guardar(job_id)
+    return {"analisis": cache[id_mayor]}
+
+
+@app.post("/api/analizar/{job_id}/veredicto")
+def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
+    """Confirmación del usuario sobre un análisis: Sí -> se convierte en
+    regla; No + explicación -> el sistema aprende la corrección."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    id_mayor = cuerpo.get("id_mayor")
+    entrada = (datos.get("analisis") or {}).get(id_mayor)
+    if not entrada:
+        return JSONResponse(status_code=409, content={
+            "error": "Primero hay que correr el análisis de este asiento"})
+    ok = bool(cuerpo.get("ok"))
+    correccion = (cuerpo.get("correccion") or "").strip()
+    if not ok and not correccion:
+        return JSONResponse(status_code=422, content={
+            "error": "Contanos por qué el análisis no está bien, así el sistema aprende"})
+
+    asiento = next((x for lista in LISTAS_MAYOR for x in datos[lista]
+                    if x["id"] == id_mayor), None)
+    if asiento:
+        firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
+        analisis_mod.aprender(firma, entrada["texto"], ok, correccion)
+        analisis_mod.anotar_residuales(datos)
+    entrada["veredicto"] = "ok" if ok else "corregido"
+    entrada["correccion"] = correccion
+    _guardar(job_id)
+    return {"analisis": entrada}
 
 
 @app.get("/api/equivalencias")
@@ -617,6 +682,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         if om_movs or om_asientos:
             salida["memoria_omitidos"] = {"movimientos": om_movs, "asientos": om_asientos}
             salida["resumen"]["omitidos"] = om_movs + om_asientos
+        analisis_mod.anotar_residuales(salida)
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
                                   "desde_job": arrastre.get(cid)}
