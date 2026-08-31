@@ -16,6 +16,7 @@
     --border: rgba(255, 255, 255, 0.12);
     --texto: #e8ecf8; --texto2: #94a0c2;
     --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --azul: var(--acento);
+    --th-bg: #10173a;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -94,7 +95,7 @@
   .buscador::placeholder { color: rgba(148, 160, 194, 0.6); }
   .contenedor-tabla { overflow-x: auto; max-height: 520px; overflow-y: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { position: sticky; top: 0; background: #10173a; text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; z-index: 2; }
+  th { position: sticky; top: 0; background: var(--th-bg); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; z-index: 2; }
   td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td .metodo { font-size: 10.5px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--acento); border-radius: 99px; padding: 1px 8px; white-space:nowrap; }
@@ -112,7 +113,7 @@
   .col-manual .filtros input[type=text] { font-family: inherit; flex:1; min-width: 120px; padding: 7px 10px; background: rgba(255,255,255,0.05); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--texto); outline: none; }
   .col-manual .filtros input[type=text]:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
   .col-manual .filtros input::placeholder { color: rgba(148, 160, 194, 0.6); }
-  .col-manual .filtros select { font-family: inherit; padding: 7px; background: #10173a; border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--texto); outline: none; }
+  .col-manual .filtros select { font-family: inherit; padding: 7px; background: var(--th-bg); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; color: var(--texto); outline: none; }
   .col-manual .filtros label { font-size: 12px; color: var(--texto2); display:flex; align-items:center; gap:4px; }
   .lista-items { border: 1px solid var(--border); border-radius: 10px; height: 380px; overflow-y: auto; background: rgba(0,0,0,0.16); }
   .item { display:flex; gap: 8px; padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 12.3px; cursor:pointer; align-items: flex-start; }
@@ -223,6 +224,50 @@
   .export { margin-left:auto; }
   button.secundario, a.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 9px 16px; border-radius: 10px; font-size: 13px; cursor:pointer; transition: background .2s, border-color .2s; text-decoration: none; display: inline-block; }
   button.secundario:hover, a.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
+
+  /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
+  body.claro {
+    --acento: #0993e3;
+    --texto: #17203a; --texto2: #5b6880;
+    --border: rgba(15, 23, 52, 0.14);
+    --panel: rgba(255, 255, 255, 0.82);
+    --rojo: #d64550; --verde: #0f9d6d; --ambar: #b07507;
+    --th-bg: #e9edf5;
+    background: radial-gradient(ellipse at 50% 0%, #ffffff, #e9edf4 70%) fixed;
+  }
+  body.claro::before {
+    background-image:
+      linear-gradient(rgba(23, 32, 58, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(23, 32, 58, 0.05) 1px, transparent 1px);
+  }
+  body.claro header { background: rgba(255, 255, 255, 0.85); }
+  body.claro .zona { background: rgba(255, 255, 255, 0.55); }
+  body.claro .zona:hover, body.claro .zona.arrastrando { background: rgba(9, 147, 227, 0.06); }
+  body.claro ul.archivos li { background: #fff; }
+  body.claro button.principal:disabled { background: rgba(15, 23, 52, 0.08); }
+  body.claro nav.tabs button .n { background: rgba(15, 23, 52, 0.06); }
+  body.claro td { border-bottom-color: rgba(15, 23, 52, 0.08); }
+  body.claro .buscador, body.claro .col-manual .filtros input[type=text],
+  body.claro .barra-sel input[type=text], body.claro .eq-add input { background: #fff; }
+  body.claro .col-manual .filtros select { background: #fff; }
+  body.claro .lista-items { background: rgba(15, 23, 52, 0.03); }
+  body.claro .item { border-bottom-color: rgba(15, 23, 52, 0.06); }
+  body.claro .item:hover { background: rgba(15, 23, 52, 0.045); }
+  body.claro .item.sel { background: rgba(9, 147, 227, 0.1); }
+  body.claro .item .badge { background: rgba(15, 23, 52, 0.05); }
+  body.claro .barra-sel, body.claro .match-manual, body.claro .eq-fila { background: rgba(255, 255, 255, 0.75); }
+  body.claro .ov-card, body.claro .eq-card { background: rgba(255, 255, 255, 0.98); }
+  body.claro #overlay, body.claro #modalEquiv, body.claro #modalGastos { background: rgba(23, 32, 58, 0.35); }
+  body.claro button.secundario, body.claro a.secundario { background: #fff; }
+  body.claro button.secundario:hover, body.claro a.secundario:hover { background: #eef3fa; }
+  body.claro td .metodo { background: rgba(9, 147, 227, 0.09); border-color: rgba(9, 147, 227, 0.35); }
+  body.claro .aviso.info { background: rgba(9, 147, 227, 0.06); border-color: rgba(9, 147, 227, 0.3); }
+  body.claro .aviso.error { background: rgba(214, 69, 80, 0.07); border-color: rgba(214, 69, 80, 0.35); }
+  body.claro .ov-barra { background: rgba(15, 23, 52, 0.08); }
+  body.claro .ov-anillo { border-color: rgba(15, 23, 52, 0.1); border-top-color: var(--acento); }
+  body.claro .badge-sim, body.claro .sim-tag { background: rgba(176, 117, 7, 0.08); }
+  body.claro .item .badge.cierra { background: rgba(15, 157, 109, 0.12); }
+  body.claro button.mini { color: #fff; background: linear-gradient(160deg, #12b981, #0f9d6d); }
 </style>
 </head>
 <body>
@@ -233,6 +278,7 @@
     <p>Extractos vs. libro mayor — Nave Motors</p>
   </div>
   <div class="zona-derecha">
+    <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
     <a href="/diario" class="secundario">Modo diario</a>
     <button class="secundario" id="btnEquiv">Equivalencias</button>
     <button class="secundario" id="btnGastos">Gastos</button>
@@ -411,6 +457,19 @@
 <script>
 const $ = s => document.querySelector(s);
 let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
+
+// Tema claro/oscuro: elección compartida entre las páginas del conciliador
+if (localStorage.getItem('tema') === 'claro') document.body.classList.add('claro');
+function pintarTema() {
+  $('#btnTema').textContent = document.body.classList.contains('claro')
+    ? 'Modo oscuro' : 'Modo claro';
+}
+$('#btnTema').addEventListener('click', () => {
+  const claro = document.body.classList.toggle('claro');
+  localStorage.setItem('tema', claro ? 'claro' : 'oscuro');
+  pintarTema();
+});
+pintarTema();
 
 // Modo simulación: con ?simular en la URL, la IA no consume API
 const MODO_SIMULACION = new URLSearchParams(location.search).has('simular');
@@ -914,7 +973,7 @@ function pintarManual() {
     else listaB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   const cabecera = (total, mostrados, smart) =>
-    `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:#10173a;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;">
+    `<div style="padding:6px 10px;font-size:11px;color:var(--texto2);background:var(--th-bg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;">
       ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}${smart ? ' · ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
 
   $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400), smartB) +

@@ -15,6 +15,7 @@
     --border: rgba(255, 255, 255, 0.12);
     --texto: #e8ecf8; --texto2: #94a0c2;
     --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --azul: var(--acento);
+    --th-bg: rgba(255, 255, 255, 0.03);
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -69,11 +70,11 @@
   button.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   .contenedor-tabla { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; background: rgba(255,255,255,0.03); }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; background: var(--th-bg); }
   td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td a { color: var(--acento); }
-  select { font-family: inherit; padding: 6px 8px; background: #10173a; color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; max-width: 320px; outline: none; }
+  select { font-family: inherit; padding: 6px 8px; background: var(--sel-bg, #10173a); color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; max-width: 320px; outline: none; }
   .chip { font-size: 10.5px; border-radius: 99px; padding: 2px 9px; white-space:nowrap; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
   .chip.extracto { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--acento); }
   .chip.fbs { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.4); color: #c4b5fd; }
@@ -90,6 +91,37 @@
   h2.seccion { font-family: "Sora", sans-serif; font-size: 14.5px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 10px; }
   .pct { font-weight: 700; }
   .pct.alto { color: var(--verde); } .pct.medio { color: var(--ambar); } .pct.bajo { color: var(--rojo); }
+
+  /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
+  body.claro {
+    --acento: #0993e3;
+    --texto: #17203a; --texto2: #5b6880;
+    --border: rgba(15, 23, 52, 0.14);
+    --panel: rgba(255, 255, 255, 0.82);
+    --rojo: #d64550; --verde: #0f9d6d; --ambar: #b07507;
+    --th-bg: #e9edf5; --sel-bg: #ffffff;
+    background: radial-gradient(ellipse at 50% 0%, #ffffff, #e9edf4 70%) fixed;
+  }
+  body.claro::before {
+    background-image:
+      linear-gradient(rgba(23, 32, 58, 0.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(23, 32, 58, 0.05) 1px, transparent 1px);
+  }
+  body.claro header { background: rgba(255, 255, 255, 0.85); }
+  body.claro header a.volver, body.claro button.secundario { background: #fff; }
+  body.claro header a.volver:hover, body.claro button.secundario:hover { background: #eef3fa; }
+  body.claro .zona { background: rgba(255, 255, 255, 0.55); }
+  body.claro .zona:hover, body.claro .zona.arrastrando { background: rgba(9, 147, 227, 0.06); }
+  body.claro ul.archivos li { background: #fff; }
+  body.claro button.principal:disabled { background: rgba(15, 23, 52, 0.08); }
+  body.claro td { border-bottom-color: rgba(15, 23, 52, 0.08); }
+  body.claro .chip.extracto { background: rgba(9, 147, 227, 0.09); border-color: rgba(9, 147, 227, 0.35); }
+  body.claro .chip.fbs { background: rgba(109, 79, 196, 0.09); border-color: rgba(109, 79, 196, 0.35); color: #6d4fc4; }
+  body.claro .chip.err { background: rgba(214, 69, 80, 0.08); border-color: rgba(214, 69, 80, 0.35); }
+  body.claro .chip.ok { background: rgba(15, 157, 109, 0.09); border-color: rgba(15, 157, 109, 0.35); }
+  body.claro .chip.warn { background: rgba(176, 117, 7, 0.08); border-color: rgba(176, 117, 7, 0.35); }
+  body.claro .aviso.info { background: rgba(9, 147, 227, 0.06); border-color: rgba(9, 147, 227, 0.3); }
+  body.claro .aviso.error { background: rgba(214, 69, 80, 0.07); border-color: rgba(214, 69, 80, 0.35); }
 </style>
 </head>
 <body>
@@ -99,7 +131,9 @@
     <h1>Conciliación diaria</h1>
     <p>Extractos + reportes FBS por cuenta — Nave Motors</p>
   </div>
-  <a class="volver" href="/">Conciliador mensual</a>
+  <button class="secundario" id="btnTema" style="margin-left:auto"
+    title="Alternar entre tema claro y oscuro">Modo claro</button>
+  <a class="volver" href="/" style="margin-left:0">Conciliador mensual</a>
 </header>
 
 <main>
@@ -164,6 +198,19 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// Tema claro/oscuro: elección compartida entre las páginas del conciliador
+if (localStorage.getItem('tema') === 'claro') document.body.classList.add('claro');
+function pintarTema() {
+  $('#btnTema').textContent = document.body.classList.contains('claro')
+    ? 'Modo oscuro' : 'Modo claro';
+}
+$('#btnTema').addEventListener('click', () => {
+  const claro = document.body.classList.toggle('claro');
+  localStorage.setItem('tema', claro ? 'claro' : 'oscuro');
+  pintarTema();
+});
+pintarTema();
 let archivos = [], staging = null, cuentas = [], grupo = null;
 
 fetch('/api/cuentas').then(r => r.json()).then(j => { cuentas = j.cuentas; });
