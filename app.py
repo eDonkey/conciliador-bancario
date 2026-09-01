@@ -9,6 +9,7 @@ o simplemente:
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -249,6 +250,9 @@ def api_diagnostico():
         },
         "ANTHROPIC_AUTH_TOKEN_presente": bool(token.strip()),
         "archivo_clave_local": os.path.exists(ai_assist.RUTA_CLAVE),
+        # True si datos/ está montado como volumen persistente (Railway):
+        # sin esto, todo el aprendizaje se pierde en cada deploy
+        "datos_es_volumen": os.path.ismount(DATOS_DIR),
         # repr() revela caracteres invisibles en el nombre (espacios al final)
         "variables_con_nombre_parecido": sorted(
             repr(k) for k in os.environ
@@ -331,6 +335,50 @@ def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
     entrada["correccion"] = correccion
     _guardar(job_id)
     return {"analisis": entrada}
+
+
+ARCHIVO_MIGRABLE_RE = re.compile(r'^[\w.-]+\.json$')
+
+
+@app.get("/api/migracion/exportar")
+def api_migracion_exportar():
+    """Exporta todos los datos del servicio (aprendizajes, resultados,
+    tableros, cuentas) como un solo JSON. Nunca incluye credenciales."""
+    bundle = {}
+    for nombre in sorted(os.listdir(DATOS_DIR)):
+        if not ARCHIVO_MIGRABLE_RE.match(nombre):
+            continue
+        try:
+            with open(os.path.join(DATOS_DIR, nombre), encoding="utf-8") as f:
+                bundle[nombre] = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+    return {"version": 1, "exportado": date.today().isoformat(),
+            "cantidad": len(bundle), "archivos": bundle}
+
+
+@app.post("/api/migracion/importar")
+def api_migracion_importar(cuerpo: dict = Body(...)):
+    """Importa un bundle exportado desde otro servicio. Como protección,
+    solo funciona sobre un servicio SIN conciliaciones diarias previas
+    (salvo {"forzar": true}), para no pisar datos productivos por error."""
+    hay_grupos = any(n.startswith("grupo_") for n in os.listdir(DATOS_DIR))
+    if hay_grupos and not cuerpo.get("forzar"):
+        return JSONResponse(status_code=409, content={
+            "error": "Este servicio ya tiene conciliaciones cargadas. "
+                     "Para pisarlas igual hay que mandar forzar=true."})
+    archivos = cuerpo.get("archivos") or {}
+    escritos, ignorados = 0, []
+    for nombre, contenido in archivos.items():
+        if not ARCHIVO_MIGRABLE_RE.match(nombre):
+            ignorados.append(nombre)
+            continue
+        with open(os.path.join(DATOS_DIR, nombre), "w", encoding="utf-8") as f:
+            json.dump(contenido, f, ensure_ascii=False)
+        escritos += 1
+    RESULTADOS.clear()   # invalidar el caché en memoria: releer del disco
+    return {"ok": True, "archivos_importados": escritos, "ignorados": ignorados,
+            "datos_es_volumen": os.path.ismount(DATOS_DIR)}
 
 
 @app.get("/api/equivalencias")
