@@ -888,7 +888,7 @@ function pintarTabla() {
     });
   } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
-    const conIA = tabActiva === 'o_pendientes_sin_banco';
+    const conIA = true;   // análisis IA disponible en E sin banco y O pendientes
     if (conIA) cols.push('Análisis IA');
     filas = datos[tabActiva].map(a => {
       const f = [a.asiento, a.fecha, a.referencia, a.comentario,
@@ -998,7 +998,7 @@ function mostrarAnalisis(an) {
   } else {
     $('#anVeredicto').classList.remove('oculto');
   }
-  if (tabActiva === 'o_pendientes_sin_banco') pintarTabla();
+  if (tabActiva === 'o_pendientes_sin_banco' || tabActiva === 'e_sin_banco') pintarTabla();
 }
 
 async function enviarVeredicto(ok, correccion) {
