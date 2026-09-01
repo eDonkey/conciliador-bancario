@@ -744,21 +744,17 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 
         om_movs = om_asientos = 0
         usados_mem = {}
-        # dedupe SOLO entre archivos distintos (p. ej. el extracto "del día" y el
-        # "histórico" subidos por separado). Dentro de un mismo archivo, filas
-        # idénticas son movimientos reales (comisiones repetidas) y se conservan.
-        vistos, movs = {}, []
+        # NUNCA se suprimen filas repetidas: dos impuestos o comisiones idénticos
+        # son movimientos reales. Lo único que se omite es lo que la memoria de
+        # conciliados registró como ya consumido en corridas anteriores (y solo
+        # tantas veces como se consumió).
+        movs = []
         for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
             k = _clave_mov_obj(m)
             if usados_mem.get(k, 0) < mem["movs"].get(k, 0):
                 usados_mem[k] = usados_mem.get(k, 0) + 1
                 om_movs += 1
                 continue
-            clave = (m.fecha, m.descripcion, round(m.credito - m.debito, 2),
-                     m.saldo, m.comprobante)
-            if clave in vistos and vistos[clave] != m.archivo:
-                continue
-            vistos.setdefault(clave, m.archivo)
             m.id = f"B#{len(movs) + 1}"
             movs.append(m)
         usados_mem = {}

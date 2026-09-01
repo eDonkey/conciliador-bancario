@@ -142,7 +142,7 @@ def _parse_galicia(nombre, data):
 
 def _parse_bbva(nombre, wb):
     cuenta = moneda = None
-    vistos, movs = set(), []
+    movs = []
     seq = 0
     for hoja in wb.sheets():
         filas = [[hoja.cell_value(r, c) for c in range(hoja.ncols)]
@@ -167,11 +167,8 @@ def _parse_bbva(nombre, wb):
                              if k in cols), None)
             comp = str(f[col_comp] or '') if col_comp is not None else ''
             detalle = str(f[cols['Detalle']] or '') if 'Detalle' in cols else ''
-            clave = (fecha, str(f[cols['Concepto']]), round(cre - deb, 2),
-                     str(f[cols.get('Saldo Parcial', -1)] if 'Saldo Parcial' in cols else ''))
-            if clave in vistos:      # misma operación en "del Día" e "Históricos"
-                continue
-            vistos.add(clave)
+            # No se deduplica: filas idénticas (p. ej. dos impuestos iguales el
+            # mismo día) son operaciones reales y se conservan todas.
             seq += 1
             movs.append(_mov(seq, nombre, fecha, str(f[cols['Concepto']]),
                              cre - deb, comprobante=comp.strip() or None,
