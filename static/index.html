@@ -740,6 +740,14 @@ function mostrarResultados() {
       lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
       ` <a href="/?job=${esc(datos.arrastre.desde_job)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
+  if (r.confirmados_desde_o)
+    avisos += `<div class="aviso info"><b>${r.confirmados_desde_o}</b> movimientos
+      que estaban "pendientes de confirmar (O)" encontraron su asiento en la
+      cuenta E (ya cargados en FBS) y pasaron directo a Conciliados (E)
+      ${r.contrapartidas_o_canceladas ? `— se cancelaron además
+      ${r.contrapartidas_o_canceladas} contrapartidas en O generadas por la
+      confirmación` : ''}. Los que siguen sin confirmarse continúan en la solapa
+      "Pendientes de confirmar (O)".</div>`;
   if (datos.memoria_omitidos)
     avisos += `<div class="aviso info">Los archivos de hoy traían de nuevo
       <b>${datos.memoria_omitidos.movimientos}</b> movimientos y

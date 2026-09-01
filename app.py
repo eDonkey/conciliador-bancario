@@ -537,6 +537,66 @@ def _cosechar_consumidos(prev: dict):
     return movs, asientos
 
 
+def _procesar_confirmaciones(prev, g):
+    """Cierra el ciclo O -> E entre corridas diarias.
+
+    Los movimientos que en la corrida anterior quedaron "conciliados contra O,
+    pendientes de confirmar" se arrastran esperando su confirmación: si en los
+    archivos de hoy aparece su asiento en la cuenta E (ya se cargaron en FBS),
+    pasan DIRECTO a Conciliados (E) y se cancela la contrapartida que la
+    confirmación generó en O. Si todavía no se confirmaron, siguen figurando
+    como pendientes de confirmar.
+
+    Devuelve (confirmados_e, pendientes_o_arrastrados, contrapartidas_canceladas)."""
+    from engine import matcher as matcher_mod
+
+    esperando = list((prev or {}).get("conciliados_o") or [])
+    if not esperando or not g["e"]:
+        return [], esperando, 0
+
+    movs = []
+    for i, ent in enumerate(esperando):
+        m = _reconstruir_mov(dict(ent["banco"]), i)
+        m.id = f"C#{i}"
+        m.archivo = ent["banco"].get("archivo") or ""
+        movs.append(m)
+    matches, _, e_restante = matcher_mod._match_pases(movs, g["e"])
+    g["e"][:] = e_restante
+
+    confirmados, idx_conf, canceladas = [], set(), 0
+    for mt in matches:
+        i = int(mt["banco"].id[2:])
+        idx_conf.add(i)
+        ent = esperando[i]
+        confirmados.append({
+            "banco": ent["banco"], "asiento": mt["asiento"].to_dict(),
+            "metodo": "confirmado en E (venía conciliado contra O)",
+        })
+        # la confirmación genera una contrapartida en O: cancelarla del pool
+        aso = ent.get("asiento") or {}
+        clave = (matcher_mod._clave_rm(aso.get("comentario") or "")
+                 or (aso.get("referencia") or "").strip().upper(),
+                 round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2))
+        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
+        for j, a in enumerate(g["o"]):
+            clave_a = (matcher_mod._clave_rm(a.comentario) or a.referencia.strip().upper(),
+                       round(a.importe, 2))
+            if clave_a == clave and a.lado != lado_original:
+                del g["o"][j]
+                canceladas += 1
+                break
+
+    pendientes = []
+    for i, ent in enumerate(esperando):
+        if i in idx_conf:
+            continue
+        metodo = ent.get("metodo") or ""
+        if "arrastrado" not in metodo:
+            ent = {**ent, "metodo": (metodo + " · arrastrado").strip(" ·")}
+        pendientes.append(ent)
+    return confirmados, pendientes, canceladas
+
+
 def _resumen_mini(r):
     return {
         "movimientos_banco": r["movimientos_banco"],
@@ -650,6 +710,10 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                     continue
                 filtrados.append(a)
             g[lado] = filtrados
+        # ciclo O -> E: lo conciliado contra O en la corrida anterior espera su
+        # confirmación; si el E de hoy la trae, pasa directo a Conciliados (E)
+        conf_e, carried_o, contrap_cancel = _procesar_confirmaciones(prev, g)
+
         # arrastre: los pendientes de la conciliación anterior de esta cuenta
         # entran al cruce de hoy (lo de ayer aparece en el FBS de hoy y viceversa)
         arr_movs, arr_asientos = _aplicar_arrastre(cid, movs, g, arrastre)
@@ -677,6 +741,23 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
+        # ciclo O -> E: sumar confirmados y arrastrar los que siguen pendientes
+        if conf_e or carried_o:
+            salida["conciliados_e"].extend(conf_e)
+            salida["conciliados_o"].extend(carried_o)
+            r = salida["resumen"]
+            r["conciliados_e"] += len(conf_e)
+            r["en_o_pendientes_confirmar"] += len(carried_o)
+            r["confirmados_desde_o"] = len(conf_e)
+            r["contrapartidas_o_canceladas"] = contrap_cancel
+            r["movimientos_banco"] += len(conf_e) + len(carried_o)
+            conc = r["conciliados_e"] + r["en_o_pendientes_confirmar"]
+            r["porcentaje_conciliado"] = round(
+                100.0 * conc / max(1, r["movimientos_banco"]), 1)
+            r["porcentaje_explicado"] = round(min(100.0,
+                100.0 * (conc + r.get("gastos_explicados", 0))
+                / max(1, r["movimientos_banco"])), 1)
+
         # de qué job venía la cadena de esta cuenta (para poder deshacer corridas)
         salida["arrastre_desde"] = arrastre.get(cid)
         if om_movs or om_asientos:
