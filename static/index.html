@@ -330,8 +330,9 @@
     </div>
     <div class="acciones">
       <button class="principal" id="btnConciliar" disabled>Conciliar</button>
-      <label class="check"><input type="checkbox" id="chkIa" checked>
-        Usar IA (Claude) para sugerir matches en los casos difíciles</label>
+      <label class="check"><input type="checkbox" id="chkIa">
+        Usar IA (Claude) para sugerir matches en los casos difíciles
+        <span style="color:var(--ambar)">— consume API (~$0,05-0,10 por tanda)</span></label>
       <span id="estado"></span>
     </div>
     <div id="avisos"></div>
@@ -997,7 +998,13 @@ window.verAnalisis = async id => {
 function mostrarAnalisis(an) {
   datos.analisis = datos.analisis || {};
   datos.analisis[anId] = an;
-  $('#anCuerpo').innerHTML = `<div class="aviso info" style="margin-top:0">${esc(an.texto)}</div>`;
+  const origen = {
+    ia: 'Análisis con IA', cache: 'Análisis con IA (reutilizado de una corrida anterior, sin costo)',
+    interno: 'Análisis interno sin IA', simulado: 'Simulación',
+    aprendizaje: 'Ya resuelto antes para este tipo de asiento',
+  }[an.origen] || '';
+  $('#anCuerpo').innerHTML = `<div class="aviso info" style="margin-top:0">${esc(an.texto)}</div>` +
+    (origen ? `<div style="font-size:11px; color:var(--texto2); margin-top:6px;">${esc(origen)}</div>` : '');
   if (an.veredicto) {
     $('#anVeredicto').classList.add('oculto');
     $('#anEstado').textContent = an.veredicto === 'ok'

@@ -274,17 +274,31 @@ def api_analizar(job_id: str, cuerpo: dict = Body(...)):
         return {"analisis": cache[id_mayor]}
 
     aprendidos = analisis_mod.cargar()
-    correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
-    try:
-        texto = analisis_mod.analizar_asiento(
-            asiento, datos.get("banco_sin_contabilizar", []), correcciones,
-            cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
-            simular=bool(cuerpo.get("simular")))
-    except Exception as exc:  # noqa: BLE001 — mostrar el error en la UI
-        return JSONResponse(status_code=503, content={"error": str(exc)})
 
-    cache[id_mayor] = {"texto": texto, "fecha": date.today().isoformat(),
-                       "veredicto": None, "correccion": ""}
+    # si la firma ya tiene un veredicto del usuario, no se gasta IA: se
+    # devuelve directamente lo aprendido (regla o corrección)
+    firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
+    previo = analisis_mod.buscar(firma, aprendidos)
+    if previo and not cuerpo.get("rehacer"):
+        cache[id_mayor] = {
+            "texto": previo.get("correccion") or previo.get("explicacion", ""),
+            "fecha": date.today().isoformat(),
+            "veredicto": previo["veredicto"],
+            "correccion": previo.get("correccion", ""),
+            "origen": "aprendizaje",
+        }
+        _guardar(job_id)
+        return {"analisis": cache[id_mayor]}
+
+    correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
+    resultado = analisis_mod.analizar_asiento(
+        asiento, datos.get("banco_sin_contabilizar", []), correcciones,
+        cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
+        simular=bool(cuerpo.get("simular")))
+
+    cache[id_mayor] = {"texto": resultado["texto"], "fecha": date.today().isoformat(),
+                       "veredicto": None, "correccion": "",
+                       "origen": resultado["origen"]}
     _guardar(job_id)
     return {"analisis": cache[id_mayor]}
 

@@ -16,10 +16,16 @@ from datetime import date
 from engine import reglas as reglas_mod
 from engine import ai_assist
 
-RUTA_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "datos", "analisis_aprendidos.json")
+_DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
+RUTA_DEFAULT = os.path.join(_DATOS, "analisis_aprendidos.json")
+RUTA_CACHE = os.path.join(_DATOS, "analisis_cache.json")
+RUTA_USO = os.path.join(_DATOS, "analisis_uso.json")
 
-MODELO = "claude-sonnet-5"
+# Haiku 4.5: $1/$5 por millón de tokens — un análisis cuesta ~$0,003.
+MODELO = "claude-haiku-4-5"
+# tope de llamadas a la API por día (más allá, análisis interno sin IA)
+MAX_LLAMADAS_DIA = int(os.environ.get("ANALISIS_MAX_DIA", "150"))
+MAX_CACHE = 5000
 
 
 def cargar(ruta: str = RUTA_DEFAULT) -> list[dict]:
@@ -98,6 +104,73 @@ cliente ya corrigió análisis de asientos parecidos, respetá ese criterio.
 No inventes datos que no estén en el contexto."""
 
 
+def _leer_json(ruta, defecto):
+    if os.path.exists(ruta):
+        try:
+            with open(ruta, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return defecto
+
+
+def _escribir_json(ruta, datos):
+    os.makedirs(os.path.dirname(ruta), exist_ok=True)
+    with open(ruta, "w", encoding="utf-8") as f:
+        json.dump(datos, f, ensure_ascii=False)
+
+
+def clave_asiento(a: dict) -> str:
+    return (f'{a.get("hoja")}|{a.get("asiento")}|{a.get("fecha")}|'
+            f'{a.get("debe") or 0:.2f}|{a.get("haber") or 0:.2f}|'
+            f'{(a.get("referencia") or "")[:30]}')
+
+
+def _consumir_presupuesto() -> bool:
+    """True si todavía queda presupuesto de llamadas de IA para hoy."""
+    uso = _leer_json(RUTA_USO, {})
+    hoy = date.today().isoformat()
+    if uso.get("fecha") != hoy:
+        uso = {"fecha": hoy, "llamadas": 0}
+    if uso["llamadas"] >= MAX_LLAMADAS_DIA:
+        return False
+    uso["llamadas"] += 1
+    _escribir_json(RUTA_USO, uso)
+    return True
+
+
+def _interno(asiento: dict, banco: list[dict], motivo: str = "") -> str:
+    """Análisis determinístico sin IA: mejor esfuerzo con los datos locales."""
+    imp = (asiento.get("debe") or 0) or (asiento.get("haber") or 0)
+    lado_banco = "credito" if (asiento.get("debe") or 0) else "debito"
+    partes = []
+    if motivo:
+        partes.append(motivo)
+    partes.append(
+        "Este asiento no encontró en el extracto ningún movimiento del mismo "
+        f"importe (${imp:,.2f}) y lado dentro de la tolerancia de fechas.")
+    candidatos = sorted(
+        (b for b in banco
+         if (b.get("credito") if lado_banco == "credito" else b.get("debito"))),
+        key=lambda b: abs(((b.get("credito") or 0) or (b.get("debito") or 0)) - imp))[:2]
+    for c in candidatos:
+        ic = (c.get("credito") or 0) or (c.get("debito") or 0)
+        dif = ic - imp
+        if abs(dif) < imp * 0.05 or abs(dif) < 5000:
+            partes.append(
+                f'El residual más parecido es "{c.get("descripcion")}" del '
+                f'{c.get("fecha")} por ${ic:,.2f} (diferencia ${dif:+,.2f}): '
+                "podría ser el mismo pago con comisión o redondeo — conviene "
+                "revisarlo en la solapa de conciliación manual.")
+            break
+    else:
+        partes.append(
+            "Lo más probable es que el pago aún no se haya ejecutado en el "
+            "banco, corresponda a otra cuenta, o el banco lo agrupe con otros "
+            "movimientos.")
+    return "Análisis interno (sin IA): " + " ".join(partes)
+
+
 def _simulado(asiento: dict, banco: list[dict]) -> str:
     imp = (asiento.get("debe") or 0) or (asiento.get("haber") or 0)
     cand = min(banco, key=lambda b: abs(((b.get("credito") or 0) or (b.get("debito") or 0)) - imp)) \
@@ -115,46 +188,81 @@ def _simulado(asiento: dict, banco: list[dict]) -> str:
 
 def analizar_asiento(asiento: dict, banco_residual: list[dict],
                      correcciones: list[dict], cuenta: str = "",
-                     simular: bool = False) -> str:
-    """Devuelve la explicación de la IA para un asiento pendiente."""
+                     simular: bool = False) -> dict:
+    """Explicación de por qué el asiento quedó pendiente.
+
+    Cascada de costo: caché persistente (mismo asiento en corridas
+    anteriores, cero API) -> presupuesto diario -> IA (Haiku, prompt
+    recortado) -> análisis interno sin IA ante cualquier problema.
+    Devuelve {"texto", "origen"} con origen en ia|cache|interno|simulado."""
     if simular:
-        return _simulado(asiento, banco_residual)
+        return {"texto": _simulado(asiento, banco_residual), "origen": "simulado"}
+
+    clave = clave_asiento(asiento)
+    cache = _leer_json(RUTA_CACHE, {})
+    if clave in cache:
+        return {"texto": cache[clave]["texto"], "origen": "cache"}
+
     if not ai_assist.disponible():
-        raise RuntimeError("No hay credenciales de IA configuradas (ANTHROPIC_API_KEY)")
+        return {"texto": _interno(asiento, banco_residual,
+                                  "No hay credenciales de IA configuradas."),
+                "origen": "interno"}
+    if not _consumir_presupuesto():
+        return {"texto": _interno(
+            asiento, banco_residual,
+            f"Se alcanzó el tope diario de {MAX_LLAMADAS_DIA} análisis con IA "
+            "(protección de costos)."), "origen": "interno"}
 
-    import anthropic
+    try:
+        import anthropic
 
-    imp = (asiento.get("debe") or 0) or (asiento.get("haber") or 0)
-    cercanos = sorted(
-        banco_residual,
-        key=lambda b: abs(((b.get("credito") or 0) or (b.get("debito") or 0)) - imp))[:40]
-    filas_banco = [{
-        "fecha": b.get("fecha"), "descripcion": b.get("descripcion"),
-        "detalle": b.get("detalle"), "comprobante": b.get("comprobante"),
-        "credito": b.get("credito"), "debito": b.get("debito"),
-    } for b in cercanos]
+        imp = (asiento.get("debe") or 0) or (asiento.get("haber") or 0)
+        cercanos = sorted(
+            banco_residual,
+            key=lambda b: abs(((b.get("credito") or 0) or (b.get("debito") or 0)) - imp))[:12]
+        filas_banco = [{k: v for k, v in {
+            "fecha": b.get("fecha"),
+            "descripcion": (b.get("descripcion") or "")[:80],
+            "detalle": (b.get("detalle") or "")[:60] or None,
+            "comprobante": b.get("comprobante"),
+            "credito": b.get("credito") or None,
+            "debito": b.get("debito") or None,
+        }.items() if v} for b in cercanos]
 
-    prompt = (
-        (f"CUENTA: {cuenta}\n\n" if cuenta else "")
-        + "ASIENTO PENDIENTE A EXPLICAR:\n"
-        + json.dumps({k: asiento.get(k) for k in
-                      ("hoja", "asiento", "fecha", "referencia", "comentario",
-                       "debe", "haber")}, ensure_ascii=False)
-        + "\n\nMOVIMIENTOS RESIDUALES DEL EXTRACTO (sin conciliar, los más "
-          "cercanos por importe):\n"
-        + json.dumps(filas_banco, ensure_ascii=False)
-    )
-    if correcciones:
-        prompt += ("\n\nCORRECCIONES PREVIAS DEL CLIENTE sobre análisis de "
-                   "asientos parecidos (criterio a respetar):\n"
-                   + json.dumps([{"asiento_tipo": c["firma"],
-                                  "correccion": c.get("correccion", "")}
-                                 for c in correcciones], ensure_ascii=False))
+        prompt = (
+            (f"CUENTA: {cuenta}\n" if cuenta else "")
+            + "ASIENTO PENDIENTE A EXPLICAR:\n"
+            + json.dumps({k: asiento.get(k) for k in
+                          ("hoja", "asiento", "fecha", "referencia", "comentario",
+                           "debe", "haber")}, ensure_ascii=False)
+            + "\n\nRESIDUALES DEL EXTRACTO MÁS CERCANOS POR IMPORTE:\n"
+            + json.dumps(filas_banco, ensure_ascii=False)
+        )
+        if correcciones:
+            prompt += ("\n\nCORRECCIONES PREVIAS DEL CLIENTE (criterio a respetar):\n"
+                       + json.dumps([{"asiento_tipo": c["firma"],
+                                      "correccion": (c.get("correccion") or "")[:200]}
+                                     for c in correcciones[:5]], ensure_ascii=False))
 
-    ai_assist._cargar_clave()
-    client = anthropic.Anthropic()
-    r = client.messages.create(
-        model=MODELO, max_tokens=700, system=SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return next((b.text for b in r.content if b.type == "text"), "").strip()
+        ai_assist._cargar_clave()
+        client = anthropic.Anthropic()
+        r = client.messages.create(
+            model=MODELO, max_tokens=400, system=SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        texto = next((b.text for b in r.content if b.type == "text"), "").strip()
+        if not texto:
+            return {"texto": _interno(asiento, banco_residual,
+                                      "La IA no devolvió análisis."), "origen": "interno"}
+        cache[clave] = {"texto": texto, "fecha": date.today().isoformat(),
+                        "modelo": MODELO}
+        if len(cache) > MAX_CACHE:      # limitar el tamaño del archivo
+            viejas = sorted(cache, key=lambda k: cache[k].get("fecha", ""))
+            for k in viejas[:len(cache) - MAX_CACHE]:
+                cache.pop(k, None)
+        _escribir_json(RUTA_CACHE, cache)
+        return {"texto": texto, "origen": "ia"}
+    except Exception as exc:  # noqa: BLE001 — nunca romper: análisis interno
+        return {"texto": _interno(asiento, banco_residual,
+                                  f"La IA no respondió ({exc})."),
+                "origen": "interno"}

@@ -9,7 +9,9 @@ Requiere ANTHROPIC_API_KEY en el entorno (o sesión de `ant auth login`).
 import json
 import os
 
-MODEL = "claude-opus-5"
+# Sonnet 5 ($2/$10 por MTok, ~60% más barato que Opus) alcanza de sobra para
+# proponer emparejamientos; cada tanda cuesta ~$0,05-0,10.
+MODEL = "claude-sonnet-5"
 MAX_BANCO = 80     # límites por llamada para no exceder contexto
 MAX_MAYOR = 400
 
@@ -179,7 +181,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
             # rechaza el pedido, la API lo reintenta con otro modelo.
             response = client.beta.messages.create(
                 model=MODEL,
-                max_tokens=16000,
+                max_tokens=8000,
                 betas=["server-side-fallback-2026-07-01"],
                 system=SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
@@ -190,7 +192,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
             # SDK/organización sin soporte del beta de fallbacks: llamada normal
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=16000,
+                max_tokens=8000,
                 system=SYSTEM,
                 output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
                 messages=[{"role": "user", "content": prompt}],
