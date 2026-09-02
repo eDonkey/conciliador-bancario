@@ -250,6 +250,8 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
             model=MODELO, max_tokens=400, system=SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
+        from engine import ia_log
+        ia_log.registrar("analisis", MODELO, getattr(r, "usage", None))
         texto = next((b.text for b in r.content if b.type == "text"), "").strip()
         if not texto:
             return {"texto": _interno(asiento, banco_residual,

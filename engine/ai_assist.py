@@ -197,6 +197,8 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
                 output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
                 messages=[{"role": "user", "content": prompt}],
             )
+        from engine import ia_log
+        ia_log.registrar("matching", MODEL, getattr(response, "usage", None))
         if response.stop_reason == "refusal":
             continue
         texto = next((b.text for b in response.content if b.type == "text"), "")

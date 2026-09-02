@@ -27,6 +27,7 @@ from parsers.santander_pdf import parse_extracto
 from parsers.mayor_xlsx import parse_mayor
 from engine.matcher import conciliar
 from engine import ai_assist
+from engine import ia_log
 from engine import reglas as reglas_mod
 from engine import equivalencias as eq_mod
 from engine import gastos_conf
@@ -253,6 +254,9 @@ def api_diagnostico():
         # True si datos/ está montado como volumen persistente (Railway):
         # sin esto, todo el aprendizaje se pierde en cada deploy
         "datos_es_volumen": os.path.ismount(DATOS_DIR),
+        # gasto real de la app en la API (tokens y USD estimados por llamada):
+        # si la factura no coincide con esto, el consumo vino de otro lado
+        "ia_uso": ia_log.resumen(),
         # repr() revela caracteres invisibles en el nombre (espacios al final)
         "variables_con_nombre_parecido": sorted(
             repr(k) for k in os.environ
