@@ -152,19 +152,45 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
                             "inicio": inicio}
 
     try:
-        # --- parsear extractos -------------------------------------------
+        # --- parsear extractos: PDF (Santander) o XLS/XLSX/CSV/TXT de
+        # cualquiera de los bancos del grupo (mismos parsers del modo diario;
+        # solo se reusa el CÓDIGO de parseo — los datos del diario, su memoria
+        # y su arrastre no intervienen en la conciliación mensual) -----------
         parseados = []
         n = len(archivos)
         for i, (nombre, data) in enumerate(archivos):
             prog(f"Leyendo extracto {i + 1} de {n}: {nombre}", 5 + 30 * i / n)
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(data)
-                ruta = tmp.name
-            try:
-                parseados.append(parse_extracto(ruta, nombre))
-            finally:
-                os.unlink(ruta)
-        parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or ""))
+            if data[:5] == b'%PDF-' or nombre.lower().endswith(".pdf"):
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(data)
+                    ruta = tmp.name
+                try:
+                    parseados.append(parse_extracto(ruta, nombre))
+                finally:
+                    os.unlink(ruta)
+                continue
+            info = diarios.identificar(nombre, data)
+            if info.get("tipo") == "fbs":
+                PROGRESO[job_id] = {"estado": "error", "mensaje":
+                    f'"{nombre}" es un reporte del FBS (Consulta del Mayor): '
+                    "va en el campo del libro mayor, no en el de extractos."}
+                return
+            if info.get("tipo") != "extracto":
+                PROGRESO[job_id] = {"estado": "error", "mensaje":
+                    f'No pude leer "{nombre}" como extracto bancario '
+                    f'({info.get("error", "formato no reconocido")}). '
+                    "Se aceptan PDF, XLS/XLSX y CSV de los bancos del grupo."}
+                return
+            # ids únicos entre archivos, misma convención que el parser de PDF
+            for j, m in enumerate(info["movimientos"], 1):
+                m.id = f"{nombre}#{j}"
+            parseados.append({"archivo": nombre, "titular": None,
+                              "cuenta": info.get("cuenta"),
+                              "banco": info.get("banco"),
+                              "desde": info.get("desde"), "hasta": info.get("hasta"),
+                              "saldo_inicial": None, "saldo_final": None,
+                              "movimientos": info["movimientos"]})
+        parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
         movs = [m for e in parseados for m in e["movimientos"]]
 
         # --- parsear mayor -----------------------------------------------

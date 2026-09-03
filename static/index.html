@@ -316,9 +316,9 @@
   <section class="tarjeta">
     <div class="grid-carga">
       <div class="zona" id="zonaPdf">
-        <h3> Extractos bancarios (PDF)</h3>
-        <p>Arrastrá o hacé clic — uno o más resúmenes de cuenta Santander</p>
-        <input type="file" id="inputPdf" accept=".pdf" multiple hidden>
+        <h3> Extractos bancarios</h3>
+        <p>Arrastrá o hacé clic — PDF, XLS/XLSX o CSV de cualquier banco del grupo</p>
+        <input type="file" id="inputPdf" accept=".pdf,.xls,.xlsx,.csv,.txt" multiple hidden>
         <ul class="archivos" id="listaPdf"></ul>
       </div>
       <div class="zona" id="zonaXls">
@@ -536,7 +536,7 @@ function configurarZona(zona, input, multiple, alCambiar) {
 }
 
 configurarZona($('#zonaPdf'), $('#inputPdf'), true, files => {
-  archivosPdf = archivosPdf.concat(files.filter(f => f.name.toLowerCase().endsWith('.pdf')));
+  archivosPdf = archivosPdf.concat(files.filter(f => /\.(pdf|xlsx?|csv|txt)$/i.test(f.name)));
   pintarListas();
 });
 configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
