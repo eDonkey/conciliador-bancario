@@ -128,12 +128,12 @@
 <header>
   <span class="logo" aria-hidden="true"></span>
   <div>
-    <h1>Conciliación diaria</h1>
-    <p>Extractos + reportes FBS por cuenta — Nave Motors</p>
+    <h1>Conciliación diaria <span id="chipMarca" class="oculto" style="font-family:'Sora',sans-serif; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--acento); border:1px solid color-mix(in srgb, var(--acento) 45%, transparent); border-radius:999px; padding:3px 10px; margin-left:8px; vertical-align:2px;"></span></h1>
+    <p id="subtitulo">Extractos + reportes FBS por cuenta — Nave Motors</p>
   </div>
   <button class="secundario" id="btnTema" style="margin-left:auto"
     title="Alternar entre tema claro y oscuro">Modo claro</button>
-  <a class="volver" href="/" style="margin-left:0">Conciliador mensual</a>
+  <a class="volver" id="linkMensual" href="/" style="margin-left:0">Conciliador mensual</a>
 </header>
 
 <main>
@@ -213,7 +213,27 @@ $('#btnTema').addEventListener('click', () => {
 pintarTema();
 let archivos = [], staging = null, cuentas = [], grupo = null;
 
-fetch('/api/cuentas').then(r => r.json()).then(j => { cuentas = j.cuentas; });
+// ?marca=X limita toda la página (cuentas, identificación, historial) a esa
+// marca; los links generados la conservan para no salirse del contexto
+const MARCA = new URLSearchParams(location.search).get('marca') || '';
+const conMarca = (url) => MARCA
+  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
+  : url;
+
+fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
+  cuentas = j.cuentas;
+  if (MARCA) {
+    const nombre = j.marca_nombre || MARCA;
+    $('#chipMarca').textContent = nombre;
+    $('#chipMarca').classList.remove('oculto');
+    $('#linkMensual').href = conMarca('/');
+    document.title = `Conciliación diaria — ${nombre}`;
+    if (!j.cuentas.length)
+      $('#subtitulo').innerHTML = `<span style="color:var(--rojo)">No hay cuentas de la marca "${esc(MARCA)}" — revisá el parámetro de la URL o cargala en el hub</span>`;
+    else
+      $('#subtitulo').textContent = `Extractos + reportes FBS por cuenta — ${nombre}`;
+  }
+});
 
 const zona = $('#zona'), input = $('#inputArchivos');
 zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
@@ -236,7 +256,7 @@ $('#btnIdentificar').addEventListener('click', async () => {
   try {
     const fd = new FormData();
     archivos.forEach(f => fd.append('archivos', f));
-    const resp = await fetch('/api/diario/identificar', { method: 'POST', body: fd });
+    const resp = await fetch(conMarca('/api/diario/identificar'), { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     staging = json;
@@ -297,7 +317,7 @@ $('#btnConciliar').addEventListener('click', async () => {
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     grupo = json;
-    history.replaceState(null, '', `?grupo=${grupo.grupo_id}`);
+    history.replaceState(null, '', conMarca(`?grupo=${grupo.grupo_id}`));
     $('#estadoConciliar').textContent = '';
     pintarTablero();
   } catch (err) {
@@ -354,7 +374,7 @@ function pintarTablero() {
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
       <td class="num">${r.mayor_sin_banco ?? ''}</td>
-      <td>${f.job_id ? `<a href="/?job=${esc(f.job_id)}" target="_blank"
+      <td>${f.job_id ? `<a href="${conMarca(`/?job=${esc(f.job_id)}`)}" target="_blank"
         style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
     </tr>`;
   }).join('');
@@ -377,7 +397,7 @@ function pintarTablero() {
 }
 
 $('#btnCopiarTablero').addEventListener('click', async () => {
-  const url = `${location.origin}${location.pathname}?grupo=${grupo.grupo_id}`;
+  const url = `${location.origin}${conMarca(`${location.pathname}?grupo=${grupo.grupo_id}`)}`;
   try { await navigator.clipboard.writeText(url); } catch { prompt('Copiá el link:', url); return; }
   $('#btnCopiarTablero').textContent = 'Link copiado';
   setTimeout(() => { $('#btnCopiarTablero').textContent = 'Copiar link del tablero'; }, 2000);
@@ -386,7 +406,7 @@ $('#btnCopiarTablero').addEventListener('click', async () => {
 /* ============ memoria diaria (historial persistente) ============ */
 async function cargarHistorial() {
   try {
-    const resp = await fetch('/api/diario');
+    const resp = await fetch(conMarca('/api/diario'));
     const json = await resp.json();
     if (!resp.ok) return;
     $('#histCard').classList.toggle('oculto', !json.grupos.length);
@@ -413,7 +433,7 @@ async function cargarHistorial() {
         <td class="num">${g.arrastrados || ''}</td>
         <td class="num">${g.pendientes || ''}</td>
         <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
-        <td style="white-space:nowrap"><a href="?grupo=${esc(g.grupo_id)}" style="color:var(--azul)">Abrir tablero →</a>
+        <td style="white-space:nowrap"><a href="${conMarca(`?grupo=${esc(g.grupo_id)}`)}" style="color:var(--azul)">Abrir tablero →</a>
           <button onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
             title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
             style="font-family:inherit;font-size:11px;border:1px solid rgba(248,81,100,0.4);background:rgba(248,81,100,0.12);color:var(--rojo);cursor:pointer;font-weight:600;margin-left:8px;border-radius:8px;padding:3px 9px;">Eliminar</button></td>

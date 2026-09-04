@@ -123,6 +123,7 @@ async def api_conciliar(
     extractos: list[UploadFile] = File(...),
     mayor: UploadFile = File(...),
     usar_ia: str = Form("no"),
+    marca: str = Form(""),
 ):
     """Recibe los archivos, arranca el procesamiento en segundo plano y
     devuelve el job_id de inmediato. El avance se consulta en /api/progreso."""
@@ -136,12 +137,12 @@ async def api_conciliar(
                         "porcentaje": 2, "eta_seg": round(est_base),
                         "inicio": time.time()}
     threading.Thread(target=_procesar_job,
-                     args=(job_id, archivos, data_mayor, usar_ia, est_base),
+                     args=(job_id, archivos, data_mayor, usar_ia, est_base, marca),
                      daemon=True).start()
     return {"job_id": job_id, "estado": "procesando"}
 
 
-def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
+def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
     inicio = PROGRESO[job_id]["inicio"]
 
     def prog(fase, pct, eta=None):
@@ -244,6 +245,19 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base):
 
         prog("Preparando los resultados", 96, eta=4)
         salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
+        salida["marca"] = marca or None
+        if marca:
+            # aviso si un extracto parece de una cuenta de OTRA marca
+            todas = cuentas_mod.cargar()
+            avisos_marca = []
+            for e in parseados:
+                c = cuentas_mod.buscar_por_numero(
+                    todas, e.get("banco"), e.get("cuenta"))
+                if c and cuentas_mod.slug(marca) not in cuentas_mod.slug(c["empresa"]):
+                    avisos_marca.append(
+                        f'"{e["archivo"]}" parece la cuenta {c["numero"]} de '
+                        f'{c["empresa"]}, no de la marca de esta página.')
+            salida["avisos_marca"] = avisos_marca
         # auditoría: qué modo de IA llegó en el pedido (para diagnosticar
         # corridas en simulación no intencionales)
         salida["ia"]["modo_pedido"] = usar_ia
@@ -431,18 +445,23 @@ def api_equivalencias_eliminar(eq_id: str):
 
 
 @app.get("/api/cuentas")
-def api_cuentas():
-    """Cuentas bancarias del grupo con su etiqueta y mapeo FBS."""
-    cuentas = cuentas_mod.cargar()
+def api_cuentas(marca: str = ""):
+    """Cuentas bancarias del grupo con su etiqueta y mapeo FBS. Con ?marca=
+    se limita a esa marca (nombre completo o abreviado)."""
+    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)
     return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
-            "bancos": cuentas_mod.BANCOS}
+            "bancos": cuentas_mod.BANCOS, "marca": marca or None,
+            "marca_nombre": (sorted({c["empresa"] for c in cuentas})[0]
+                             if marca and cuentas else None)}
 
 
 @app.post("/api/diario/identificar")
-async def api_diario_identificar(archivos: list[UploadFile] = File(...)):
+async def api_diario_identificar(archivos: list[UploadFile] = File(...),
+                                 marca: str = ""):
     """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
-    deja lo parseado en memoria para el paso de conciliación."""
-    cuentas = cuentas_mod.cargar()
+    deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
+    identificación solo asigna cuentas de esa marca."""
+    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)
     staging_id = uuid.uuid4().hex[:10]
     parseados, resumen = {}, []
     for up in archivos:
@@ -471,8 +490,9 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...)):
             "cuenta_id": cuenta["id"] if cuenta else None,
             "error": info.get("error"),
         })
-    STAGING[staging_id] = {"archivos": parseados, "resumen": resumen}
-    return {"staging_id": staging_id, "archivos": resumen}
+    STAGING[staging_id] = {"archivos": parseados, "resumen": resumen,
+                           "marca": marca or None}
+    return {"staging_id": staging_id, "archivos": resumen, "marca": marca or None}
 
 
 RUTA_ARRASTRE = os.path.join(DATOS_DIR, "arrastre_diario.json")
@@ -872,6 +892,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     grupo_id = uuid.uuid4().hex[:10]
     grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
              "hora": time.strftime("%H:%M"),
+             "marca": stag.get("marca"),
              "cuentas": sorted(tablero, key=lambda x: x["etiqueta"]),
              "sin_asignar": sin_asignar}
     with open(os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json"), "w", encoding="utf-8") as f:
@@ -881,10 +902,15 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 
 
 @app.get("/api/diario")
-def api_diario_historial():
+def api_diario_historial(marca: str = ""):
     """La memoria diaria: todas las conciliaciones diarias guardadas, de la
     más reciente a la más vieja, con su resumen. Los tableros nunca se borran
-    y los pendientes encadenan cada día con el siguiente."""
+    y los pendientes encadenan cada día con el siguiente. Con ?marca= se
+    listan solo las corridas de esa marca (las viejas sin marca guardada se
+    clasifican por las cuentas que contienen)."""
+    ids_marca = ({c["id"] for c in
+                  cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)}
+                 if marca else None)
     grupos = []
     for nombre in os.listdir(DATOS_DIR):
         if not (nombre.startswith("grupo_") and nombre.endswith(".json")):
@@ -896,6 +922,11 @@ def api_diario_historial():
         except (json.JSONDecodeError, OSError):
             continue
         cuentas = g.get("cuentas", [])
+        if ids_marca is not None:
+            propia = (cuentas_mod.slug(g.get("marca") or "") == cuentas_mod.slug(marca)
+                      or any(c.get("cuenta_id") in ids_marca for c in cuentas))
+            if not propia:
+                continue
         ok = [c for c in cuentas if c.get("estado") == "ok"]
         r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
         expl = [c["resumen"]["porcentaje_explicado"] for c in ok
@@ -904,7 +935,7 @@ def api_diario_historial():
         grupos.append({
             "desde": min(fechas_mov) if fechas_mov else None,
             "hasta": max(fechas_mov) if fechas_mov else None,
-            "grupo_id": g.get("grupo_id"),
+            "grupo_id": g.get("grupo_id"), "marca": g.get("marca"),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
             "cuentas": len(cuentas), "conciliadas": len(ok),
             "incompletas": len(cuentas) - len(ok),

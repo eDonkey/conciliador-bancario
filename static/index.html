@@ -293,12 +293,12 @@
 <header>
   <span class="logo" aria-hidden="true"></span>
   <div>
-    <h1>Conciliador bancario</h1>
-    <p>Extractos vs. libro mayor — Nave Motors</p>
+    <h1>Conciliador bancario <span id="chipMarca" class="oculto" style="font-family:'Sora',sans-serif; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--acento); border:1px solid color-mix(in srgb, var(--acento) 45%, transparent); border-radius:999px; padding:3px 10px; margin-left:8px; vertical-align:2px;"></span></h1>
+    <p id="subtitulo">Extractos vs. libro mayor — Nave Motors</p>
   </div>
   <div class="zona-derecha">
     <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
-    <a href="/diario" class="secundario">Modo diario</a>
+    <a href="/diario" class="secundario" id="linkDiario">Modo diario</a>
     <button class="secundario" id="btnEquiv">Equivalencias</button>
     <button class="secundario" id="btnGastos">Gastos</button>
     <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
@@ -503,6 +503,23 @@
 const $ = s => document.querySelector(s);
 let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
 
+// ?marca=X etiqueta la conciliación con esa marca y mantiene los links dentro
+// del contexto (el hub puede linkear una página por marca)
+const MARCA = new URLSearchParams(location.search).get('marca') || '';
+const conMarca = (url) => MARCA
+  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
+  : url;
+if (MARCA) {
+  $('#linkDiario').href = conMarca('/diario');
+  fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
+    const nombre = j.marca_nombre || MARCA;
+    $('#chipMarca').textContent = nombre;
+    $('#chipMarca').classList.remove('oculto');
+    document.title = `Conciliador bancario — ${nombre}`;
+    $('#subtitulo').textContent = `Extractos vs. libro mayor — ${nombre}`;
+  });
+}
+
 // Tema claro/oscuro: elección compartida entre las páginas del conciliador
 if (localStorage.getItem('tema') === 'claro') document.body.classList.add('claro');
 function pintarTema() {
@@ -573,6 +590,7 @@ $('#btnConciliar').addEventListener('click', async () => {
   archivosPdf.forEach(f => fd.append('extractos', f));
   fd.append('mayor', archivoXls);
   fd.append('usar_ia', $('#chkIa').checked ? (MODO_SIMULACION ? 'simular' : 'si') : 'no');
+  fd.append('marca', MARCA);
   $('#btnConciliar').disabled = true;
   $('#estado').textContent = '';
   $('#avisos').innerHTML = '';
@@ -728,6 +746,9 @@ function mostrarResultados() {
       <div class="sub">incluye los gastos bancarios justificados por la ND mensual</div></div>`;
 
   let avisos = '';
+  (datos.avisos_marca || []).forEach(a => {
+    avisos += `<div class="aviso error"><b>Ojo con la marca:</b> ${esc(a)}</div>`;
+  });
   if (datos.cuenta)
     avisos += `<div class="aviso info">Conciliación del <b>modo diario</b> —
       cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
@@ -739,7 +760,7 @@ function mostrarResultados() {
       de la conciliación anterior de esta cuenta (figuran como
       "(pendiente de días anteriores)"). Lo que cruce hoy se concilia solo;
       lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
-      ` <a href="/?job=${esc(datos.arrastre.desde_job)}" target="_blank"
+      ` <a href="${conMarca(`/?job=${esc(datos.arrastre.desde_job)}`)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
   if (r.confirmados_desde_o)
     avisos += `<div class="aviso info"><b>${r.confirmados_desde_o}</b> movimientos
@@ -1044,7 +1065,7 @@ $('#btnExportar').addEventListener('click', () => {
 });
 $('#btnCompartir').addEventListener('click', async () => {
   if (!datos) return;
-  const url = `${location.origin}${location.pathname}?job=${datos.job_id}`;
+  const url = `${location.origin}${conMarca(`${location.pathname}?job=${datos.job_id}`)}`;
   try { await navigator.clipboard.writeText(url); }
   catch { prompt('Copiá el link:', url); return; }
   const b = $('#btnCompartir');

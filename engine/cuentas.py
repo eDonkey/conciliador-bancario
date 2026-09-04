@@ -173,6 +173,22 @@ def guardar(cuentas: list[dict], ruta: str = RUTA_DEFAULT):
         json.dump(cuentas, f, ensure_ascii=False, indent=1)
 
 
+def slug(s: str) -> str:
+    """'Le Mans' / 'le-mans' / 'LEMANS' -> 'lemans' (para comparar marcas)."""
+    plano = unicodedata.normalize("NFD", s or "")
+    plano = "".join(ch for ch in plano if not unicodedata.combining(ch))
+    return re.sub(r'[^a-z0-9]', '', plano.lower())
+
+
+def filtrar_marca(cuentas: list[dict], marca: str) -> list[dict]:
+    """Cuentas de una marca. Matchea por nombre completo o abreviado:
+    'gac-kyoto' alcanza para 'Gac - Kyoto Driving Automoviles SA'."""
+    m = slug(marca)
+    if not m:
+        return cuentas
+    return [c for c in cuentas if m in slug(c["empresa"])]
+
+
 def etiqueta(c: dict) -> str:
     base = f'{c["empresa"]} — {BANCOS.get(c["banco"], c["banco"])} {c["numero"]} ({c["moneda"]})'
     # el alias es descriptivo, no identificatorio (hay repetidos): se anexa
