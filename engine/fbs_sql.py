@@ -27,6 +27,7 @@ conciliados, arrastre y marca funcionan idénticos.
 """
 import json
 import os
+import re
 from datetime import date, datetime
 
 from parsers.mayor_xlsx import AsientoMayor
@@ -52,6 +53,44 @@ QUERY_EJEMPLO = (
 
 COLUMNAS = ("hoja", "codigo", "asiento", "fecha", "referencia",
             "comentario", "debe", "haber")
+
+# ---- SOLO LECTURA (garantía dura): la app JAMÁS escribe en el FBS ----------
+# Capa 1: la query se valida antes de ejecutarse — una sola sentencia, que
+#   empiece en SELECT/WITH y sin ninguna palabra de escritura o ejecución.
+# Capa 2: todo corre dentro de una transacción SIN commit y con rollback
+#   explícito al final: aunque algo lograra colarse, se deshace.
+# Capa 3 (del lado del servidor, recomendada): el login que usa el
+#   conciliador debe ser db_datareader + db_denydatawriter.
+_PROHIBIDAS = re.compile(
+    r"\b(insert|update|delete|merge|drop|alter|create|truncate|exec|execute"
+    r"|grant|revoke|deny|into|backup|restore|shutdown|dbcc|kill|use"
+    r"|sp_\w+|xp_\w+|openrowset|opendatasource|openquery"
+    r"|writetext|updatetext|bulk|disable|enable)\b", re.IGNORECASE)
+
+
+def _validar_solo_lectura(query: str):
+    """Lanza ValueError si la query no es una consulta de solo lectura."""
+    limpio = re.sub(r"--[^\n]*", " ", query or "")
+    limpio = re.sub(r"/\*.*?\*/", " ", limpio, flags=re.S)
+    limpio = re.sub(r"'(?:[^']|'')*'", "''", limpio)   # literales fuera
+    cuerpo = limpio.strip().rstrip(";").strip()
+    if not cuerpo:
+        raise ValueError("La query del FBS está vacía.")
+    if ";" in cuerpo:
+        raise ValueError(
+            "Protección de solo lectura: la query del FBS debe ser UNA sola "
+            "sentencia (hay un ';' en el medio).")
+    primera = cuerpo.split(None, 1)[0].lower()
+    if primera not in ("select", "with"):
+        raise ValueError(
+            "Protección de solo lectura: la query del FBS tiene que empezar "
+            f"con SELECT (o WITH), no con {primera.upper()}.")
+    m = _PROHIBIDAS.search(cuerpo)
+    if m:
+        raise ValueError(
+            "Protección de solo lectura: la query del FBS contiene "
+            f'"{m.group(0).upper()}", que no está permitido. Solo consultas.')
+
 
 # nombres reales de las columnas del FBS -> nombre canónico (se comparan en
 # minúsculas; así la query no necesita renombrar nada salvo hoja y codigo)
@@ -100,6 +139,8 @@ def cargar_conf() -> dict:
 
 
 def guardar_conf(datos: dict):
+    if str(datos.get("query") or "").strip():
+        _validar_solo_lectura(str(datos["query"]))
     conf = cargar_conf()
     for k in ("servidor", "base", "usuario", "query"):
         if k in datos:
@@ -183,17 +224,23 @@ def traer(desde: str, hasta: str) -> list[dict]:
     if not configurado():
         raise ValueError("La conexión al FBS no está configurada "
                          "(servidor, base y usuario).")
+    _validar_solo_lectura(conf["query"])
     try:
         con = _conectar(conf)
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"No pude conectarme al SQL Server del FBS: {exc}")
     try:
+        con.autocommit(False)   # transacción abierta, jamás se commitea
         cur = con.cursor(as_dict=True)
         cur.execute(conf["query"], {"desde": desde, "hasta": hasta})
         filas = cur.fetchall()
     except Exception as exc:  # noqa: BLE001
-        con.close()
+        try:
+            con.rollback()
+        finally:
+            con.close()
         raise ValueError(f"La query del FBS falló: {exc}")
+    con.rollback()   # solo lectura: se deshace cualquier efecto colateral
     con.close()
 
     filas = [_normalizar_fila(f) for f in filas]

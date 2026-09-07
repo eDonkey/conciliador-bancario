@@ -527,7 +527,10 @@ def api_fbs_sql_get():
 
 @app.post("/api/fbs-sql")
 def api_fbs_sql_post(cuerpo: dict = Body(...)):
-    fbs_sql.guardar_conf(cuerpo)
+    try:
+        fbs_sql.guardar_conf(cuerpo)
+    except ValueError as exc:   # protección de solo lectura sobre la query
+        return JSONResponse(status_code=422, content={"error": str(exc)})
     return fbs_sql.publica()
 
 
