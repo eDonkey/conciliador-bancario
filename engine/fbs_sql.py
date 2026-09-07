@@ -28,6 +28,7 @@ conciliados, arrastre y marca funcionan idénticos.
 import json
 import os
 import re
+import socket
 from datetime import date, datetime
 
 from parsers.mayor_xlsx import AsientoMayor
@@ -168,6 +169,16 @@ def publica() -> dict:
             "clave_presente": bool(c["clave"]), "query": c["query"]}
 
 
+def _ipv4(host: str) -> str:
+    """Resuelve el nombre a IPv4: FreeTDS falla cuando el nombre de la
+    máquina resuelve a IPv6 (típico en redes Windows). Si no resuelve,
+    se deja el nombre tal cual."""
+    try:
+        return socket.gethostbyname(host)
+    except OSError:
+        return host
+
+
 def _conectar(conf: dict):
     import pymssql   # import perezoso: la app arranca aunque falte el driver
     kwargs = dict(database=conf["base"], user=conf["usuario"],
@@ -177,9 +188,10 @@ def _conectar(conf: dict):
     if "\\" in servidor:
         # instancia nombrada (HOST\SQLEXPRESS): el puerto lo resuelve el
         # SQL Browser del servidor (UDP 1434) — no se pasa puerto fijo
-        kwargs["server"] = servidor
+        host, instancia = servidor.split("\\", 1)
+        kwargs["server"] = f"{_ipv4(host)}\\{instancia}"
     else:
-        kwargs["server"] = servidor
+        kwargs["server"] = _ipv4(servidor)
         kwargs["port"] = conf["puerto"]
     return pymssql.connect(**kwargs)
 
