@@ -257,10 +257,22 @@ def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
 _DRIVER_USADO = {"nombre": None}
 
 
+def _query_para_log(query: str, params: dict) -> str:
+    """La query con los parámetros sustituidos, lista para pegar en SSMS."""
+    q = query
+    for k, v in (params or {}).items():
+        q = q.replace(f"%({k})s", f"'{v}'")
+    return q
+
+
 def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
     """Ejecuta la consulta con el mejor driver disponible: ODBC nativo de
     Windows primero, FreeTDS (pymssql) como respaldo. FBS_SQL_DRIVER
     (pyodbc|pymssql) fuerza uno solo."""
+    print("[fbs] Query a ejecutar (copiable a SSMS):\n"
+          "-------------------------------------------\n"
+          + _query_para_log(query, params)
+          + "\n-------------------------------------------", flush=True)
     elegido = (os.environ.get("FBS_SQL_DRIVER") or "auto").lower()
     errores = []
     if elegido in ("auto", "pyodbc"):
@@ -284,6 +296,11 @@ def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
         except Exception as exc:  # noqa: BLE001
             errores.append(f"[pymssql] {exc}")
     raise RuntimeError(" — ".join(str(e) for e in errores))
+
+
+def _log_filas(filas: list[dict]):
+    print(f"[fbs] La consulta devolvió {len(filas)} fila(s) "
+          f"(driver {_DRIVER_USADO['nombre']})", flush=True)
 
 
 def probar() -> dict:
@@ -355,6 +372,7 @@ def traer(desde: str, hasta: str) -> list[dict]:
         filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"La consulta al FBS falló: {exc}")
+    _log_filas(filas)
     return _infos_desde_filas(filas)
 
 
@@ -496,6 +514,7 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
         except Exception as exc:  # noqa: BLE001
             errores.append(f'{g["nombre"]}: {exc}')
             continue
+        _log_filas(filas)
         salida.extend(_infos_desde_filas(filas, g["cuenta_por_codigo"]))
     if errores and not salida:
         raise ValueError("La consulta al FBS falló: " + " | ".join(errores))
