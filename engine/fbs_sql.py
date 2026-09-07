@@ -94,10 +94,18 @@ def publica() -> dict:
 
 def _conectar(conf: dict):
     import pymssql   # import perezoso: la app arranca aunque falte el driver
-    return pymssql.connect(
-        server=conf["servidor"], port=conf["puerto"], database=conf["base"],
-        user=conf["usuario"], password=conf["clave"],
-        login_timeout=10, timeout=60, charset="UTF-8")
+    kwargs = dict(database=conf["base"], user=conf["usuario"],
+                  password=conf["clave"], login_timeout=10, timeout=60,
+                  charset="UTF-8")
+    servidor = (conf["servidor"] or "").strip()
+    if "\\" in servidor:
+        # instancia nombrada (HOST\SQLEXPRESS): el puerto lo resuelve el
+        # SQL Browser del servidor (UDP 1434) — no se pasa puerto fijo
+        kwargs["server"] = servidor
+    else:
+        kwargs["server"] = servidor
+        kwargs["port"] = conf["puerto"]
+    return pymssql.connect(**kwargs)
 
 
 def probar() -> dict:
