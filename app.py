@@ -27,6 +27,7 @@ from parsers.santander_pdf import parse_extracto
 from parsers.mayor_xlsx import parse_mayor
 from engine.matcher import conciliar
 from engine import ai_assist
+from engine import fbs_sql
 from engine import ia_log
 from engine import reglas as reglas_mod
 from engine import equivalencias as eq_mod
@@ -455,44 +456,116 @@ def api_cuentas(marca: str = ""):
                              if marca and cuentas else None)}
 
 
+def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
+    """Fila del paso de identificación para un archivo (real o virtual) ya
+    parseado: detecta a qué cuenta bancaria corresponde."""
+    cuenta = None
+    if info["tipo"] == "extracto":
+        cuenta = cuentas_mod.buscar_por_numero(
+            cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
+    elif info["tipo"] == "fbs":
+        idents = list((info.get("codigos") or {}).values()) + [info.get("nombre_fbs")]
+        cuenta = next((c for c in (cuentas_mod.buscar_por_fbs(cuentas, i)
+                                   for i in idents if i) if c), None)
+        if cuenta is None:  # el nombre interno a veces trae el nro real
+            cuenta = cuentas_mod.buscar_por_nombre_fbs(cuentas, info.get("nombre_fbs"))
+    return {
+        "archivo": nombre, "tipo": info["tipo"],
+        "banco": info.get("banco"), "moneda": info.get("moneda"),
+        "cuenta_detectada": info.get("cuenta"),
+        "hoja": info.get("hoja"), "codigo_fbs": info.get("codigo_fbs"),
+        "nombre_fbs": info.get("nombre_fbs"),
+        "cantidad": info.get("cantidad", 0),
+        "desde": info["desde"].isoformat() if info.get("desde") else None,
+        "hasta": info["hasta"].isoformat() if info.get("hasta") else None,
+        "cuenta_id": cuenta["id"] if cuenta else None,
+        "error": info.get("error"),
+    }
+
+
+def _staging_destino(staging_id: str, marca: str) -> tuple[str, dict]:
+    """Staging existente (para sumarle archivos) o uno nuevo."""
+    stag = STAGING.get(staging_id or "")
+    if stag is None:
+        staging_id = uuid.uuid4().hex[:10]
+        stag = {"archivos": {}, "resumen": [], "marca": marca or None}
+        STAGING[staging_id] = stag
+    return staging_id, stag
+
+
+def _agregar_a_staging(stag: dict, nombre: str, info: dict, cuentas: list[dict]):
+    """Agrega (o reemplaza, si ya estaba) un archivo parseado al staging."""
+    stag["archivos"][nombre] = info
+    stag["resumen"] = [f for f in stag["resumen"] if f["archivo"] != nombre]
+    stag["resumen"].append(_fila_resumen(nombre, info, cuentas))
+
+
 @app.post("/api/diario/identificar")
 async def api_diario_identificar(archivos: list[UploadFile] = File(...),
-                                 marca: str = ""):
+                                 marca: str = "", staging: str = ""):
     """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
     deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
-    identificación solo asigna cuentas de esa marca."""
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)
-    staging_id = uuid.uuid4().hex[:10]
-    parseados, resumen = {}, []
+    identificación solo asigna cuentas de esa marca; con ?staging= los
+    archivos se suman a una identificación previa (p. ej. al mayor ya traído
+    del FBS por SQL) en vez de empezar de cero."""
+    staging_id, stag = _staging_destino(staging, marca)
+    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
+                                        stag.get("marca") or marca)
     for up in archivos:
         data = await up.read()
         info = diarios.identificar(up.filename, data)
-        parseados[up.filename] = info
-        cuenta = None
-        if info["tipo"] == "extracto":
-            cuenta = cuentas_mod.buscar_por_numero(
-                cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
-        elif info["tipo"] == "fbs":
-            idents = list((info.get("codigos") or {}).values()) + [info.get("nombre_fbs")]
-            cuenta = next((c for c in (cuentas_mod.buscar_por_fbs(cuentas, i)
-                                       for i in idents if i) if c), None)
-            if cuenta is None:  # el nombre interno a veces trae el nro real
-                cuenta = cuentas_mod.buscar_por_nombre_fbs(cuentas, info.get("nombre_fbs"))
-        resumen.append({
-            "archivo": up.filename, "tipo": info["tipo"],
-            "banco": info.get("banco"), "moneda": info.get("moneda"),
-            "cuenta_detectada": info.get("cuenta"),
-            "hoja": info.get("hoja"), "codigo_fbs": info.get("codigo_fbs"),
-            "nombre_fbs": info.get("nombre_fbs"),
-            "cantidad": info.get("cantidad", 0),
-            "desde": info["desde"].isoformat() if info.get("desde") else None,
-            "hasta": info["hasta"].isoformat() if info.get("hasta") else None,
-            "cuenta_id": cuenta["id"] if cuenta else None,
-            "error": info.get("error"),
-        })
-    STAGING[staging_id] = {"archivos": parseados, "resumen": resumen,
-                           "marca": marca or None}
-    return {"staging_id": staging_id, "archivos": resumen, "marca": marca or None}
+        _agregar_a_staging(stag, up.filename, info, cuentas)
+    return {"staging_id": staging_id, "archivos": stag["resumen"],
+            "marca": stag.get("marca")}
+
+
+@app.get("/api/fbs-sql")
+def api_fbs_sql_get():
+    """Configuración de la conexión directa al FBS (sin la clave)."""
+    return fbs_sql.publica()
+
+
+@app.post("/api/fbs-sql")
+def api_fbs_sql_post(cuerpo: dict = Body(...)):
+    fbs_sql.guardar_conf(cuerpo)
+    return fbs_sql.publica()
+
+
+@app.post("/api/fbs-sql/probar")
+def api_fbs_sql_probar():
+    return fbs_sql.probar()
+
+
+@app.post("/api/diario/fbs-sql")
+def api_diario_fbs_sql(cuerpo: dict = Body(...)):
+    """Trae el mayor E y O directo del SQL Server del FBS para un rango de
+    fechas y lo suma al staging como si fueran reportes subidos: el resto del
+    flujo (mapeos, conciliación, memoria, arrastre) es idéntico."""
+    desde, hasta = cuerpo.get("desde"), cuerpo.get("hasta")
+    try:
+        d1, d2 = date.fromisoformat(desde or ""), date.fromisoformat(hasta or "")
+    except ValueError:
+        return JSONResponse(status_code=422, content={
+            "error": "Indicá el rango de fechas (desde y hasta)."})
+    if d1 > d2:
+        d1, d2 = d2, d1
+    try:
+        infos = fbs_sql.traer(d1.isoformat(), d2.isoformat())
+    except ValueError as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+    if not infos:
+        return JSONResponse(status_code=422, content={
+            "error": "La query del FBS no devolvió asientos E/O en ese rango."})
+    marca = cuerpo.get("marca") or ""
+    staging_id, stag = _staging_destino(cuerpo.get("staging_id") or "", marca)
+    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
+                                        stag.get("marca") or marca)
+    for info in infos:
+        _agregar_a_staging(stag, info["archivo"], info, cuentas)
+    return {"staging_id": staging_id, "archivos": stag["resumen"],
+            "marca": stag.get("marca"),
+            "fbs_sql": {"cuentas": len(infos),
+                        "asientos": sum(i["cantidad"] for i in infos)}}
 
 
 RUTA_ARRASTRE = os.path.join(DATOS_DIR, "arrastre_diario.json")

@@ -75,6 +75,14 @@
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td a { color: var(--acento); }
   select { font-family: inherit; padding: 6px 8px; background: var(--sel-bg, #10173a); color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; max-width: 320px; outline: none; }
+  input[type=text], input[type=password], input[type=number], input[type=date], input:not([type]), textarea {
+    font-family: inherit; padding: 7px 10px; background: var(--sel-bg, #10173a);
+    color: var(--texto); border: 1px solid var(--border); border-radius: 8px;
+    font-size: 12.5px; outline: none; }
+  input:focus, textarea:focus { border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
+  body.claro input, body.claro textarea, body.claro select { background: #fff; }
+  #modalFbs { display: flex; align-items: center; justify-content: center; }
+  #modalFbs.oculto { display: none; }
   .chip { font-size: 10.5px; border-radius: 99px; padding: 2px 9px; white-space:nowrap; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
   .chip.extracto { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--acento); }
   .chip.fbs { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.4); color: #c4b5fd; }
@@ -161,7 +169,48 @@
       <button class="principal" id="btnIdentificar" disabled>Identificar archivos</button>
       <span id="estadoCarga"></span>
     </div>
+
+    <div id="fbsSqlBloque" style="margin-top:16px; padding:14px 16px; border:1px dashed var(--border); border-radius:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <div style="min-width:220px; flex:1;">
+        <b style="font-size:13px;">Mayor FBS directo desde la base</b><br>
+        <span id="fbsSqlEstado" style="font-size:12px; color:var(--texto2);">Consultando configuración…</span>
+      </div>
+      <label style="font-size:12px; color:var(--texto2);">Desde
+        <input type="date" id="fbsDesde" style="margin-left:4px;"></label>
+      <label style="font-size:12px; color:var(--texto2);">Hasta
+        <input type="date" id="fbsHasta" style="margin-left:4px;"></label>
+      <button class="secundario" id="btnFbsTraer" disabled>Traer E y O del FBS</button>
+      <button class="secundario" id="btnFbsConf">Configurar conexión</button>
+      <span id="fbsSqlMsj" style="font-size:12px;"></span>
+    </div>
   </section>
+
+  <div id="modalFbs" class="oculto" style="position:fixed; inset:0; z-index:120; background:rgba(4,7,18,0.7); backdrop-filter:blur(4px); padding:20px;">
+    <div class="tarjeta" style="max-width:640px; width:100%; margin:0; max-height:90vh; overflow:auto;">
+      <h2 class="seccion">Conexión directa al FBS (SQL Server)</h2>
+      <p style="font-size:12.5px; color:var(--texto2); margin-bottom:12px;">
+        La query es libre pero tiene que devolver las columnas
+        <code>hoja, codigo, asiento, fecha, referencia, comentario, debe, haber</code>
+        (y opcional <code>nombre_fbs</code>), con <code>%(desde)s</code> y
+        <code>%(hasta)s</code> como parámetros del rango. La clave no se muestra:
+        dejala vacía para conservar la actual.</p>
+      <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
+        <input id="fbsServidor" placeholder="Servidor (IP o nombre)">
+        <input id="fbsPuerto" type="number" placeholder="Puerto" value="1433">
+        <input id="fbsBase" placeholder="Base de datos">
+        <input id="fbsUsuario" placeholder="Usuario SQL">
+        <input id="fbsClave" type="password" placeholder="Clave (vacío = sin cambio)" style="grid-column:1 / -1;" autocomplete="new-password">
+      </div>
+      <textarea id="fbsQuery" rows="8" style="width:100%; margin-top:10px; font-family:ui-monospace,monospace; font-size:12px;"></textarea>
+      <div id="fbsConfMsj" style="font-size:12.5px; margin-top:8px;"></div>
+      <div class="acciones" style="margin-top:12px;">
+        <button class="secundario" id="btnFbsProbar">Probar conexión</button>
+        <span style="flex:1"></span>
+        <button class="secundario" id="btnFbsCerrar">Cerrar</button>
+        <button class="principal" id="btnFbsGuardar">Guardar</button>
+      </div>
+    </div>
+  </div>
 
   <section class="tarjeta oculto" id="identCard">
     <h2 class="seccion">Paso 2 — Confirmá qué es cada archivo</h2>
@@ -256,7 +305,12 @@ $('#btnIdentificar').addEventListener('click', async () => {
   try {
     const fd = new FormData();
     archivos.forEach(f => fd.append('archivos', f));
-    const resp = await fetch(conMarca('/api/diario/identificar'), { method: 'POST', body: fd });
+    // si ya hay una identificación (p. ej. el FBS traído por SQL), sumarse a ella
+    const qs = new URLSearchParams();
+    if (MARCA) qs.set('marca', MARCA);
+    if (staging) qs.set('staging', staging.staging_id);
+    const resp = await fetch('/api/diario/identificar' + (qs.toString() ? '?' + qs : ''),
+                             { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     staging = json;
@@ -266,6 +320,100 @@ $('#btnIdentificar').addEventListener('click', async () => {
     $('#estadoCarga').textContent = err.message;
     $('#btnIdentificar').disabled = false;
   }
+});
+
+// ---------- FBS directo por SQL ----------
+const hoyIso = new Date().toISOString().slice(0, 10);
+$('#fbsDesde').value = hoyIso;
+$('#fbsHasta').value = hoyIso;
+
+async function refrescarFbsSql() {
+  try {
+    const j = await (await fetch('/api/fbs-sql')).json();
+    $('#fbsSqlEstado').textContent = j.configurado
+      ? `Conectado a ${j.servidor}/${j.base} como ${j.usuario} — elegí el rango y traé el mayor sin subir archivos.`
+      : 'Sin configurar todavía: cargá el servidor SQL del FBS con "Configurar conexión".';
+    $('#btnFbsTraer').disabled = !j.configurado;
+    return j;
+  } catch { $('#fbsSqlEstado').textContent = 'No pude consultar la configuración.'; return null; }
+}
+refrescarFbsSql();
+
+$('#btnFbsTraer').addEventListener('click', async () => {
+  const msj = $('#fbsSqlMsj');
+  msj.style.color = 'var(--texto2)';
+  msj.innerHTML = '<span class="spinner"></span>Consultando el FBS…';
+  $('#btnFbsTraer').disabled = true;
+  try {
+    const resp = await fetch('/api/diario/fbs-sql', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ desde: $('#fbsDesde').value, hasta: $('#fbsHasta').value,
+                             staging_id: staging?.staging_id, marca: MARCA }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    staging = json;
+    msj.style.color = 'var(--verde, #4ade80)';
+    msj.textContent = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.`;
+    pintarIdent();
+  } catch (err) {
+    msj.style.color = 'var(--rojo)';
+    msj.textContent = err.message;
+  }
+  $('#btnFbsTraer').disabled = false;
+});
+
+$('#btnFbsConf').addEventListener('click', async () => {
+  const j = await refrescarFbsSql();
+  if (j) {
+    $('#fbsServidor').value = j.servidor || '';
+    $('#fbsPuerto').value = j.puerto || 1433;
+    $('#fbsBase').value = j.base || '';
+    $('#fbsUsuario').value = j.usuario || '';
+    $('#fbsClave').value = '';
+    $('#fbsClave').placeholder = j.clave_presente ? 'Clave guardada (vacío = sin cambio)' : 'Clave';
+    $('#fbsQuery').value = j.query || '';
+  }
+  $('#fbsConfMsj').textContent = '';
+  $('#modalFbs').classList.remove('oculto');
+});
+$('#btnFbsCerrar').addEventListener('click', () => $('#modalFbs').classList.add('oculto'));
+
+async function guardarConfFbs() {
+  const cuerpo = {
+    servidor: $('#fbsServidor').value.trim(), puerto: $('#fbsPuerto').value,
+    base: $('#fbsBase').value.trim(), usuario: $('#fbsUsuario').value.trim(),
+    query: $('#fbsQuery').value,
+  };
+  if ($('#fbsClave').value) cuerpo.clave = $('#fbsClave').value;
+  const resp = await fetch('/api/fbs-sql', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cuerpo),
+  });
+  if (!resp.ok) throw new Error((await resp.json()).error || 'No se pudo guardar');
+}
+
+$('#btnFbsGuardar').addEventListener('click', async () => {
+  const m = $('#fbsConfMsj');
+  try {
+    await guardarConfFbs();
+    m.style.color = 'var(--verde, #4ade80)';
+    m.textContent = 'Configuración guardada.';
+    refrescarFbsSql();
+  } catch (e) { m.style.color = 'var(--rojo)'; m.textContent = e.message; }
+});
+
+$('#btnFbsProbar').addEventListener('click', async () => {
+  const m = $('#fbsConfMsj');
+  m.style.color = 'var(--texto2)';
+  m.innerHTML = '<span class="spinner"></span>Guardando y probando…';
+  try {
+    await guardarConfFbs();
+    const r = await (await fetch('/api/fbs-sql/probar', { method: 'POST' })).json();
+    m.style.color = r.ok ? 'var(--verde, #4ade80)' : 'var(--rojo)';
+    m.textContent = r.ok ? 'Conexión OK.' : r.error;
+    refrescarFbsSql();
+  } catch (e) { m.style.color = 'var(--rojo)'; m.textContent = e.message; }
 });
 
 function selectorCuenta(a) {
