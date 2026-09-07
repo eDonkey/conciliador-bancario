@@ -332,9 +332,15 @@ $('#fbsHasta').value = hoyIso;
 async function refrescarFbsSql() {
   try {
     const j = await (await fetch('/api/fbs-sql')).json();
-    $('#fbsSqlEstado').textContent = j.configurado
-      ? `Conectado a ${j.servidor}/${j.base} como ${j.usuario} — elegí el rango y traé el mayor sin subir archivos.`
-      : 'Sin configurar todavía: cargá el servidor SQL del FBS con "Configurar conexión".';
+    if (j.modo === 'hub') {
+      $('#fbsSqlEstado').textContent =
+        `${j.cuentas_hub} cuenta(s) configuradas en el hub (${(j.conexiones_hub || []).join(', ')}) — ` +
+        'elegí el rango y traé el mayor: la query se arma sola.';
+    } else {
+      $('#fbsSqlEstado').textContent = j.configurado
+        ? `Conectado a ${j.servidor}/${j.base} como ${j.usuario} — elegí el rango y traé el mayor sin subir archivos.`
+        : 'Configurá la conexión y los IDs E/O de cada cuenta en el hub (pestaña "Conexiones FBS"), o cargá una query manual acá.';
+    }
     $('#btnFbsTraer').disabled = !j.configurado;
     return j;
   } catch { $('#fbsSqlEstado').textContent = 'No pude consultar la configuración.'; return null; }

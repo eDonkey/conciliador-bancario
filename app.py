@@ -460,7 +460,10 @@ def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
     """Fila del paso de identificación para un archivo (real o virtual) ya
     parseado: detecta a qué cuenta bancaria corresponde."""
     cuenta = None
-    if info["tipo"] == "extracto":
+    if info.get("cuenta_id_config"):   # vínculo ya configurado en el hub
+        cuenta = next((c for c in cuentas
+                       if c["id"] == info["cuenta_id_config"]), None)
+    elif info["tipo"] == "extracto":
         cuenta = cuentas_mod.buscar_por_numero(
             cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
     elif info["tipo"] == "fbs":

@@ -164,7 +164,12 @@ def configurado() -> bool:
 def publica() -> dict:
     """Config sin secretos, para la UI."""
     c = cargar_conf()
-    return {"configurado": configurado(), "servidor": c["servidor"],
+    cfgs = cuentas_fbs()
+    return {"configurado": configurado() or bool(cfgs),
+            "modo": "hub" if cfgs else "manual",
+            "cuentas_hub": len(cfgs),
+            "conexiones_hub": sorted({x["conexion_nombre"] for x in cfgs}),
+            "servidor": c["servidor"],
             "puerto": c["puerto"], "base": c["base"], "usuario": c["usuario"],
             "clave_presente": bool(c["clave"]), "query": c["query"]}
 
@@ -282,13 +287,33 @@ def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
 
 
 def probar() -> dict:
-    """Prueba la conexión (SELECT 1). Devuelve {ok, driver} o {ok, error}."""
+    """Prueba la conexión (SELECT 1). En modo hub prueba TODAS las
+    conexiones configuradas; en modo manual, la del modal."""
+    cfgs = cuentas_fbs()
+    if cfgs:
+        vistas, detalle = set(), []
+        for c in cfgs:
+            if c["conexion_id"] in vistas:
+                continue
+            vistas.add(c["conexion_id"])
+            try:
+                _consultar(c["conexion"], "SELECT 1 AS uno", {})
+                detalle.append({"nombre": c["conexion_nombre"], "ok": True,
+                                "driver": _DRIVER_USADO["nombre"]})
+            except Exception as exc:  # noqa: BLE001
+                detalle.append({"nombre": c["conexion_nombre"], "ok": False,
+                                "error": str(exc)})
+        return {"ok": all(d["ok"] for d in detalle), "modo": "hub",
+                "conexiones": detalle,
+                "driver": _DRIVER_USADO["nombre"],
+                "error": " | ".join(f'{d["nombre"]}: {d["error"]}'
+                                    for d in detalle if not d["ok"]) or None}
     conf = cargar_conf()
     if not configurado():
         return {"ok": False, "error": "Faltan servidor, base o usuario en la configuración"}
     try:
         _consultar(conf, "SELECT 1 AS uno", {})
-        return {"ok": True, "driver": _DRIVER_USADO["nombre"]}
+        return {"ok": True, "modo": "manual", "driver": _DRIVER_USADO["nombre"]}
     except Exception as exc:  # noqa: BLE001 — el error se muestra al usuario
         return {"ok": False, "error": str(exc)}
 
@@ -310,17 +335,34 @@ def traer(desde: str, hasta: str) -> list[dict]:
     """Corre la query del FBS para el rango [desde, hasta] (ISO) y devuelve
     una lista de 'archivos virtuales' con la misma forma que devuelve
     parsers.diarios.identificar() para un reporte FBS: uno por cuenta
-    contable y hoja. Lanza ValueError con mensaje claro si algo falla."""
+    contable y hoja. Lanza ValueError con mensaje claro si algo falla.
+
+    Modo hub (preferido): si en el hub hay cuentas con conexión FBS e IDs de
+    plan E/O, la query se genera sola sobre DetMov, una consulta por
+    conexión. Si no hay nada configurado en el hub, se usa la query manual
+    del modal (modo avanzado)."""
+    cfgs = cuentas_fbs()
+    if cfgs:
+        return _traer_hub(cfgs, desde, hasta)
     conf = cargar_conf()
     if not configurado():
-        raise ValueError("La conexión al FBS no está configurada "
-                         "(servidor, base y usuario).")
+        raise ValueError(
+            "No hay conexión al FBS: configurala en el hub (pestaña "
+            "Conexiones FBS + IDs E/O en cada cuenta) o cargá la query "
+            "manual en este modal.")
     _validar_solo_lectura(conf["query"])
     try:
         filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"La consulta al FBS falló: {exc}")
+    return _infos_desde_filas(filas)
 
+
+def _infos_desde_filas(filas: list[dict],
+                       cuenta_por_codigo: dict | None = None) -> list[dict]:
+    """Agrupa las filas crudas por (codigo, hoja) y arma los 'archivos
+    virtuales'. Si se conoce el vínculo codigo -> cuenta bancaria (config
+    del hub), viaja en cuenta_id_config y no hace falta asignar a mano."""
     filas = [_normalizar_fila(f) for f in filas]
     if filas:
         faltan = [c for c in COLUMNAS if c not in filas[0]]
@@ -362,5 +404,101 @@ def traer(desde: str, hasta: str) -> list[dict]:
             "hasta": max(fechas) if fechas else None,
             "cantidad": len(g["asientos"]),
             "archivo": f"FBS directo · ({letra}) ({codigo})",
+            "cuenta_id_config": (cuenta_por_codigo or {}).get(codigo),
         })
+    return salida
+
+
+# ---- modo hub: la config (conexiones + IDs E/O por cuenta) vive en el
+# Postgres compartido y la query se genera sola sobre DetMov -----------------
+
+def cuentas_fbs() -> list[dict]:
+    """Cuentas bancarias del hub que tienen conexión FBS + IDs de plan.
+    Devuelve [] si el hub todavía no tiene nada configurado (o no hay DB)."""
+    from engine import cuentas as cuentas_mod
+    url = cuentas_mod._database_url()
+    if not url:
+        return []
+    try:
+        import psycopg2
+        con = psycopg2.connect(url, connect_timeout=5)
+        try:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT c.banco, c.numero, c.moneda, c.fbs_plan_e, c.fbs_plan_o, "
+                "       f.id, f.nombre, f.servidor, f.puerto, f.base, f.usuario, f.clave "
+                "  FROM cuentas_bancarias c "
+                "  JOIN fbs_conexiones f ON f.id = c.fbs_conexion_id "
+                " WHERE c.activa = true "
+                "   AND (COALESCE(c.fbs_plan_e, '') <> '' OR COALESCE(c.fbs_plan_o, '') <> '')")
+            filas = cur.fetchall()
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 — sin hub configurado no es error
+        print(f"[fbs] No pude leer la config FBS del hub ({exc})")
+        return []
+    salida = []
+    for banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave in filas:
+        salida.append({
+            "cuenta_id": (f"{cuentas_mod._banco_key(banco)}-"
+                          f"{cuentas_mod._digits(numero)}-{(moneda or '').lower()}"),
+            "etiqueta": f"{banco} {numero} ({moneda})",
+            "plan_e": str(pe or "").strip(), "plan_o": str(po or "").strip(),
+            "conexion_id": fid, "conexion_nombre": fnom,
+            "conexion": {"servidor": srv or "", "puerto": prt or 1433,
+                         "base": base or "", "usuario": usu or "",
+                         "clave": clave or "", "query": ""},
+        })
+    return salida
+
+
+def _query_detmov(planes: list[tuple[str, int]]) -> str:
+    """Query generada sobre DetMov: un bloque por (hoja, id de plan)."""
+    bloques = [
+        (f"SELECT '{hoja}' AS hoja, '{plan}' AS codigo, "
+         "DetMovNro, DetFecha, DetRef, DetComenta, DetDebe, DetHaber "
+         f"FROM DetMov WHERE DetPlan = {plan} "
+         "AND DetFecha BETWEEN %(desde)s AND %(hasta)s")
+        for hoja, plan in planes]
+    return "\nUNION ALL\n".join(bloques)
+
+
+def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
+    """Una consulta generada por conexión FBS, con todos sus pares E/O."""
+    por_conexion: dict = {}
+    for c in cfgs:
+        g = por_conexion.setdefault(c["conexion_id"], {
+            "conf": c["conexion"], "nombre": c["conexion_nombre"],
+            "planes": [], "cuenta_por_codigo": {}})
+        for hoja, plan in (("E", c["plan_e"]), ("O", c["plan_o"])):
+            if not plan:
+                continue
+            try:
+                plan_n = int(plan)
+            except ValueError:
+                raise ValueError(
+                    f'El ID de la cuenta {hoja} de {c["etiqueta"]} configurado '
+                    f'en el hub no es numérico: "{plan}".')
+            g["planes"].append((hoja, plan_n))
+            g["cuenta_por_codigo"][str(plan_n)] = c["cuenta_id"]
+
+    # yyyymmdd: el único formato de fecha que SQL Server interpreta igual
+    # en cualquier idioma/configuración regional
+    params = {"desde": desde.replace("-", ""), "hasta": hasta.replace("-", "")}
+    salida, errores = [], []
+    for g in por_conexion.values():
+        if not g["planes"]:
+            continue
+        query = _query_detmov(g["planes"])
+        _validar_solo_lectura(query)   # defensa en profundidad
+        try:
+            filas = _consultar(g["conf"], query, params)
+        except Exception as exc:  # noqa: BLE001
+            errores.append(f'{g["nombre"]}: {exc}')
+            continue
+        salida.extend(_infos_desde_filas(filas, g["cuenta_por_codigo"]))
+    if errores and not salida:
+        raise ValueError("La consulta al FBS falló: " + " | ".join(errores))
+    if errores:
+        print(f"[fbs] Conexiones con error (parcial): {errores}")
     return salida
