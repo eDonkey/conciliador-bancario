@@ -189,11 +189,13 @@
     <div class="tarjeta" style="max-width:640px; width:100%; margin:0; max-height:90vh; overflow:auto;">
       <h2 class="seccion">Conexión directa al FBS (SQL Server)</h2>
       <p style="font-size:12.5px; color:var(--texto2); margin-bottom:12px;">
-        La query es libre pero tiene que devolver las columnas
-        <code>hoja, codigo, asiento, fecha, referencia, comentario, debe, haber</code>
-        (y opcional <code>nombre_fbs</code>), con <code>%(desde)s</code> y
-        <code>%(hasta)s</code> como parámetros del rango. La clave no se muestra:
-        dejala vacía para conservar la actual.</p>
+        Las columnas del FBS se reconocen con su nombre real
+        (<code>DetMovNro, DetFecha, DetRef, DetComenta, DetDebe, DetHaber</code>).
+        Solo hay que anteponer dos literales que digan de qué cuenta es cada
+        bloque: <code>SELECT 'O' AS hoja, '109' AS codigo, …</code> — un bloque
+        por cuenta del mayor, unidos con <code>UNION ALL</code>. El rango de
+        fechas entra con <code>%(desde)s</code> y <code>%(hasta)s</code>.
+        La clave no se muestra: dejala vacía para conservar la actual.</p>
       <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
         <input id="fbsServidor" placeholder="Servidor (IP o nombre)">
         <input id="fbsPuerto" type="number" placeholder="Puerto" value="1433">

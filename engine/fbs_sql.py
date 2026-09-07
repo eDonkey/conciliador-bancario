@@ -35,15 +35,50 @@ _DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 RUTA_CONF = os.path.join(_DATOS, "fbs_sql.json")
 
 QUERY_EJEMPLO = (
-    "-- Adaptar al esquema real del FBS. Columnas y alias obligatorios:\n"
-    "SELECT hoja, codigo, asiento, fecha, referencia, comentario,\n"
-    "       debe, haber, nombre_fbs\n"
-    "  FROM vista_mayor_conciliador\n"
-    " WHERE fecha BETWEEN %(desde)s AND %(hasta)s"
+    "-- Un bloque por cuenta del mayor: las dos primeras columnas dicen si es\n"
+    "-- la cuenta O o la E y su número interno (el mismo del WHERE). El resto\n"
+    "-- son las columnas del FBS tal cual (DetMovNro, DetFecha, DetRef,\n"
+    "-- DetComenta, DetDebe, DetHaber).\n"
+    "SELECT 'O' AS hoja, '109' AS codigo,\n"
+    "       DetMovNro, DetFecha, DetRef, DetComenta, DetDebe, DetHaber\n"
+    "  FROM ...\n"
+    " WHERE ... = 109 AND DetFecha BETWEEN %(desde)s AND %(hasta)s\n"
+    "UNION ALL\n"
+    "SELECT 'E' AS hoja, '110' AS codigo,\n"
+    "       DetMovNro, DetFecha, DetRef, DetComenta, DetDebe, DetHaber\n"
+    "  FROM ...\n"
+    " WHERE ... = 110 AND DetFecha BETWEEN %(desde)s AND %(hasta)s"
 )
 
 COLUMNAS = ("hoja", "codigo", "asiento", "fecha", "referencia",
             "comentario", "debe", "haber")
+
+# nombres reales de las columnas del FBS -> nombre canónico (se comparan en
+# minúsculas; así la query no necesita renombrar nada salvo hoja y codigo)
+SINONIMOS = {"detmovnro": "asiento", "detfecha": "fecha", "detref": "referencia",
+             "detcomenta": "comentario", "detdebe": "debe", "dethaber": "haber"}
+
+
+def _normalizar_fila(fila: dict) -> dict:
+    out = {}
+    for k, v in fila.items():
+        kk = str(k).strip().lower()
+        out.setdefault(SINONIMOS.get(kk, kk), v)
+    return out
+
+
+def _importe(v) -> float:
+    """Importe desde numeric/Decimal/float o texto con coma decimal."""
+    if v is None:
+        return 0.0
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return 0.0
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        return float(s)
+    return float(v)
 
 
 def cargar_conf() -> dict:
@@ -161,12 +196,15 @@ def traer(desde: str, hasta: str) -> list[dict]:
         raise ValueError(f"La query del FBS falló: {exc}")
     con.close()
 
+    filas = [_normalizar_fila(f) for f in filas]
     if filas:
         faltan = [c for c in COLUMNAS if c not in filas[0]]
         if faltan:
             raise ValueError(
-                "A la query del FBS le faltan columnas (o sus alias): "
-                + ", ".join(faltan))
+                "A la query del FBS le faltan columnas: " + ", ".join(faltan)
+                + ". Las del FBS (DetMovNro, DetFecha, DetRef, DetComenta, "
+                "DetDebe, DetHaber) se reconocen solas; hoja y codigo se "
+                "agregan como literales: SELECT 'O' AS hoja, '109' AS codigo, …")
 
     grupos: dict[tuple, dict] = {}
     for f in filas:
@@ -185,8 +223,8 @@ def traer(desde: str, hasta: str) -> list[dict]:
             fecha=_fecha(f.get("fecha")),
             referencia=str(f.get("referencia") or "").strip(),
             comentario=str(f.get("comentario") or "").strip(),
-            debe=round(float(f.get("debe") or 0), 2),
-            haber=round(float(f.get("haber") or 0), 2)))
+            debe=round(_importe(f.get("debe")), 2),
+            haber=round(_importe(f.get("haber")), 2)))
 
     salida = []
     for (codigo, letra), g in sorted(grupos.items()):
