@@ -184,6 +184,8 @@ def _conectar(conf: dict):
     kwargs = dict(database=conf["base"], user=conf["usuario"],
                   password=conf["clave"], login_timeout=10, timeout=60,
                   charset="UTF-8")
+    if os.environ.get("FBS_SQL_TDS"):        # p. ej. 7.0 / 7.2 / 7.4
+        kwargs["tds_version"] = os.environ["FBS_SQL_TDS"]
     servidor = (conf["servidor"] or "").strip()
     if "\\" in servidor:
         # instancia nombrada (HOST\SQLEXPRESS): el puerto lo resuelve el
@@ -196,20 +198,97 @@ def _conectar(conf: dict):
     return pymssql.connect(**kwargs)
 
 
+def _consultar_pymssql(conf: dict, query: str, params: dict) -> list[dict]:
+    con = _conectar(conf)
+    try:
+        con.autocommit(False)   # transacción abierta, jamás se commitea
+        cur = con.cursor(as_dict=True)
+        cur.execute(query, params) if params else cur.execute(query)
+        filas = cur.fetchall()
+    finally:
+        try:
+            con.rollback()      # solo lectura: se deshace cualquier efecto
+        finally:
+            con.close()
+    return filas
+
+
+def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
+    """Vía el driver ODBC nativo de Windows (el mismo que usa SSMS): maneja
+    cifrado obligatorio e instancias nombradas mucho mejor que FreeTDS."""
+    import pyodbc
+    candidatos = [d for d in pyodbc.drivers() if "SQL Server" in d]
+    if not candidatos:
+        raise ImportError("sin driver ODBC de SQL Server instalado")
+    orden = ("ODBC Driver 18", "ODBC Driver 17", "ODBC Driver 13",
+             "SQL Server Native Client", "SQL Server")
+    driver = min(candidatos,
+                 key=lambda d: next((i for i, p in enumerate(orden) if d.startswith(p)), 99))
+    servidor = (conf["servidor"] or "").strip()
+    srv = servidor if "\\" in servidor else f"{servidor},{conf['puerto']}"
+    cadena = (f"DRIVER={{{driver}}};SERVER={srv};DATABASE={conf['base']};"
+              f"UID={conf['usuario']};PWD={conf['clave']};")
+    if driver.startswith("ODBC Driver"):
+        # el SQL Server del FBS usa certificado autofirmado
+        cadena += "Encrypt=yes;TrustServerCertificate=yes;"
+    # pyodbc usa parámetros posicionales '?': traducir %(desde)s / %(hasta)s
+    nombres = []
+    q = re.sub(r"%\((desde|hasta)\)s",
+               lambda m: (nombres.append(m.group(1)), "?")[1], query)
+    con = pyodbc.connect(cadena, timeout=10, autocommit=False)
+    try:
+        cur = con.cursor()
+        cur.execute(q, *[params[n] for n in nombres]) if nombres else cur.execute(q)
+        cols = [c[0] for c in cur.description]
+        filas = [dict(zip(cols, f)) for f in cur.fetchall()]
+    finally:
+        try:
+            con.rollback()      # solo lectura
+        finally:
+            con.close()
+    return filas
+
+
+_DRIVER_USADO = {"nombre": None}
+
+
+def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
+    """Ejecuta la consulta con el mejor driver disponible: ODBC nativo de
+    Windows primero, FreeTDS (pymssql) como respaldo. FBS_SQL_DRIVER
+    (pyodbc|pymssql) fuerza uno solo."""
+    elegido = (os.environ.get("FBS_SQL_DRIVER") or "auto").lower()
+    errores = []
+    if elegido in ("auto", "pyodbc"):
+        try:
+            filas = _consultar_pyodbc(conf, query, params)
+            _DRIVER_USADO["nombre"] = "pyodbc"
+            return filas
+        except ImportError as exc:
+            if elegido == "pyodbc":
+                raise ValueError(f"pyodbc no disponible: {exc}")
+            errores.append(f"[odbc] {exc}")
+        except Exception as exc:  # noqa: BLE001
+            if elegido == "pyodbc":
+                raise
+            errores.append(f"[odbc] {exc}")
+    if elegido in ("auto", "pymssql"):
+        try:
+            filas = _consultar_pymssql(conf, query, params)
+            _DRIVER_USADO["nombre"] = "pymssql"
+            return filas
+        except Exception as exc:  # noqa: BLE001
+            errores.append(f"[pymssql] {exc}")
+    raise RuntimeError(" — ".join(str(e) for e in errores))
+
+
 def probar() -> dict:
-    """Prueba la conexión (SELECT 1). Devuelve {ok} o {ok: False, error}."""
+    """Prueba la conexión (SELECT 1). Devuelve {ok, driver} o {ok, error}."""
     conf = cargar_conf()
     if not configurado():
         return {"ok": False, "error": "Faltan servidor, base o usuario en la configuración"}
     try:
-        con = _conectar(conf)
-        try:
-            cur = con.cursor()
-            cur.execute("SELECT 1")
-            cur.fetchone()
-        finally:
-            con.close()
-        return {"ok": True}
+        _consultar(conf, "SELECT 1 AS uno", {})
+        return {"ok": True, "driver": _DRIVER_USADO["nombre"]}
     except Exception as exc:  # noqa: BLE001 — el error se muestra al usuario
         return {"ok": False, "error": str(exc)}
 
@@ -238,22 +317,9 @@ def traer(desde: str, hasta: str) -> list[dict]:
                          "(servidor, base y usuario).")
     _validar_solo_lectura(conf["query"])
     try:
-        con = _conectar(conf)
+        filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"No pude conectarme al SQL Server del FBS: {exc}")
-    try:
-        con.autocommit(False)   # transacción abierta, jamás se commitea
-        cur = con.cursor(as_dict=True)
-        cur.execute(conf["query"], {"desde": desde, "hasta": hasta})
-        filas = cur.fetchall()
-    except Exception as exc:  # noqa: BLE001
-        try:
-            con.rollback()
-        finally:
-            con.close()
-        raise ValueError(f"La query del FBS falló: {exc}")
-    con.rollback()   # solo lectura: se deshace cualquier efecto colateral
-    con.close()
+        raise ValueError(f"La consulta al FBS falló: {exc}")
 
     filas = [_normalizar_fila(f) for f in filas]
     if filas:

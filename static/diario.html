@@ -413,7 +413,7 @@ $('#btnFbsProbar').addEventListener('click', async () => {
     await guardarConfFbs();
     const r = await (await fetch('/api/fbs-sql/probar', { method: 'POST' })).json();
     m.style.color = r.ok ? 'var(--verde, #4ade80)' : 'var(--rojo)';
-    m.textContent = r.ok ? 'Conexión OK.' : r.error;
+    m.textContent = r.ok ? `Conexión OK (driver ${r.driver || '?'}).` : r.error;
     refrescarFbsSql();
   } catch (e) { m.style.color = 'var(--rojo)'; m.textContent = e.message; }
 });

@@ -7,3 +7,4 @@ xlrd>=2.0
 anthropic>=0.90
 psycopg2-binary>=2.9
 pymssql>=2.3
+pyodbc>=5.0
