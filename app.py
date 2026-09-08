@@ -295,6 +295,8 @@ def api_diagnostico():
         # True si datos/ está montado como volumen persistente (Railway):
         # sin esto, todo el aprendizaje se pierde en cada deploy
         "datos_es_volumen": os.path.ismount(DATOS_DIR),
+        # estado de la conexión directa al FBS vía config del hub
+        "fbs_hub": fbs_sql.diagnostico(),
         # gasto real de la app en la API (tokens y USD estimados por llamada):
         # si la factura no coincide con esto, el consumo vino de otro lado
         "ia_uso": ia_log.resumen(),

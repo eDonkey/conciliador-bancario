@@ -470,7 +470,9 @@ def cuentas_fbs() -> list[dict]:
             con.close()
     except Exception as exc:  # noqa: BLE001 — sin hub configurado no es error
         print(f"[fbs] No pude leer la config FBS del hub ({exc})")
+        _HUB_ESTADO["error"] = str(exc)
         return []
+    _HUB_ESTADO["error"] = None
     salida = []
     for banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave, marca in filas:
         salida.append({
@@ -485,6 +487,23 @@ def cuentas_fbs() -> list[dict]:
                          "clave": clave or "", "query": ""},
         })
     return salida
+
+
+_HUB_ESTADO = {"error": None}
+
+
+def diagnostico() -> dict:
+    """Estado del modo hub, para GET /api/diagnostico."""
+    from engine import cuentas as cuentas_mod
+    cfgs = cuentas_fbs()
+    return {
+        "database_url_presente": bool(cuentas_mod._database_url()),
+        "cuentas_configuradas": len(cfgs),
+        "cuentas": [x["etiqueta"] for x in cfgs],
+        "conexiones": sorted({x["conexion_nombre"] for x in cfgs}),
+        "error_lectura_hub": _HUB_ESTADO["error"],
+        "modo": "hub" if cfgs else "manual",
+    }
 
 
 def _filtrar_cfgs(cfgs: list[dict], marca: str) -> list[dict]:
