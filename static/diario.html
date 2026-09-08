@@ -147,21 +147,23 @@
 <main>
   <section class="tarjeta" id="cargaCard">
     <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:16px; font-size:12.5px; color:var(--texto2);">
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">1 · Subí todo junto</b><br>
-        Los extractos del día de cada banco y los reportes FBS (mayor E y O).
-        No hace falta ordenar ni renombrar nada.</div>
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">2 · El sistema identifica</b><br>
-        Detecta banco, cuenta y moneda de cada archivo. Solo pide ayuda la primera
-        vez que ve un FBS nuevo (y lo recuerda para siempre).</div>
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">3 · Lo pendiente se arrastra</b><br>
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">1 · Subí los extractos del día</b><br>
+        Solo los extractos de cada banco. El mayor del FBS ya no se sube:
+        se trae directo de la base contable.</div>
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">2 · Traé el mayor del FBS</b><br>
+        Tildá las cuentas (ya configuradas en el hub), elegí el rango de fechas
+        y el sistema consulta el FBS y asigna cada cuenta solo — sin archivos
+        y sin elegir nada dos veces.</div>
+      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">3 · Conciliá — lo pendiente se arrastra</b><br>
         Lo que hoy no cruza (movimientos sin asiento, asientos sin movimiento)
         entra automáticamente en la conciliación de mañana, hasta que aparezca
         su contrapartida.</div>
     </div>
     <div class="zona" id="zona">
-      <h3>Extractos diarios y reportes FBS</h3>
-      <p>Arrastrá o hacé clic — todos juntos: los extractos de cada banco (Santander/Río,
-        BBVA/Francés, Galicia, Macro, Ciudad) y los FBS por cuenta (mayor E y mayor O).</p>
+      <h3>Extractos bancarios del día</h3>
+      <p>Arrastrá o hacé clic — los extractos de cada banco (Santander/Río, BBVA/Francés,
+        Galicia, Macro, Ciudad). Los reportes FBS ya no hacen falta: el mayor se trae
+        directo de la base con el bloque de abajo (si igual subís uno, se procesa).</p>
       <input type="file" id="inputArchivos" multiple hidden>
       <ul class="archivos" id="listaArchivos"></ul>
     </div>
@@ -218,8 +220,9 @@
   <section class="tarjeta oculto" id="identCard">
     <h2 class="seccion">Paso 2 — Confirmá qué es cada archivo</h2>
     <p style="font-size:12.5px;color:var(--texto2);margin-bottom:10px;">
-      Las cuentas detectadas automáticamente ya vienen seleccionadas. Asigná a mano las que
-      falten (la primera vez los FBS necesitan asignación: el vínculo queda aprendido para siempre).</p>
+      Lo traído del FBS ya viene con su cuenta fija (configurada en el hub) y los extractos
+      detectados vienen seleccionados. Solo asigná a mano lo que falte: ese vínculo queda
+      aprendido para siempre.</p>
     <div class="contenedor-tabla"><table id="tablaIdent"><thead></thead><tbody></tbody></table></div>
     <div class="acciones">
       <button class="principal" id="btnConciliar">Conciliar el día</button>
