@@ -322,10 +322,19 @@
         <ul class="archivos" id="listaPdf"></ul>
       </div>
       <div class="zona" id="zonaXls">
-        <h3> Libro mayor (Excel)</h3>
+        <h3> Libro mayor</h3>
         <p>Arrastrá o hacé clic — el .xlsx con las hojas de la cuenta E y la cuenta O</p>
         <input type="file" id="inputXls" accept=".xlsx,.xls" hidden>
         <ul class="archivos" id="listaXls"></ul>
+        <div id="fbsMensual" style="display:none; margin-top:12px; padding-top:10px; border-top:1px dashed var(--border); text-align:left; font-size:12.5px;"
+             onclick="event.stopPropagation()">
+          <div style="color:var(--texto2); margin-bottom:6px;">…o traelo directo del FBS (config del hub):</div>
+          <select id="fbsCtaMensual" style="max-width:100%; margin-bottom:6px;">
+            <option value="">— elegir cuenta —</option>
+          </select><br>
+          <label style="color:var(--texto2);">Desde <input type="date" id="fbsDesdeM"></label>
+          <label style="color:var(--texto2); margin-left:8px;">Hasta <input type="date" id="fbsHastaM"></label>
+        </div>
       </div>
     </div>
     <div class="acciones">
@@ -562,13 +571,35 @@ configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
   pintarListas();
 });
 
+const fbsCtaSel = () => document.getElementById('fbsCtaMensual')?.value || '';
+
 function pintarListas() {
   $('#listaPdf').innerHTML = archivosPdf.map((f, i) =>
     `<li><span>${f.name}</span><button onclick="quitarPdf(${i}, event)">×</button></li>`).join('');
   $('#listaXls').innerHTML = archivoXls ?
     `<li><span>${archivoXls.name}</span><button onclick="quitarXls(event)">×</button></li>` : '';
-  $('#btnConciliar').disabled = !(archivosPdf.length && archivoXls);
+  // el mayor puede venir del Excel subido o del FBS (cuenta + rango)
+  const mayorFbsOk = fbsCtaSel() && $('#fbsDesdeM').value && $('#fbsHastaM').value;
+  $('#btnConciliar').disabled = !(archivosPdf.length && (archivoXls || mayorFbsOk));
 }
+
+// FBS directo para el mayor mensual: cuentas configuradas en el hub (por marca)
+fetch(conMarca('/api/fbs-sql')).then(r => r.json()).then(j => {
+  if (j.modo !== 'hub' || !j.cuentas.length) return;
+  const hoy = new Date().toISOString().slice(0, 10);
+  $('#fbsDesdeM').value = hoy.slice(0, 8) + '01';   // el mes en curso por defecto
+  $('#fbsHastaM').value = hoy;
+  const sel = $('#fbsCtaMensual');
+  j.cuentas.forEach(c => {
+    const op = document.createElement('option');
+    op.value = c.cuenta_id;
+    op.textContent = c.etiqueta;
+    sel.appendChild(op);
+  });
+  $('#fbsMensual').style.display = 'block';
+  ['fbsCtaMensual', 'fbsDesdeM', 'fbsHastaM'].forEach(id =>
+    document.getElementById(id).addEventListener('change', pintarListas));
+}).catch(() => {});
 window.quitarPdf = (i, e) => { e.stopPropagation(); archivosPdf.splice(i, 1); pintarListas(); };
 window.quitarXls = e => { e.stopPropagation(); archivoXls = null; pintarListas(); };
 
@@ -588,7 +619,13 @@ $('#btnConciliar').addEventListener('click', async () => {
   }
   const fd = new FormData();
   archivosPdf.forEach(f => fd.append('extractos', f));
-  fd.append('mayor', archivoXls);
+  if (archivoXls) {
+    fd.append('mayor', archivoXls);       // el Excel subido tiene prioridad
+  } else {
+    fd.append('fbs_cuenta', fbsCtaSel());
+    fd.append('fbs_desde', $('#fbsDesdeM').value);
+    fd.append('fbs_hasta', $('#fbsHastaM').value);
+  }
   fd.append('usar_ia', $('#chkIa').checked ? (MODO_SIMULACION ? 'simular' : 'si') : 'no');
   fd.append('marca', MARCA);
   $('#btnConciliar').disabled = true;
@@ -746,6 +783,12 @@ function mostrarResultados() {
       <div class="sub">incluye los gastos bancarios justificados por la ND mensual</div></div>`;
 
   let avisos = '';
+  if (datos.mayor_origen && datos.mayor_origen.tipo === 'fbs') {
+    const mo = datos.mayor_origen;
+    avisos += `<div class="aviso info">El libro mayor se trajo <b>directo del FBS</b>
+      (${mo.asientos_e} asientos E y ${mo.asientos_o} asientos O, del
+      ${esc(mo.desde)} al ${esc(mo.hasta)}) — sin subir archivos.</div>`;
+  }
   (datos.avisos_marca || []).forEach(a => {
     avisos += `<div class="aviso error"><b>Ojo con la marca:</b> ${esc(a)}</div>`;
   });

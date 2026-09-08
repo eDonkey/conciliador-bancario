@@ -122,14 +122,25 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
 @app.post("/api/conciliar")
 async def api_conciliar(
     extractos: list[UploadFile] = File(...),
-    mayor: UploadFile = File(...),
+    mayor: UploadFile | None = File(None),
     usar_ia: str = Form("no"),
     marca: str = Form(""),
+    fbs_cuenta: str = Form(""),
+    fbs_desde: str = Form(""),
+    fbs_hasta: str = Form(""),
 ):
     """Recibe los archivos, arranca el procesamiento en segundo plano y
-    devuelve el job_id de inmediato. El avance se consulta en /api/progreso."""
+    devuelve el job_id de inmediato. El mayor puede venir como Excel subido
+    o directo del FBS (fbs_cuenta + fbs_desde + fbs_hasta, config del hub).
+    El avance se consulta en /api/progreso."""
     archivos = [(up.filename, await up.read()) for up in extractos]
-    data_mayor = await mayor.read()
+    data_mayor = await mayor.read() if mayor else b""
+    if not data_mayor and not fbs_cuenta:
+        return JSONResponse(status_code=422, content={
+            "error": "Subí el Excel del mayor o elegí una cuenta del FBS "
+                     "con su rango de fechas."})
+    fbs_mayor = ({"cuenta": fbs_cuenta, "desde": fbs_desde, "hasta": fbs_hasta}
+                 if not data_mayor else None)
 
     job_id = uuid.uuid4().hex[:12]
     total_mb = (sum(len(b) for _, b in archivos) + len(data_mayor)) / 1_000_000
@@ -138,12 +149,14 @@ async def api_conciliar(
                         "porcentaje": 2, "eta_seg": round(est_base),
                         "inicio": time.time()}
     threading.Thread(target=_procesar_job,
-                     args=(job_id, archivos, data_mayor, usar_ia, est_base, marca),
+                     args=(job_id, archivos, data_mayor, usar_ia, est_base,
+                           marca, fbs_mayor),
                      daemon=True).start()
     return {"job_id": job_id, "estado": "procesando"}
 
 
-def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
+def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
+                  fbs_mayor=None):
     inicio = PROGRESO[job_id]["inicio"]
 
     def prog(fase, pct, eta=None):
@@ -195,14 +208,38 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
         movs = [m for e in parseados for m in e["movimientos"]]
 
-        # --- parsear mayor -----------------------------------------------
-        prog("Leyendo el libro mayor", 38)
-        mayor_parsed = parse_mayor(data_mayor)
-        if "E" not in mayor_parsed or "O" not in mayor_parsed:
-            PROGRESO[job_id] = {"estado": "error", "mensaje":
-                "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
-                f"(hojas encontradas: {mayor_parsed['hojas']})"}
-            return
+        # --- parsear mayor (Excel subido o directo del FBS) ---------------
+        mayor_origen = {"tipo": "archivo"}
+        if fbs_mayor:
+            prog("Trayendo el mayor E y O directo del FBS", 38)
+            try:
+                d1 = date.fromisoformat(fbs_mayor["desde"] or "")
+                d2 = date.fromisoformat(fbs_mayor["hasta"] or "")
+                if d1 > d2:
+                    d1, d2 = d2, d1
+                infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
+                                      solo_cuentas=[fbs_mayor["cuenta"]])
+            except ValueError as exc:
+                PROGRESO[job_id] = {"estado": "error",
+                                    "mensaje": f"Mayor desde el FBS: {exc}"}
+                return
+            mayor_parsed = {"hojas": [i["archivo"] for i in infos],
+                            "E": {"asientos": []}, "O": {"asientos": []}}
+            for i in infos:
+                mayor_parsed[i["hoja"]]["asientos"].extend(i["asientos"])
+            mayor_origen = {
+                "tipo": "fbs", "cuenta_id": fbs_mayor["cuenta"],
+                "desde": d1.isoformat(), "hasta": d2.isoformat(),
+                "asientos_e": len(mayor_parsed["E"]["asientos"]),
+                "asientos_o": len(mayor_parsed["O"]["asientos"])}
+        else:
+            prog("Leyendo el libro mayor", 38)
+            mayor_parsed = parse_mayor(data_mayor)
+            if "E" not in mayor_parsed or "O" not in mayor_parsed:
+                PROGRESO[job_id] = {"estado": "error", "mensaje":
+                    "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
+                    f"(hojas encontradas: {mayor_parsed['hojas']})"}
+                return
 
         # --- conciliar ----------------------------------------------------
         prog("Cruzando el extracto contra el mayor", 46)
@@ -246,6 +283,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
 
         prog("Preparando los resultados", 96, eta=4)
         salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
+        salida["mayor_origen"] = mayor_origen
         salida["marca"] = marca or None
         if marca:
             # aviso si un extracto parece de una cuenta de OTRA marca
