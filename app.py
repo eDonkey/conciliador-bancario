@@ -482,6 +482,8 @@ def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
         "desde": info["desde"].isoformat() if info.get("desde") else None,
         "hasta": info["hasta"].isoformat() if info.get("hasta") else None,
         "cuenta_id": cuenta["id"] if cuenta else None,
+        # asignada desde la config del hub: en la UI no se vuelve a elegir
+        "cuenta_fija": bool(info.get("cuenta_id_config") and cuenta),
         "error": info.get("error"),
     }
 
@@ -523,9 +525,10 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
 
 
 @app.get("/api/fbs-sql")
-def api_fbs_sql_get():
-    """Configuración de la conexión directa al FBS (sin la clave)."""
-    return fbs_sql.publica()
+def api_fbs_sql_get(marca: str = ""):
+    """Configuración de la conexión directa al FBS (sin la clave). Con
+    ?marca= las cuentas configuradas en el hub se limitan a esa marca."""
+    return fbs_sql.publica(marca)
 
 
 @app.post("/api/fbs-sql")
@@ -556,7 +559,9 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
     if d1 > d2:
         d1, d2 = d2, d1
     try:
-        infos = fbs_sql.traer(d1.isoformat(), d2.isoformat())
+        infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
+                              marca=cuerpo.get("marca") or "",
+                              solo_cuentas=cuerpo.get("cuentas") or None)
     except ValueError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     if not infos:

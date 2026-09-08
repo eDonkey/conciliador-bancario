@@ -182,6 +182,7 @@
       <button class="secundario" id="btnFbsTraer" disabled>Traer E y O del FBS</button>
       <button class="secundario" id="btnFbsConf">Configurar conexión</button>
       <span id="fbsSqlMsj" style="font-size:12px;"></span>
+      <div id="fbsCuentas" style="display:none; flex-basis:100%; gap:6px 18px; flex-wrap:wrap; margin-top:6px; font-size:12.5px;"></div>
     </div>
   </section>
 
@@ -331,17 +332,33 @@ $('#fbsHasta').value = hoyIso;
 
 async function refrescarFbsSql() {
   try {
-    const j = await (await fetch('/api/fbs-sql')).json();
+    const j = await (await fetch(conMarca('/api/fbs-sql'))).json();
     if (j.modo === 'hub') {
-      $('#fbsSqlEstado').textContent =
-        `${j.cuentas_hub} cuenta(s) configuradas en el hub (${(j.conexiones_hub || []).join(', ')}) — ` +
-        'elegí el rango y traé el mayor: la query se arma sola.';
+      // la conexión vive en el hub: acá no hay nada que configurar
+      $('#btnFbsConf').style.display = 'none';
+      const cont = $('#fbsCuentas');
+      cont.style.display = 'flex';
+      if (j.cuentas.length) {
+        $('#fbsSqlEstado').textContent =
+          `Configurado en el hub (${(j.conexiones_hub || []).join(', ')}) — ` +
+          'elegí qué cuentas traer y el rango: la consulta se arma sola.';
+        cont.innerHTML = j.cuentas.map(c =>
+          `<label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+             <input type="checkbox" class="fbsCta" value="${esc(c.cuenta_id)}" checked>
+             ${esc(c.etiqueta)}</label>`).join('');
+      } else {
+        $('#fbsSqlEstado').innerHTML = `<span style="color:var(--rojo)">Ninguna cuenta
+          ${MARCA ? 'de esta marca ' : ''}tiene FBS configurado en el hub — cargale la
+          conexión y los IDs E/O en Administración → Cuentas bancarias.</span>`;
+        cont.innerHTML = '';
+      }
+      $('#btnFbsTraer').disabled = !j.cuentas.length;
     } else {
       $('#fbsSqlEstado').textContent = j.configurado
         ? `Conectado a ${j.servidor}/${j.base} como ${j.usuario} — elegí el rango y traé el mayor sin subir archivos.`
         : 'Configurá la conexión y los IDs E/O de cada cuenta en el hub (pestaña "Conexiones FBS"), o cargá una query manual acá.';
+      $('#btnFbsTraer').disabled = !j.configurado;
     }
-    $('#btnFbsTraer').disabled = !j.configurado;
     return j;
   } catch { $('#fbsSqlEstado').textContent = 'No pude consultar la configuración.'; return null; }
 }
@@ -349,6 +366,12 @@ refrescarFbsSql();
 
 $('#btnFbsTraer').addEventListener('click', async () => {
   const msj = $('#fbsSqlMsj');
+  if ($('#fbsCuentas').style.display !== 'none' &&
+      !document.querySelectorAll('.fbsCta:checked').length) {
+    msj.style.color = 'var(--rojo)';
+    msj.textContent = 'Tildá al menos una cuenta para traer.';
+    return;
+  }
   msj.style.color = 'var(--texto2)';
   msj.innerHTML = '<span class="spinner"></span>Consultando el FBS…';
   $('#btnFbsTraer').disabled = true;
@@ -356,7 +379,8 @@ $('#btnFbsTraer').addEventListener('click', async () => {
     const resp = await fetch('/api/diario/fbs-sql', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ desde: $('#fbsDesde').value, hasta: $('#fbsHasta').value,
-                             staging_id: staging?.staging_id, marca: MARCA }),
+                             staging_id: staging?.staging_id, marca: MARCA,
+                             cuentas: [...document.querySelectorAll('.fbsCta:checked')].map(x => x.value) }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
@@ -425,6 +449,12 @@ $('#btnFbsProbar').addEventListener('click', async () => {
 });
 
 function selectorCuenta(a) {
+  if (a.cuenta_fija) {
+    // el vínculo ya está definido en el hub: no se vuelve a elegir acá
+    const c = cuentas.find(x => x.id === a.cuenta_id);
+    return `<span class="chip ok" title="Cuenta asignada desde la configuración del hub">
+      ${esc(c ? c.etiqueta : a.cuenta_id)}</span>`;
+  }
   const ops = cuentas.map(c =>
     `<option value="${esc(c.id)}" ${a.cuenta_id === c.id ? 'selected' : ''}>${esc(c.etiqueta)}</option>`);
   return `<select data-archivo="${esc(a.archivo)}">

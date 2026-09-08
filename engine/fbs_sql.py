@@ -161,13 +161,18 @@ def configurado() -> bool:
     return bool(c["servidor"] and c["base"] and c["usuario"])
 
 
-def publica() -> dict:
-    """Config sin secretos, para la UI."""
+def publica(marca: str = "") -> dict:
+    """Config sin secretos, para la UI. Con marca, las cuentas del hub se
+    limitan a esa marca (el modo sigue siendo hub si hay CUALQUIER cuenta
+    configurada, aunque la marca pedida no tenga ninguna)."""
     c = cargar_conf()
-    cfgs = cuentas_fbs()
+    todas = cuentas_fbs()
+    cfgs = _filtrar_cfgs(todas, marca)
     return {"configurado": configurado() or bool(cfgs),
-            "modo": "hub" if cfgs else "manual",
+            "modo": "hub" if todas else "manual",
             "cuentas_hub": len(cfgs),
+            "cuentas": [{"cuenta_id": x["cuenta_id"], "etiqueta": x["etiqueta"]}
+                        for x in sorted(cfgs, key=lambda x: x["etiqueta"])],
             "conexiones_hub": sorted({x["conexion_nombre"] for x in cfgs}),
             "servidor": c["servidor"],
             "puerto": c["puerto"], "base": c["base"], "usuario": c["usuario"],
@@ -348,7 +353,8 @@ def _fecha(v):
     return None
 
 
-def traer(desde: str, hasta: str) -> list[dict]:
+def traer(desde: str, hasta: str, marca: str = "",
+          solo_cuentas: list[str] | None = None) -> list[dict]:
     """Corre la query del FBS para el rango [desde, hasta] (ISO) y devuelve
     una lista de 'archivos virtuales' con la misma forma que devuelve
     parsers.diarios.identificar() para un reporte FBS: uno por cuenta
@@ -358,8 +364,16 @@ def traer(desde: str, hasta: str) -> list[dict]:
     plan E/O, la query se genera sola sobre DetMov, una consulta por
     conexión. Si no hay nada configurado en el hub, se usa la query manual
     del modal (modo avanzado)."""
-    cfgs = cuentas_fbs()
-    if cfgs:
+    todas = cuentas_fbs()
+    if todas:
+        cfgs = _filtrar_cfgs(todas, marca)
+        if solo_cuentas:
+            elegidas = set(solo_cuentas)
+            cfgs = [c for c in cfgs if c["cuenta_id"] in elegidas]
+        if not cfgs:
+            raise ValueError(
+                "Ninguna de las cuentas elegidas tiene FBS configurado en el "
+                "hub" + (f" para la marca {marca}" if marca else "") + ".")
         return _traer_hub(cfgs, desde, hasta)
     conf = cargar_conf()
     if not configurado():
@@ -444,9 +458,11 @@ def cuentas_fbs() -> list[dict]:
             cur = con.cursor()
             cur.execute(
                 "SELECT c.banco, c.numero, c.moneda, c.fbs_plan_e, c.fbs_plan_o, "
-                "       f.id, f.nombre, f.servidor, f.puerto, f.base, f.usuario, f.clave "
+                "       f.id, f.nombre, f.servidor, f.puerto, f.base, f.usuario, f.clave, "
+                "       COALESCE(m.nombre, '') "
                 "  FROM cuentas_bancarias c "
                 "  JOIN fbs_conexiones f ON f.id = c.fbs_conexion_id "
+                "  LEFT JOIN marcas m ON m.id = c.marca_id "
                 " WHERE c.activa = true "
                 "   AND (COALESCE(c.fbs_plan_e, '') <> '' OR COALESCE(c.fbs_plan_o, '') <> '')")
             filas = cur.fetchall()
@@ -456,11 +472,12 @@ def cuentas_fbs() -> list[dict]:
         print(f"[fbs] No pude leer la config FBS del hub ({exc})")
         return []
     salida = []
-    for banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave in filas:
+    for banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave, marca in filas:
         salida.append({
             "cuenta_id": (f"{cuentas_mod._banco_key(banco)}-"
                           f"{cuentas_mod._digits(numero)}-{(moneda or '').lower()}"),
-            "etiqueta": f"{banco} {numero} ({moneda})",
+            "empresa": marca,
+            "etiqueta": (f"{marca} — " if marca else "") + f"{banco} {numero} ({moneda})",
             "plan_e": str(pe or "").strip(), "plan_o": str(po or "").strip(),
             "conexion_id": fid, "conexion_nombre": fnom,
             "conexion": {"servidor": srv or "", "puerto": prt or 1433,
@@ -468,6 +485,15 @@ def cuentas_fbs() -> list[dict]:
                          "clave": clave or "", "query": ""},
         })
     return salida
+
+
+def _filtrar_cfgs(cfgs: list[dict], marca: str) -> list[dict]:
+    """Cuentas FBS de una marca (mismo criterio flexible que el resto)."""
+    if not marca:
+        return cfgs
+    from engine import cuentas as cuentas_mod
+    m = cuentas_mod.slug(marca)
+    return [c for c in cfgs if m in cuentas_mod.slug(c.get("empresa") or "")]
 
 
 def _query_detmov(planes: list[tuple[str, int]]) -> str:
