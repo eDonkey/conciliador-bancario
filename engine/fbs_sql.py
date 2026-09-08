@@ -99,6 +99,24 @@ SINONIMOS = {"detmovnro": "asiento", "detfecha": "fecha", "detref": "referencia"
              "detcomenta": "comentario", "detdebe": "debe", "dethaber": "haber"}
 
 
+_BLOQUE_RE = re.compile(
+    r"'([EO])'\s+AS\s+hoja\s*,\s*'(\d+)'\s+AS\s+codigo", re.IGNORECASE)
+
+
+def _validar_bloques_unicos(query: str):
+    """Un accidente de pegado que repita el bloque de una cuenta duplica
+    TODOS sus asientos (UNION ALL no filtra). Se rechaza con nombre y
+    apellido antes de ejecutar."""
+    pares = [(h.upper(), c) for h, c in _BLOQUE_RE.findall(query or "")]
+    repetidos = sorted({p for p in pares if pares.count(p) > 1})
+    if repetidos:
+        det = ", ".join(f"({h}) ({c})" for h, c in repetidos)
+        raise ValueError(
+            f"La query trae MÁS DE UNA VEZ el bloque de la cuenta {det}: "
+            "eso duplica todos sus asientos. Dejá un solo SELECT por cuenta "
+            "y hoja (parece un pegado repetido).")
+
+
 def _normalizar_fila(fila: dict) -> dict:
     out = {}
     for k, v in fila.items():
@@ -142,6 +160,7 @@ def cargar_conf() -> dict:
 def guardar_conf(datos: dict):
     if str(datos.get("query") or "").strip():
         _validar_solo_lectura(str(datos["query"]))
+        _validar_bloques_unicos(str(datos["query"]))
     conf = cargar_conf()
     for k in ("servidor", "base", "usuario", "query"):
         if k in datos:
@@ -382,6 +401,7 @@ def traer(desde: str, hasta: str, marca: str = "",
             "Conexiones FBS + IDs E/O en cada cuenta) o cargá la query "
             "manual en este modal.")
     _validar_solo_lectura(conf["query"])
+    _validar_bloques_unicos(conf["query"])
     try:
         filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
@@ -542,6 +562,13 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
                 raise ValueError(
                     f'El ID de la cuenta {hoja} de {c["etiqueta"]} configurado '
                     f'en el hub no es numérico: "{plan}".')
+            if (hoja, plan_n) in g["planes"]:
+                # dos cuentas del hub con el mismo ID de plan: un solo bloque,
+                # si no cada asiento vendría duplicado
+                print(f"[fbs] Aviso: el plan {plan_n} ({hoja}) está configurado "
+                      f"en más de una cuenta del hub; se consulta una sola vez",
+                      flush=True)
+                continue
             g["planes"].append((hoja, plan_n))
             g["cuenta_por_codigo"][str(plan_n)] = c["cuenta_id"]
 
