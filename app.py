@@ -1076,6 +1076,22 @@ def api_diario_historial(marca: str = ""):
     return {"grupos": grupos}
 
 
+@app.delete("/api/diario/memoria")
+def api_diario_memoria_borrar():
+    """Borra TODA la memoria de conciliados (fase de prueba): los asientos y
+    movimientos consumidos en corridas anteriores vuelven a aparecer como
+    pendientes en las próximas traídas. No toca los tableros ni el arrastre.
+    (Declarada antes que /api/diario/{grupo_id} para que 'memoria' no se
+    interprete como un id de tablero.)"""
+    m = _cargar_memoria()
+    movs = sum(sum(c.get("movs", {}).values()) for c in m.values())
+    asientos = sum(sum(c.get("asientos", {}).values()) for c in m.values())
+    if os.path.exists(RUTA_MEMORIA):
+        os.remove(RUTA_MEMORIA)
+    return {"ok": True, "cuentas_olvidadas": len(m),
+            "movs_olvidados": movs, "asientos_olvidados": asientos}
+
+
 @app.get("/api/diario/{grupo_id}")
 def api_diario_grupo(grupo_id: str):
     ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")

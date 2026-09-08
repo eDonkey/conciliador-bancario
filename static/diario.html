@@ -241,7 +241,10 @@
   </section>
 
   <section class="tarjeta oculto" id="histCard">
-    <h2 class="seccion">Memoria diaria</h2>
+    <h2 class="seccion" style="display:flex; align-items:center; gap:12px;">Memoria diaria
+      <button class="secundario" id="btnBorrarMemoria" style="margin-left:auto; font-size:12px;"
+        title="Fase de prueba: olvida qué asientos y movimientos ya se conciliaron en corridas anteriores">
+        Borrar memoria de conciliados</button></h2>
     <p style="font-size:12.5px; color:var(--texto2); margin-bottom:10px;">
       Cada conciliación diaria queda guardada acá para siempre. Los pendientes de un
       día encadenan con el siguiente: si abrís un tablero viejo vas a ver qué quedó
@@ -593,6 +596,22 @@ $('#btnCopiarTablero').addEventListener('click', async () => {
 });
 
 /* ============ memoria diaria (historial persistente) ============ */
+$('#btnBorrarMemoria').addEventListener('click', async () => {
+  if (!confirm('¿Borrar TODA la memoria de conciliados?\n\n' +
+      'Los asientos y movimientos que ya se conciliaron en corridas anteriores ' +
+      'volverán a aparecer como pendientes en las próximas traídas.\n' +
+      'No borra los tableros ni el arrastre. Pensado para la fase de prueba.')) return;
+  const b = $('#btnBorrarMemoria');
+  b.disabled = true;
+  try {
+    const r = await (await fetch('/api/diario/memoria', { method: 'DELETE' })).json();
+    b.textContent = `Memoria borrada (${r.asientos_olvidados} asientos, ${r.movs_olvidados} movs)`;
+  } catch {
+    b.textContent = 'No se pudo borrar';
+  }
+  setTimeout(() => { b.textContent = 'Borrar memoria de conciliados'; b.disabled = false; }, 3500);
+});
+
 async function cargarHistorial() {
   try {
     const resp = await fetch(conMarca('/api/diario'));
