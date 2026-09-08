@@ -15,10 +15,10 @@ import tempfile
 import threading
 import time
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import Body, FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -617,6 +617,48 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
             "marca": stag.get("marca"),
             "fbs_sql": {"cuentas": len(infos),
                         "asientos": sum(i["cantidad"] for i in infos)}}
+
+
+@app.get("/api/diario/fbs-sql/excel/{staging_id}")
+def api_diario_fbs_excel(staging_id: str):
+    """Descarga lo traído del FBS como un Excel con el MISMO formato de los
+    reportes 'Consulta del Mayor' que antes se subían a mano (una hoja
+    '(E) (codigo)' / '(O) (codigo)' por cuenta): sirve de respaldo/auditoría
+    y hasta se puede volver a subir al conciliador."""
+    stag = STAGING.get(staging_id)
+    if not stag:
+        return JSONResponse(status_code=404, content={
+            "error": "La identificación expiró (el servidor se reinició)."})
+    infos = [i for i in stag["archivos"].values()
+             if i.get("tipo") == "fbs"
+             and str(i.get("archivo", "")).startswith("FBS directo")]
+    if not infos:
+        return JSONResponse(status_code=404, content={
+            "error": "No hay asientos traídos del FBS en esta identificación."})
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    for i in sorted(infos, key=lambda x: x["archivo"]):
+        ws = wb.create_sheet(f"({i['hoja']}) ({i['codigo_fbs']})"[:31])
+        ws.append(["Consulta del Mayor"])
+        ws.append([f"Cuenta: {i.get('nombre_fbs') or ''} "
+                   f"({i['hoja']}) ({i['codigo_fbs']})"])
+        if i.get("desde"):
+            ws.append([f"Movimientos del {i['desde']} AL {i['hasta']}"])
+        ws.append([])
+        ws.append(["Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"])
+        for a in i["asientos"]:
+            ws.append([a.asiento,
+                       datetime(a.fecha.year, a.fecha.month, a.fecha.day)
+                       if a.fecha else None,
+                       a.referencia, a.comentario, a.debe, a.haber])
+    buf = io.BytesIO()
+    wb.save(buf)
+    nombre = f"FBS_directo_{date.today().isoformat()}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
 
 RUTA_ARRASTRE = os.path.join(DATOS_DIR, "arrastre_diario.json")

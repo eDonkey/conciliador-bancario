@@ -392,7 +392,9 @@ $('#btnFbsTraer').addEventListener('click', async () => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     staging = json;
     msj.style.color = 'var(--verde, #4ade80)';
-    msj.textContent = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.`;
+    msj.innerHTML = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.
+      <a href="/api/diario/fbs-sql/excel/${esc(json.staging_id)}" style="color:var(--azul); margin-left:6px;"
+         title="Excel con el mismo formato de los reportes Consulta del Mayor que antes se subían">Descargar Excel</a>`;
     pintarIdent();
   } catch (err) {
     msj.style.color = 'var(--rojo)';
@@ -617,8 +619,14 @@ async function cargarHistorial() {
     const resp = await fetch(conMarca('/api/diario'));
     const json = await resp.json();
     if (!resp.ok) return;
-    $('#histCard').classList.toggle('oculto', !json.grupos.length);
-    if (!json.grupos.length) return;
+    $('#histCard').classList.remove('oculto');   // siempre visible (ahí vive
+    // el botón de borrar memoria); sin corridas muestra el estado vacío
+    if (!json.grupos.length) {
+      $('#tablaHist thead').innerHTML = '';
+      $('#tablaHist tbody').innerHTML = `<tr><td style="color:var(--texto2)">
+        Sin conciliaciones guardadas${MARCA ? ' para esta marca' : ''} todavía.</td></tr>`;
+      return;
+    }
     const actual = grupo && grupo.grupo_id;
     $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Cuentas</th>
       <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
