@@ -378,6 +378,7 @@
               <option value="fecha">Por fecha</option>
               <option value="imp_desc">Importe ↓</option>
               <option value="imp_asc">Importe ↑</option>
+              <option value="alfabetico">Alfabético (A–Z)</option>
             </select>
             <label><input type="checkbox" id="chkGastos"> incluir gastos bancarios</label>
             <label title="Al seleccionar asientos del mayor, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
@@ -398,6 +399,7 @@
               <option value="fecha">Por fecha</option>
               <option value="imp_desc">Importe ↓</option>
               <option value="imp_asc">Importe ↑</option>
+              <option value="alfabetico">Alfabético (A–Z)</option>
             </select>
             <label title="Al seleccionar movimientos del banco, esta lista se filtra a ±20 días y se ordena por el importe que cierra la diferencia">
               <input type="checkbox" id="smartMayor" checked> según selección</label>
@@ -1219,6 +1221,9 @@ function pintarManual() {
     const ordB = $('#ordenBanco').value;
     if (ordB === 'imp_desc') listaB.sort((a, b) => impB(b) - impB(a));
     else if (ordB === 'imp_asc') listaB.sort((a, b) => impB(a) - impB(b));
+    else if (ordB === 'alfabetico') listaB.sort((a, b) =>
+      (a.descripcion || '').localeCompare(b.descripcion || '', 'es', { sensitivity: 'base' })
+      || (a.fecha || '').localeCompare(b.fecha || ''));
     else listaB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   const cabecera = (total, mostrados, smart) =>
@@ -1259,6 +1264,10 @@ function pintarManual() {
     const ordM = $('#ordenMayor').value;
     if (ordM === 'imp_desc') listaM.sort((a, b) => impM(b) - impM(a));
     else if (ordM === 'imp_asc') listaM.sort((a, b) => impM(a) - impM(b));
+    else if (ordM === 'alfabetico') listaM.sort((a, b) =>
+      (a.comentario || a.referencia || '').localeCompare(
+        b.comentario || b.referencia || '', 'es', { sensitivity: 'base' })
+      || (a.fecha || '').localeCompare(b.fecha || ''));
     else listaM.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
   $('#listaMayor').innerHTML = cabecera(listaM.length, Math.min(listaM.length, 400), smartM) +
