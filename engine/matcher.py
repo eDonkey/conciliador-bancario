@@ -17,9 +17,12 @@ from collections import defaultdict
 
 # Palabras clave de gastos/impuestos bancarios que usualmente no se registran
 # asiento por asiento en el mayor.
+# Ojo con los términos cortos: sin límite de palabra, "iva " matchea
+# "cooperatIVA de seguros" y "com " matchea "teleCOM" (pasó con pagos a
+# proveedores reales que cayeron como gastos).
 GASTO_RE = re.compile(
-    r'comision|iva |iva 21|iva 10|impuesto|sircreb|percepcion|iibb|'
-    r'ley ?2[57]\.?[47]?\d*|mantenimiento|sellados|intereses|com\.? ',
+    r'comision|(?<![a-z])iva(?![a-z])|impuesto|sircreb|percepcion|iibb|'
+    r'ley ?2[57]\.?[47]?\d*|mantenimiento|sellados|intereses|(?<![a-z])com\.? ',
     re.IGNORECASE,
 )
 
@@ -403,11 +406,15 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         for p in pares_tol:
             (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
 
-    # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario)
+    # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario).
+    # Un movimiento reclasificado a mano trae _forzar_gasto (True/False) y esa
+    # decisión pisa a los detectores — así la ND mensual también sale bien.
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
-        if GASTO_RE.search(m.descripcion) or gastos_conf.es_gasto(m.descripcion,
-                                                                 terminos_gasto):
+        forzado = getattr(m, "_forzar_gasto", None)
+        if forzado is True or (forzado is None and (
+                GASTO_RE.search(m.descripcion)
+                or gastos_conf.es_gasto(m.descripcion, terminos_gasto))):
             gastos_bancarios.append(m)
         else:
             sin_contabilizar.append(m)
