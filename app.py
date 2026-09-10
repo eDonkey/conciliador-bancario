@@ -62,13 +62,35 @@ def _obtener(job_id):
     return RESULTADOS.get(job_id)
 
 
+TERMINOS_HABERES = ("haber", "sueldo")   # "pago haberes", "acred. sueldos", etc.
+
+
+def _es_haberes(m: dict) -> bool:
+    import unicodedata
+    texto = f'{m.get("descripcion") or ""} {m.get("detalle") or ""}'
+    plano = unicodedata.normalize("NFD", texto.lower())
+    plano = "".join(c for c in plano if not unicodedata.combining(c))
+    return any(t in plano for t in TERMINOS_HABERES)
+
+
 def _recalcular_resumen(datos):
+    # haberes (pagos de sueldos del extracto) se etiquetan para mostrarlos en
+    # su propia solapa/hoja: la persona arma con eso el asiento de sueldos en
+    # el FBS y en la corrida siguiente cruzan solos
+    for m in datos.get("banco_sin_contabilizar", []):
+        m["es_haberes"] = _es_haberes(m)
     r = datos["resumen"]
     imp_b = lambda x: x["credito"] or x["debito"]
     imp_m = lambda x: x["debe"] or x["haber"]
     for lista in LISTAS_BANCO:
         r[lista] = {"cantidad": len(datos[lista]),
                     "importe": round(sum(imp_b(x) for x in datos[lista]), 2)}
+    habs = [x for x in datos["banco_sin_contabilizar"] if x.get("es_haberes")]
+    resto = [x for x in datos["banco_sin_contabilizar"] if not x.get("es_haberes")]
+    r["haberes_sin_contabilizar"] = {"cantidad": len(habs),
+                                     "importe": round(sum(imp_b(x) for x in habs), 2)}
+    r["banco_sin_contabilizar"] = {"cantidad": len(resto),
+                                   "importe": round(sum(imp_b(x) for x in resto), 2)}
     for lista in LISTAS_MAYOR:
         r[lista] = {"cantidad": len(datos[lista]),
                     "importe": round(sum(imp_m(x) for x in datos[lista]), 2)}
@@ -266,6 +288,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
         salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
+        _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
         analisis_mod.anotar_residuales(salida)
         RESULTADOS[job_id] = salida
         _guardar(job_id)
@@ -936,6 +959,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             salida["memoria_omitidos"] = {"movimientos": om_movs, "asientos": om_asientos}
             salida["resumen"]["omitidos"] = om_movs + om_asientos
         salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
+        _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
         analisis_mod.anotar_residuales(salida)
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
@@ -1375,6 +1399,9 @@ def _generar_excel(datos):
         ("Conciliados manualmente (grupos)", r.get("conciliados_manual", 0)),
         ("Gastos/impuestos bancarios sin contabilizar",
          f'{r["gastos_bancarios"]["cantidad"]}  ($ {r["gastos_bancarios"]["importe"]:,.2f})'),
+        ("Haberes del extracto sin contabilizar (para asiento de sueldos en FBS)",
+         f'{r.get("haberes_sin_contabilizar", {}).get("cantidad", 0)}  '
+         f'($ {r.get("haberes_sin_contabilizar", {}).get("importe", 0):,.2f})'),
         ("Otros movimientos del banco sin contabilizar",
          f'{r["banco_sin_contabilizar"]["cantidad"]}  ($ {r["banco_sin_contabilizar"]["importe"]:,.2f})'),
         ("Asientos E sin movimiento en el banco",
@@ -1412,8 +1439,11 @@ def _generar_excel(datos):
     cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito", "Archivo"]
     fila_banco = lambda b: (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
                             b["debito"] or "", b["credito"] or "", b["archivo"])
-    hoja("Banco sin contabilizar", cols_banco,
-         [fila_banco(b) for b in datos["banco_sin_contabilizar"]])
+    habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
+    resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
+    # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
+    hoja("Haberes sin contabilizar", cols_banco, [fila_banco(b) for b in habs])
+    hoja("Banco sin contabilizar", cols_banco, [fila_banco(b) for b in resto])
     hoja("Gastos bancarios", cols_banco,
          [fila_banco(b) for b in datos["gastos_bancarios"]])
 

@@ -731,6 +731,10 @@ function mostrarResultados() {
       <div class="etiqueta">Gastos/impuestos bancarios</div>
       <div class="sub">$ ${fmt(r.gastos_bancarios.importe)}${r.nota_debito && r.nota_debito.periodos ?
         ` — dif. vs ND mayor: $ ${fmt(r.nota_debito.diferencia_total)}` : ''}</div></div>
+    ${r.haberes_sin_contabilizar && r.haberes_sin_contabilizar.cantidad ? `
+    <div class="kpi ambar"><div class="valor">${r.haberes_sin_contabilizar.cantidad}</div>
+      <div class="etiqueta">Haberes sin contabilizar</div>
+      <div class="sub">$ ${fmt(r.haberes_sin_contabilizar.importe)} — para el asiento de sueldos en el FBS</div></div>` : ''}
     <div class="kpi rojo"><div class="valor">${r.banco_sin_contabilizar.cantidad}</div>
       <div class="etiqueta">Banco sin contabilizar</div>
       <div class="sub">$ ${fmt(r.banco_sin_contabilizar.importe)}</div></div>
@@ -807,10 +811,13 @@ function mostrarResultados() {
     avisos += `<div class="aviso error">IA: ${esc(ia.estado)}</div>`;
   $('#avisos').innerHTML = avisos;
 
+  const nHaberes = datos.banco_sin_contabilizar.filter(m => m.es_haberes).length;
   const tabs = [
     ['conciliados_e', 'Conciliados (E)', datos.conciliados_e.length],
     ['conciliados_o', 'Pendientes de confirmar (O)', datos.conciliados_o.length],
-    ['banco_sin_contabilizar', 'Banco sin contabilizar', datos.banco_sin_contabilizar.length],
+    ['haberes_sin_contabilizar', 'Haberes sin contabilizar', nHaberes],
+    ['banco_sin_contabilizar', 'Banco sin contabilizar',
+     datos.banco_sin_contabilizar.length - nHaberes],
     ['gastos_bancarios', 'Gastos bancarios', datos.gastos_bancarios.length],
     ['nota_debito', 'Gastos por mes (ND)', datos.nota_debito.length],
     ['e_sin_banco', 'Mayor E sin banco', datos.e_sin_banco.length],
@@ -915,10 +922,16 @@ function pintarTabla() {
         onclick="anularCruce('${esc(m.banco.id)}')">Anular cruce</button>` });
       return f;
     });
-  } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios') {
+  } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios'
+             || tabActiva === 'haberes_sin_contabilizar') {
     cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo'];
     if (tabActiva === 'banco_sin_contabilizar') cols.push('');
-    filas = datos[tabActiva].map(b => {
+    const items = tabActiva === 'haberes_sin_contabilizar'
+      ? datos.banco_sin_contabilizar.filter(m => m.es_haberes)
+      : tabActiva === 'banco_sin_contabilizar'
+        ? datos.banco_sin_contabilizar.filter(m => !m.es_haberes)
+        : datos[tabActiva];
+    filas = items.map(b => {
       const f = [b.fecha, b.comprobante, b.descripcion, b.detalle,
         { num: b.debito }, { num: b.credito }, b.archivo];
       if (tabActiva === 'banco_sin_contabilizar')
