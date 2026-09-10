@@ -265,6 +265,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         salida["resumen"]["conciliados_manual"] = 0
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
+        salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
         analisis_mod.anotar_residuales(salida)
         RESULTADOS[job_id] = salida
         _guardar(job_id)
@@ -619,6 +620,69 @@ def _clave_asiento_obj(a) -> str:
             f'{a.debe:.2f}|{a.haber:.2f}')
 
 
+# --- cruces vetados: pares banco<->asiento que el usuario marcó como "no
+# corresponde". El cruce se deshace y el par no se vuelve a proponer en
+# ninguna corrida futura (importante con el arrastre diario, que si no lo
+# rearmaría al día siguiente).
+RUTA_VETOS = os.path.join(DATOS_DIR, "cruces_vetados.json")
+
+
+def _cargar_vetos() -> list:
+    if os.path.exists(RUTA_VETOS):
+        try:
+            with open(RUTA_VETOS, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return []
+    return []
+
+
+def _guardar_vetos(vetos: list):
+    unicos, vistos = [], set()
+    for v in vetos:
+        par = (v.get("mov"), v.get("asiento"))
+        if par not in vistos:
+            vistos.add(par)
+            unicos.append(v)
+    with open(RUTA_VETOS, "w", encoding="utf-8") as f:
+        json.dump(unicos, f, ensure_ascii=False, indent=1)
+
+
+def _anular_cruce_datos(datos, match, lista):
+    """Deshace un cruce en un job serializado: el movimiento vuelve a 'Banco
+    sin contabilizar' y el asiento a su lista de pendientes según la hoja."""
+    datos[lista] = [m for m in datos[lista] if m is not match]
+    b, a = match["banco"], match["asiento"]
+    datos["banco_sin_contabilizar"].append(b)
+    datos["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
+    destino = "o_pendientes_sin_banco" if a.get("hoja") == "O" else "e_sin_banco"
+    datos[destino].append(a)
+    datos[destino].sort(key=lambda x: x.get("fecha") or "")
+    r = datos["resumen"]
+    r["conciliados_e"] = len(datos["conciliados_e"])
+    r["en_o_pendientes_confirmar"] = len(datos["conciliados_o"])
+    r["o_confirmados"] = sum(1 for m in datos["conciliados_o"] if m.get("confirmado"))
+    _recalcular_resumen(datos)
+    return destino
+
+
+def _aplicar_vetos_datos(datos) -> int:
+    """Desarma en un job recién generado los cruces que el usuario vetó en
+    corridas anteriores. Devuelve cuántos desarmó."""
+    vetos = {(v.get("mov"), v.get("asiento")) for v in _cargar_vetos()}
+    if not vetos:
+        return 0
+    n = 0
+    for lista in ("conciliados_e", "conciliados_o"):
+        for match in list(datos.get(lista, [])):
+            par = (_clave_mov_dict(match["banco"]),
+                   _clave_asiento_dict(match["asiento"]))
+            if par in vetos:
+                _anular_cruce_datos(datos, match, lista)
+                n += 1
+    return n
+
+
 def _cosechar_consumidos(prev: dict):
     """Claves de todo lo ya conciliado/explicado en un job, en su estado
     ACTUAL (incluye lo conciliado a mano después de la corrida)."""
@@ -871,6 +935,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         if om_movs or om_asientos:
             salida["memoria_omitidos"] = {"movimientos": om_movs, "asientos": om_asientos}
             salida["resumen"]["omitidos"] = om_movs + om_asientos
+        salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
         analisis_mod.anotar_residuales(salida)
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
@@ -1204,6 +1269,35 @@ def api_confirmar(job_id: str, cuerpo: dict = Body(...)):
 
     datos["resumen"]["o_confirmados"] = sum(
         1 for m in datos["conciliados_o"] if m.get("confirmado"))
+    _guardar(job_id)
+    return datos
+
+
+@app.post("/api/anular/{job_id}")
+def api_anular_cruce(job_id: str, cuerpo: dict = Body(...)):
+    """Anula un cruce automático que no corresponde (pedido del cliente): el
+    movimiento vuelve a 'Banco sin contabilizar' y el asiento a su lista de
+    pendientes (E u O según la hoja). El par queda vetado: ninguna corrida
+    futura lo vuelve a proponer."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    lista = cuerpo.get("lista")
+    if lista not in ("conciliados_e", "conciliados_o"):
+        return JSONResponse(status_code=422, content={"error": "Lista inválida"})
+    banco_id = cuerpo.get("banco_id")
+    match = next((m for m in datos.get(lista, [])
+                  if m["banco"]["id"] == banco_id), None)
+    if not match:
+        return JSONResponse(status_code=404, content={"error": "Cruce no encontrado"})
+
+    vetos = _cargar_vetos()
+    vetos.append({"mov": _clave_mov_dict(match["banco"]),
+                  "asiento": _clave_asiento_dict(match["asiento"]),
+                  "metodo": match.get("metodo"), "job": job_id,
+                  "fecha": date.today().isoformat()})
+    _guardar_vetos(vetos)
+    _anular_cruce_datos(datos, match, lista)
     _guardar(job_id)
     return datos
 
