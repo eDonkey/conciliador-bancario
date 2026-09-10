@@ -792,6 +792,11 @@ function mostrarResultados() {
   (datos.avisos_marca || []).forEach(a => {
     avisos += `<div class="aviso error"><b>Ojo con la marca:</b> ${esc(a)}</div>`;
   });
+  if (datos.cruces_vetados)
+    avisos += `<div class="aviso info">Se desarmaron <b>${datos.cruces_vetados}</b>
+      cruce${datos.cruces_vetados === 1 ? '' : 's'} anulado${datos.cruces_vetados === 1 ? '' : 's'}
+      en corridas anteriores (el sistema ya no propone esos pares): cada parte
+      quedó en su lista de pendientes.</div>`;
   if (datos.cuenta)
     avisos += `<div class="aviso info">Conciliación del <b>modo diario</b> —
       cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
@@ -896,6 +901,23 @@ window.confirmarMatch = async (bancoId, valor) => {
   } catch (err) { alert(err.message); }
 };
 
+window.anularCruce = async bancoId => {
+  const lista = tabActiva;
+  if (!confirm('¿Anular este cruce? El movimiento del extracto vuelve a ' +
+    '"Banco sin contabilizar" y el asiento del mayor a su lista de pendientes. ' +
+    'El sistema no va a volver a proponer este par en corridas futuras.')) return;
+  try {
+    const resp = await fetch(`/api/anular/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ banco_id: bancoId, lista }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    refrescarTrasManual(lista);
+  } catch (err) { alert(err.message); }
+};
+
 window.confirmarTodos = async valor => {
   try {
     const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
@@ -918,6 +940,7 @@ function pintarTabla() {
     cols = ['Fecha banco', 'Comprobante', 'Descripción banco', 'Débito', 'Crédito',
             'Asiento', 'Fecha mayor', 'Referencia', 'Comentario', 'Método'];
     if (tabActiva === 'conciliados_o') cols.push('Confirmado en FES');
+    cols.push('');
     filas = datos[tabActiva].map(m => {
       const f = [
         m.banco.fecha, m.banco.comprobante, m.banco.descripcion,
@@ -930,6 +953,9 @@ function pintarTabla() {
                onclick="confirmarMatch('${esc(m.banco.id)}', false)">Confirmado</button>`
           : `<button class="secundario" style="padding:4px 10px;font-size:12px;"
                onclick="confirmarMatch('${esc(m.banco.id)}', true)">Confirmar</button>` });
+      f.push({ html: `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+        title="Este cruce no corresponde: se deshace, cada parte vuelve a su lista de pendientes y el sistema no lo vuelve a proponer"
+        onclick="anularCruce('${esc(m.banco.id)}')">Anular cruce</button>` });
       return f;
     });
   } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios') {
