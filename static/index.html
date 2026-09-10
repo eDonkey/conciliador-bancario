@@ -158,10 +158,10 @@
 
   /* --- diccionario de equivalencias --- */
   .zona-derecha { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-  #modalEquiv, #modalGastos, #modalAnalisis { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
+  #modalEquiv, #modalGastos, #modalAnalisis, #modalTransfer { position: fixed; inset: 0; background: rgba(4, 7, 18, 0.7);
     backdrop-filter: blur(8px); display: flex; align-items: center;
     justify-content: center; z-index: 90; }
-  #modalEquiv.oculto, #modalGastos.oculto, #modalAnalisis.oculto { display: none; }
+  #modalEquiv.oculto, #modalGastos.oculto, #modalAnalisis.oculto, #modalTransfer.oculto { display: none; }
 
   /* --- análisis IA de asientos pendientes --- */
   .btn-info { width: 22px; height: 22px; border-radius: 50%;
@@ -457,6 +457,21 @@
     <div id="gasError"></div>
     <div style="text-align:right; margin-top:6px;">
       <button class="secundario" id="gasCerrar">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalTransfer" class="oculto">
+  <div class="eq-card">
+    <h3>Transferir movimiento a otra clasificación</h3>
+    <div id="trMov" class="exp" style="margin-top:6px;"></div>
+    <div id="trDestinos" style="margin:14px 0; display:flex; flex-direction:column; gap:8px; font-size:13.5px;"></div>
+    <textarea id="trMotivo" rows="2" placeholder="¿Por qué va ahí? (queda registrado y las próximas corridas lo respetan)"
+      style="width:100%; font-family:inherit; font-size:13px; background:rgba(255,255,255,0.05); color:var(--texto); border:1px solid var(--border); border-radius:10px; padding:9px 12px; resize:vertical;"></textarea>
+    <div id="trError" style="color:var(--rojo); font-size:12.5px; margin-top:8px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
+      <button class="secundario" id="trCerrar">Cancelar</button>
+      <button class="mini" id="trGuardar" style="padding:8px 18px;">Transferir</button>
     </div>
   </div>
 </div>
@@ -867,6 +882,56 @@ window.confirmarMatch = async (bancoId, valor) => {
   } catch (err) { alert(err.message); }
 };
 
+const NOMBRES_CLASIF = {
+  banco_sin_contabilizar: 'Banco sin contabilizar',
+  gastos_bancarios: 'Gastos bancarios',
+  haberes_sin_contabilizar: 'Haberes sin contabilizar',
+};
+let transferId = null;
+
+window.abrirTransfer = bancoId => {
+  const m = [...datos.banco_sin_contabilizar, ...datos.gastos_bancarios]
+    .find(x => x.id === bancoId);
+  if (!m) return;
+  const actual = datos.gastos_bancarios.some(x => x.id === bancoId)
+    ? 'gastos_bancarios'
+    : (m.es_haberes ? 'haberes_sin_contabilizar' : 'banco_sin_contabilizar');
+  transferId = bancoId;
+  $('#trMov').innerHTML = `<b>${esc(m.descripcion)}</b><br>
+    ${esc(m.fecha || '')} · ${m.debito ? '− $ ' + fmt(m.debito) : '+ $ ' + fmt(m.credito)}
+    · hoy está en <b>${NOMBRES_CLASIF[actual]}</b>`;
+  $('#trDestinos').innerHTML = Object.keys(NOMBRES_CLASIF)
+    .filter(k => k !== actual)
+    .map((k, i) => `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
+      <input type="radio" name="trDestino" value="${k}" ${i === 0 ? 'checked' : ''}>
+      Transferir a <b>${NOMBRES_CLASIF[k]}</b></label>`).join('');
+  $('#trMotivo').value = '';
+  $('#trError').textContent = '';
+  $('#modalTransfer').classList.remove('oculto');
+  $('#trMotivo').focus();
+};
+
+$('#trGuardar').addEventListener('click', async () => {
+  const destino = document.querySelector('input[name=trDestino]:checked')?.value;
+  const motivo = $('#trMotivo').value.trim();
+  if (!motivo) { $('#trError').textContent = 'Contanos por qué va ahí — queda registrado.'; return; }
+  try {
+    const resp = await fetch(`/api/reclasificar/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ banco_id: transferId, destino, motivo }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    $('#modalTransfer').classList.add('oculto');
+    refrescarTrasManual(tabActiva);
+  } catch (err) { $('#trError').textContent = err.message; }
+});
+$('#trCerrar').addEventListener('click', () => $('#modalTransfer').classList.add('oculto'));
+$('#modalTransfer').addEventListener('click', e => {
+  if (e.target.id === 'modalTransfer') $('#modalTransfer').classList.add('oculto');
+});
+
 window.anularCruce = async bancoId => {
   const lista = tabActiva;
   if (!confirm('¿Anular este cruce? El movimiento del extracto vuelve a ' +
@@ -926,20 +991,26 @@ function pintarTabla() {
     });
   } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios'
              || tabActiva === 'haberes_sin_contabilizar') {
-    cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo'];
-    if (tabActiva === 'banco_sin_contabilizar') cols.push('');
+    cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo', ''];
     const items = tabActiva === 'haberes_sin_contabilizar'
       ? datos.banco_sin_contabilizar.filter(m => m.es_haberes)
       : tabActiva === 'banco_sin_contabilizar'
         ? datos.banco_sin_contabilizar.filter(m => !m.es_haberes)
         : datos[tabActiva];
     filas = items.map(b => {
-      const f = [b.fecha, b.comprobante, b.descripcion, b.detalle,
+      const marca = b.reclasificado
+        ? ` <span class="metodo" title="Transferido a mano: ${esc(b.reclasificado)}">reclasificado</span>` : '';
+      const f = [b.fecha, b.comprobante,
+        { html: esc(b.descripcion) + marca, texto: b.descripcion }, b.detalle,
         { num: b.debito }, { num: b.credito }, b.archivo];
+      let botones = `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+          title="Cambiar la clasificación de este movimiento, explicando el porqué (las próximas corridas lo respetan)"
+          onclick="abrirTransfer('${esc(b.id)}')">Transferir</button>`;
       if (tabActiva === 'banco_sin_contabilizar')
-        f.push({ html: `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
-          title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras"
-          onclick="marcarGasto('${esc(b.descripcion).replace(/'/g, '&#39;')}')">→ gasto</button>` });
+        botones += ` <button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+          title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras (aprende el término, no solo este movimiento)"
+          onclick="marcarGasto('${esc(b.descripcion).replace(/'/g, '&#39;')}')">→ gasto</button>`;
+      f.push({ html: botones });
       return f;
     });
   } else if (tabActiva === 'excluidos') {
@@ -1003,7 +1074,7 @@ function pintarTabla() {
   thead.innerHTML = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
   tbody.innerHTML = filas
     .filter(f => !filtro || f.some(c =>
-      String(typeof c === 'object' ? (c.num ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
+      String(typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
     .map(f => '<tr>' + f.map(c => {
       if (c && typeof c === 'object') {
         if ('html' in c) return `<td>${c.html}</td>`;

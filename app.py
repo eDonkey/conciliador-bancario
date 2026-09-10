@@ -77,9 +77,17 @@ def _es_haberes(m: dict) -> bool:
 def _recalcular_resumen(datos):
     # haberes (pagos de sueldos del extracto) se etiquetan para mostrarlos en
     # su propia solapa/hoja: la persona arma con eso el asiento de sueldos en
-    # el FBS y en la corrida siguiente cruzan solos
+    # el FBS y en la corrida siguiente cruzan solos. Una reclasificación
+    # manual guardada pisa al detector.
+    overrides = _overrides_reclas()
     for m in datos.get("banco_sin_contabilizar", []):
-        m["es_haberes"] = _es_haberes(m)
+        ov = overrides.get(_clave_mov_dict(m)) if overrides else None
+        if ov == "haberes_sin_contabilizar":
+            m["es_haberes"] = True
+        elif ov == "banco_sin_contabilizar":
+            m["es_haberes"] = False
+        else:
+            m["es_haberes"] = _es_haberes(m)
     r = datos["resumen"]
     imp_b = lambda x: x["credito"] or x["debito"]
     imp_m = lambda x: x["debe"] or x["haber"]
@@ -231,6 +239,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         reglas = reglas_mod.cargar()
         equivalencias = eq_mod.cargar()
         terminos_gasto = gastos_conf.cargar()
+        _forzar_gastos_movs(movs)
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
                               mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias,
@@ -707,6 +716,50 @@ def _aplicar_vetos_datos(datos) -> int:
     return n
 
 
+# --- reclasificaciones manuales: el usuario mueve un movimiento del banco
+# entre "Banco sin contabilizar", "Gastos bancarios" y "Haberes", explicando
+# el porqué. La decisión persiste por clave y se respeta en toda corrida
+# futura (pisa al detector automático).
+RUTA_RECLAS = os.path.join(DATOS_DIR, "reclasificaciones.json")
+DESTINOS_RECLAS = ("banco_sin_contabilizar", "gastos_bancarios",
+                   "haberes_sin_contabilizar")
+
+
+def _cargar_reclas() -> list:
+    if os.path.exists(RUTA_RECLAS):
+        try:
+            with open(RUTA_RECLAS, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return []
+    return []
+
+
+def _guardar_reclas(items: list):
+    with open(RUTA_RECLAS, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=1)
+
+
+def _overrides_reclas() -> dict:
+    """clave de movimiento -> destino elegido (la última decisión gana)."""
+    return {r["mov"]: r["destino"] for r in _cargar_reclas()
+            if r.get("destino") in DESTINOS_RECLAS}
+
+
+def _forzar_gastos_movs(movs):
+    """Pre-cruce: marca en los movimientos las reclasificaciones guardadas,
+    para que el matcher (y la ND mensual) clasifique según lo decidido."""
+    overrides = _overrides_reclas()
+    if not overrides:
+        return
+    for m in movs:
+        ov = overrides.get(_clave_mov_obj(m))
+        if ov == "gastos_bancarios":
+            m._forzar_gasto = True
+        elif ov in ("banco_sin_contabilizar", "haberes_sin_contabilizar"):
+            m._forzar_gasto = False
+
+
 def _cosechar_consumidos(prev: dict):
     """Claves de todo lo ya conciliado/explicado en un job, en su estado
     ACTUAL (incluye lo conciliado a mano después de la corrida)."""
@@ -922,6 +975,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                             "archivos": g["archivos"],
                             "resumen": {"movimientos_banco": len(movs)}})
             continue
+        _forzar_gastos_movs(movs)
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias, terminos_gasto=terminos_gasto)
         # período cubierto por los extractos de HOY (sin contar los arrastrados,
@@ -1295,6 +1349,50 @@ def api_confirmar(job_id: str, cuerpo: dict = Body(...)):
     datos["resumen"]["o_confirmados"] = sum(
         1 for m in datos["conciliados_o"] if m.get("confirmado"))
     _guardar(job_id)
+    return datos
+
+
+@app.post("/api/reclasificar/{job_id}")
+def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
+    """Transfiere un movimiento del banco a otra clasificación (banco sin
+    contabilizar / gastos bancarios / haberes), con el porqué del usuario.
+    La decisión persiste y las corridas futuras la respetan."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    destino = cuerpo.get("destino")
+    if destino not in DESTINOS_RECLAS:
+        return JSONResponse(status_code=422, content={"error": "Destino inválido"})
+    motivo = (cuerpo.get("motivo") or "").strip()
+    if not motivo:
+        return JSONResponse(status_code=422, content={
+            "error": "Contanos por qué va en esa clasificación, así queda registrado"})
+    banco_id = cuerpo.get("banco_id")
+    origen = next((l for l in ("banco_sin_contabilizar", "gastos_bancarios")
+                   if any(m["id"] == banco_id for m in datos.get(l, []))), None)
+    if not origen:
+        return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
+    mov = next(m for m in datos[origen] if m["id"] == banco_id)
+
+    lista_destino = ("gastos_bancarios" if destino == "gastos_bancarios"
+                     else "banco_sin_contabilizar")
+    if lista_destino != origen:
+        datos[origen] = [m for m in datos[origen] if m is not mov]
+        datos[lista_destino].append(mov)
+        datos[lista_destino].sort(key=lambda x: x.get("fecha") or "")
+    mov["reclasificado"] = motivo
+
+    items = _cargar_reclas()
+    items = [r for r in items if r.get("mov") != _clave_mov_dict(mov)]
+    items.append({"mov": _clave_mov_dict(mov), "destino": destino,
+                  "motivo": motivo[:300], "descripcion": mov.get("descripcion"),
+                  "fecha": date.today().isoformat(), "job": job_id})
+    _guardar_reclas(items)
+
+    _recalcular_resumen(datos)
+    _guardar(job_id)
+    # los totales de la ND mensual de ESTE resultado no se rearman acá;
+    # quedan bien en la próxima corrida (el matcher ya respeta la decisión)
     return datos
 
 
