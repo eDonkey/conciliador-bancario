@@ -63,7 +63,8 @@ def _obtener(job_id):
     return RESULTADOS.get(job_id)
 
 
-TERMINOS_HABERES = ("haber", "sueldo")   # "pago haberes", "acred. sueldos", etc.
+TERMINOS_HABERES = ("haber", "sueldo", "nomina")   # "pago haberes",
+# "acred. sueldos", "acreditación (de) nómina", etc. — sin acentos ni mayúsc.
 
 
 def _es_haberes(m: dict) -> bool:
