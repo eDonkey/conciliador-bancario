@@ -68,14 +68,21 @@ def _mov(seq, archivo, fecha, descripcion, importe, saldo=0.0,
 # --- Santander / Río: texto tabulado disfrazado de .xls ---------------------
 
 def _es_rio(data: bytes) -> bool:
+    """Texto tabulado de Santander/Río con encabezado 'Concepto'. Dos
+    variantes reales: la clásica (arranca con línea vacía) y el export
+    'descargaUltimosMovimientos' (arranca directo con 'Movimientos del Día'
+    y trae dos secciones: del día + últimos movimientos)."""
+    if b'\tConcepto\t' not in data[:2000].replace(b'\r', b''):
+        return False
     inicio = data[:400].decode('latin-1', errors='replace')
-    return ('\t' in inicio or 'Movimientos' in inicio) and \
-        data[:2] in (b'\r\n', b'\n\r') and b'\tConcepto\t' in data[:2000].replace(b'\r', b'')
+    return data[:2] in (b'\r\n', b'\n\r') or inicio.lstrip().startswith('Movimientos')
 
 
 def _parse_rio(nombre, data):
     texto = html.unescape(data.decode('latin-1', errors='replace'))
-    m = re.search(r'Cuenta Corriente en (Pesos|D[oó]lares)\s+Nro\.\s*([\d/-]+)', texto)
+    # case-insensitive: el export nuevo dice "Cuenta corriente" en minúscula
+    m = re.search(r'Cuenta Corriente en (Pesos|D[oó]lares)\s+Nro\.\s*([\d/-]+)',
+                  texto, re.IGNORECASE)
     moneda = 'USD' if m and 'lares' in m.group(1) else 'ARS'
     cuenta = _digits(m.group(2)) if m else None
     movs, seq = [], 0
