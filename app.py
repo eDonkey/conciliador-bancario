@@ -864,37 +864,47 @@ def _procesar_confirmaciones(prev, g):
     if not esperando or not g["e"]:
         return [], esperando, 0
 
-    movs = []
-    for i, ent in enumerate(esperando):
-        m = _reconstruir_mov(dict(ent["banco"]), i)
-        m.id = f"C#{i}"
-        m.archivo = ent["banco"].get("archivo") or ""
-        movs.append(m)
-    matches, _, e_restante = matcher_mod._match_pases(movs, g["e"])
-    g["e"][:] = e_restante
+    # La confirmación es ESTRICTA: en el FES, confirmar una orden replica en
+    # la cuenta E la referencia, el importe y el lado del asiento O original.
+    # Solo eso cuenta como confirmación — nada de "importe único" ni fechas
+    # cercanas, que confirmaban contra asientos ajenos del mismo importe
+    # (p. ej. una pata de una transferencia interna) y los consumían para
+    # siempre vía la memoria de conciliados.
+    def _claves(aso_ref, aso_com):
+        rm = matcher_mod._clave_rm(aso_com or "")
+        ref = (aso_ref or "").strip().upper()
+        return {c for c in (rm, ref) if c}
 
     confirmados, idx_conf, canceladas = [], set(), 0
-    for mt in matches:
-        i = int(mt["banco"].id[2:])
+    usados_e = set()
+    for i, ent in enumerate(esperando):
+        aso = ent.get("asiento") or {}
+        claves_o = _claves(aso.get("referencia"), aso.get("comentario"))
+        if not claves_o:
+            continue      # sin referencia no hay confirmación automática
+        importe = round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2)
+        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
+        econf = next(
+            (a for a in g["e"]
+             if a.id not in usados_e and a.lado == lado_original
+             and round(a.importe, 2) == importe
+             and _claves(a.referencia, a.comentario) & claves_o), None)
+        if econf is None:
+            continue
+        usados_e.add(econf.id)
         idx_conf.add(i)
-        ent = esperando[i]
         confirmados.append({
-            "banco": ent["banco"], "asiento": mt["asiento"].to_dict(),
+            "banco": ent["banco"], "asiento": econf.to_dict(),
             "metodo": "confirmado en E (venía conciliado contra O)",
         })
         # la confirmación genera una contrapartida en O: cancelarla del pool
-        aso = ent.get("asiento") or {}
-        clave = (matcher_mod._clave_rm(aso.get("comentario") or "")
-                 or (aso.get("referencia") or "").strip().upper(),
-                 round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2))
-        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
         for j, a in enumerate(g["o"]):
-            clave_a = (matcher_mod._clave_rm(a.comentario) or a.referencia.strip().upper(),
-                       round(a.importe, 2))
-            if clave_a == clave and a.lado != lado_original:
+            if (a.lado != lado_original and round(a.importe, 2) == importe
+                    and _claves(a.referencia, a.comentario) & claves_o):
                 del g["o"][j]
                 canceladas += 1
                 break
+    g["e"][:] = [a for a in g["e"] if a.id not in usados_e]
 
     pendientes = []
     for i, ent in enumerate(esperando):
