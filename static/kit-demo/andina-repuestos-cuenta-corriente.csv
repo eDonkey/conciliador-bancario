@@ -1,0 +1,5 @@
+Cuenta;Sucursal;Fecha;Importe;Comprobante;Descripcion;Saldo
+350234567891 $;0001;05/09/2026;300.000,00;TR301;Transferencia recibida Cliente C;1.300.000,00
+350234567891 $;0001;06/09/2026;-60.000,00;PG410;Pago proveedor Lubricantes SA;1.240.000,00
+350234567891 $;0001;09/09/2026;45.000,00;CB512;Cobranza Cliente D;1.285.000,00
+350234567891 $;0001;12/09/2026;-18.500,00;PG413;Pago servicios;1.266.500,00
