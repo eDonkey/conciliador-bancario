@@ -1,5 +1,7 @@
 # Datos reales de conciliaciones (nunca subir al repo)
-datos/
+datos/*
+# excepto los fixtures de demo (datos ficticios, se commitean)
+!datos/demo/
 
 # Python
 __pycache__/
@@ -11,3 +13,5 @@ venv/
 .env
 *.xlsx
 *.pdf
+# excepto el kit de demo (datos ficticios, se commitean)
+!static/kit-demo/*.xlsx

@@ -99,6 +99,12 @@
   h2.seccion { font-family: "Sora", sans-serif; font-size: 14.5px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 10px; }
   .pct { font-weight: 700; }
   .pct.alto { color: var(--verde); } .pct.medio { color: var(--ambar); } .pct.bajo { color: var(--rojo); }
+  .demo-banner {
+    text-align: center; padding: 6px 12px; font-family: "Sora", sans-serif;
+    font-weight: 700; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: #1a1006; background: repeating-linear-gradient(135deg, #fbbf24, #fbbf24 14px, #f59e0b 14px, #f59e0b 28px);
+  }
+  .kit-demo a { display:inline-block; margin: 4px 10px 4px 0; font-size: 12.5px; color: var(--acento); }
 
   /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
   body.claro {
@@ -133,14 +139,16 @@
 </style>
 </head>
 <body>
+<div id="demoBanner" class="demo-banner oculto">DEMO — datos ficticios, sin conexión a FBS real</div>
 <header>
   <span class="logo" aria-hidden="true"></span>
   <div>
     <h1>Conciliación diaria <span id="chipMarca" class="oculto" style="font-family:'Sora',sans-serif; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--acento); border:1px solid color-mix(in srgb, var(--acento) 45%, transparent); border-radius:999px; padding:3px 10px; margin-left:8px; vertical-align:2px;"></span></h1>
     <p id="subtitulo">Extractos + reportes FBS por cuenta — Nave Motors</p>
   </div>
-  <button class="secundario" id="btnTema" style="margin-left:auto"
-    title="Alternar entre tema claro y oscuro">Modo claro</button>
+  <button class="secundario oculto" id="btnResetDemo" style="margin-left:auto"
+    title="Vuelve a dejar la demo como recién sembrada">Reiniciar demo</button>
+  <button class="secundario" id="btnTema" style="margin-left:auto" title="Alternar entre tema claro y oscuro">Modo claro</button>
   <a class="volver" id="linkMensual" href="/" style="margin-left:0">Conciliador mensual</a>
 </header>
 
@@ -159,9 +167,14 @@
         entra automáticamente en la conciliación de mañana, hasta que aparezca
         su contrapartida.</div>
     </div>
+    <div id="kitDemo" class="kit-demo oculto" style="margin-bottom:14px;font-size:12.5px;color:var(--texto2);">
+      <b style="color:var(--texto)">Kit de demo:</b> descargá un extracto de ejemplo y soltalo abajo — el
+      mayor de esa empresa ya está "sincronizado", no hace falta subir nada más.
+      <div id="kitLinks" style="margin-top:6px;"></div>
+    </div>
     <div class="zona" id="zona">
-      <h3>Extractos bancarios del día</h3>
-      <p>Arrastrá o hacé clic — los extractos de cada banco (Santander/Río, BBVA/Francés,
+      <h3 id="zonaTitulo">Extractos bancarios del día</h3>
+      <p id="zonaTexto">Arrastrá o hacé clic — los extractos de cada banco (Santander/Río, BBVA/Francés,
         Galicia, Macro, Ciudad). Los reportes FBS ya no hacen falta: el mayor se trae
         directo de la base con el bloque de abajo (si igual subís uno, se procesa).</p>
       <input type="file" id="inputArchivos" multiple hidden>
@@ -269,7 +282,35 @@ $('#btnTema').addEventListener('click', () => {
   pintarTema();
 });
 pintarTema();
-let archivos = [], staging = null, cuentas = [], grupo = null;
+let archivos = [], staging = null, cuentas = [], grupo = null, DEMO = false;
+
+// modo demo (ROD-6/07): banner, kit de extractos descargables, y el mayor
+// sembrado se agrega solo (no hace falta soltar también el archivo FBS)
+fetch('/api/demo/estado').then(r => r.json()).then(j => {
+  DEMO = !!j.demo;
+  if (!DEMO) return;
+  $('#demoBanner').classList.remove('oculto');
+  $('#zonaTitulo').textContent = 'Extracto bancario';
+  $('#zonaTexto').textContent = 'Arrastrá o hacé clic para soltar el extracto — el mayor de esta empresa ya está sincronizado.';
+  if (!MARCA) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
+  document.title = 'Conciliación diaria — demo';
+  const btnReset = $('#btnResetDemo');
+  btnReset.classList.remove('oculto');
+  btnReset.addEventListener('click', async () => {
+    if (!confirm('¿Reiniciar la demo del conciliador? Se pierde lo que se haya conciliado en esta sesión.')) return;
+    btnReset.disabled = true;
+    try {
+      await fetch('/api/demo/reset', { method: 'POST' });
+      location.href = location.pathname;
+    } catch { btnReset.disabled = false; }
+  });
+  fetch('/api/demo/kit').then(r => r.json()).then(k => {
+    if (!k.archivos || !k.archivos.length) return;
+    $('#kitLinks').innerHTML = k.archivos.map(f =>
+      `<a href="/static/kit-demo/${encodeURIComponent(f)}" download>⬇ ${esc(f)}</a>`).join('');
+    $('#kitDemo').classList.remove('oculto');
+  }).catch(() => {});
+}).catch(() => {});
 
 // ?marca=X limita toda la página (cuentas, identificación, historial) a esa
 // marca; los links generados la conservan para no salirse del contexto
@@ -318,6 +359,7 @@ $('#btnIdentificar').addEventListener('click', async () => {
     const qs = new URLSearchParams();
     if (MARCA) qs.set('marca', MARCA);
     if (staging) qs.set('staging', staging.staging_id);
+    if (typeof DEMO !== 'undefined' && DEMO) qs.set('demo', '1');
     const resp = await fetch('/api/diario/identificar' + (qs.toString() ? '?' + qs : ''),
                              { method: 'POST', body: fd });
     const json = await resp.json();

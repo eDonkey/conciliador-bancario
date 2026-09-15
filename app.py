@@ -40,10 +40,37 @@ app = FastAPI(title="Conciliador bancario")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
+DEMO_DIR = os.path.join(DATOS_DIR, "demo")
 os.makedirs(DATOS_DIR, exist_ok=True)
 RESULTADOS = {}  # job_id -> resultado serializado
 PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
 STAGING = {}     # staging_id -> archivos parseados del modo diario
+
+# Ambiente de demo (ROD-6 "05"): permite conciliar un extracto dropeado contra
+# un mayor FBS ya sembrado, sin necesitar que también se suba el archivo del
+# mayor. Sin esta variable el comportamiento es exactamente el de producción.
+DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in ("1", "true", "on", "si")
+
+
+def _cargar_mayor_demo(cuenta_id: str):
+    """Asientos sembrados para <cuenta_id> (datos/demo/<cuenta_id>.json), en el
+    mismo formato que devuelve parsers.mayor_xlsx. None si no hay fixture."""
+    ruta = os.path.join(DEMO_DIR, f"{cuenta_id}.json")
+    if not os.path.exists(ruta):
+        return None
+    from parsers.mayor_xlsx import AsientoMayor
+    with open(ruta, encoding="utf-8") as f:
+        filas = json.load(f)
+    asientos = [AsientoMayor(
+        id=f"DEMO#{i}", hoja=d.get("hoja", "E"), asiento=d.get("asiento"),
+        fecha=date.fromisoformat(d["fecha"]) if d.get("fecha") else None,
+        referencia=d.get("referencia") or "", comentario=d.get("comentario") or "",
+        debe=float(d.get("debe") or 0.0), haber=float(d.get("haber") or 0.0),
+    ) for i, d in enumerate(filas, 1)]
+    fechas = [a.fecha for a in asientos if a.fecha]
+    return {"asientos": asientos, "desde": min(fechas) if fechas else None,
+            "hasta": max(fechas) if fechas else None}
+
 
 LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
 LISTAS_MAYOR = ["e_sin_banco", "o_pendientes_sin_banco"]
@@ -581,12 +608,18 @@ def _agregar_a_staging(stag: dict, nombre: str, info: dict, cuentas: list[dict])
 
 @app.post("/api/diario/identificar")
 async def api_diario_identificar(archivos: list[UploadFile] = File(...),
-                                 marca: str = "", staging: str = ""):
+                                 marca: str = "", staging: str = "",
+                                 demo: int = 0):
     """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
     deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
     identificación solo asigna cuentas de esa marca; con ?staging= los
     archivos se suman a una identificación previa (p. ej. al mayor ya traído
-    del FBS por SQL) en vez de empezar de cero."""
+    del FBS por SQL) en vez de empezar de cero.
+
+    Con ?demo=1 (solo si DEMO_MODE) no hace falta subir también el mayor: por
+    cada cuenta detectada en los extractos se busca un fixture sembrado
+    (datos/demo/<cuenta_id>.json) y se agrega a la conciliación como si se
+    hubiera dropeado también ese archivo — sin listarlo en la respuesta."""
     staging_id, stag = _staging_destino(staging, marca)
     cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
                                         stag.get("marca") or marca)
@@ -594,7 +627,33 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
         data = await up.read()
         info = diarios.identificar(up.filename, data)
         _agregar_a_staging(stag, up.filename, info, cuentas)
-    return {"staging_id": staging_id, "archivos": stag["resumen"],
+
+    if DEMO_MODE and demo:
+        vistos = set()
+        for fila in list(stag["resumen"]):
+            cid = fila.get("cuenta_id")
+            if fila["tipo"] != "extracto" or not cid or cid in vistos:
+                continue
+            vistos.add(cid)
+            mayor = _cargar_mayor_demo(cid)
+            if not mayor:
+                continue
+            nombre_sint = f"__demo_mayor__{cid}"
+            stag["archivos"][nombre_sint] = {"tipo": "fbs",
+                                             "asientos": mayor["asientos"]}
+            stag["resumen"] = [f for f in stag["resumen"]
+                               if f["archivo"] != nombre_sint]
+            stag["resumen"].append({
+                "archivo": nombre_sint, "tipo": "fbs", "sintetico": True,
+                "cantidad": len(mayor["asientos"]),
+                "desde": mayor["desde"].isoformat() if mayor["desde"] else None,
+                "hasta": mayor["hasta"].isoformat() if mayor["hasta"] else None,
+                "cuenta_id": cid, "error": None,
+            })
+
+    # la fila sintética del mayor demo no se muestra: solo lo dropeado real
+    visibles = [f for f in stag["resumen"] if not f.get("sintetico")]
+    return {"staging_id": staging_id, "archivos": visibles,
             "marca": stag.get("marca")}
 
 
@@ -973,37 +1032,47 @@ def _procesar_confirmaciones(prev, g):
     if not esperando or not g["e"]:
         return [], esperando, 0
 
-    movs = []
-    for i, ent in enumerate(esperando):
-        m = _reconstruir_mov(dict(ent["banco"]), i)
-        m.id = f"C#{i}"
-        m.archivo = ent["banco"].get("archivo") or ""
-        movs.append(m)
-    matches, _, e_restante = matcher_mod._match_pases(movs, g["e"])
-    g["e"][:] = e_restante
+    # La confirmación es ESTRICTA: en el FES, confirmar una orden replica en
+    # la cuenta E la referencia, el importe y el lado del asiento O original.
+    # Solo eso cuenta como confirmación — nada de "importe único" ni fechas
+    # cercanas, que confirmaban contra asientos ajenos del mismo importe
+    # (p. ej. una pata de una transferencia interna) y los consumían para
+    # siempre vía la memoria de conciliados.
+    def _claves(aso_ref, aso_com):
+        rm = matcher_mod._clave_rm(aso_com or "")
+        ref = (aso_ref or "").strip().upper()
+        return {c for c in (rm, ref) if c}
 
     confirmados, idx_conf, canceladas = [], set(), 0
-    for mt in matches:
-        i = int(mt["banco"].id[2:])
+    usados_e = set()
+    for i, ent in enumerate(esperando):
+        aso = ent.get("asiento") or {}
+        claves_o = _claves(aso.get("referencia"), aso.get("comentario"))
+        if not claves_o:
+            continue      # sin referencia no hay confirmación automática
+        importe = round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2)
+        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
+        econf = next(
+            (a for a in g["e"]
+             if a.id not in usados_e and a.lado == lado_original
+             and round(a.importe, 2) == importe
+             and _claves(a.referencia, a.comentario) & claves_o), None)
+        if econf is None:
+            continue
+        usados_e.add(econf.id)
         idx_conf.add(i)
-        ent = esperando[i]
         confirmados.append({
-            "banco": ent["banco"], "asiento": mt["asiento"].to_dict(),
+            "banco": ent["banco"], "asiento": econf.to_dict(),
             "metodo": "confirmado en E (venía conciliado contra O)",
         })
         # la confirmación genera una contrapartida en O: cancelarla del pool
-        aso = ent.get("asiento") or {}
-        clave = (matcher_mod._clave_rm(aso.get("comentario") or "")
-                 or (aso.get("referencia") or "").strip().upper(),
-                 round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2))
-        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
         for j, a in enumerate(g["o"]):
-            clave_a = (matcher_mod._clave_rm(a.comentario) or a.referencia.strip().upper(),
-                       round(a.importe, 2))
-            if clave_a == clave and a.lado != lado_original:
+            if (a.lado != lado_original and round(a.importe, 2) == importe
+                    and _claves(a.referencia, a.comentario) & claves_o):
                 del g["o"][j]
                 canceladas += 1
                 break
+    g["e"][:] = [a for a in g["e"] if a.id not in usados_e]
 
     pendientes = []
     for i, ent in enumerate(esperando):
@@ -1802,6 +1871,54 @@ def _generar_excel(datos):
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+@app.get("/api/demo/estado")
+def api_demo_estado():
+    return {"demo": DEMO_MODE}
+
+
+@app.get("/api/demo/kit")
+def api_demo_kit():
+    if not DEMO_MODE:
+        return JSONResponse(status_code=404, content={"error": "No disponible"})
+    kit_dir = os.path.join(BASE_DIR, "static", "kit-demo")
+    archivos = sorted(f for f in os.listdir(kit_dir) if f.lower().endswith((".csv", ".xlsx")))
+    return {"archivos": archivos}
+
+
+_ID_JOB_RE = re.compile(r"^[0-9a-f]{12}\.json$")
+_ID_GRUPO_RE = re.compile(r"^grupo_[0-9a-f]{10}\.json$")
+
+
+@app.post("/api/demo/reset")
+def api_demo_reset():
+    """Limpia el estado acumulado de la demo (ROD-10 "09"): lo que haya en
+    memoria (movimientos/asientos ya consumidos), el arrastre entre corridas,
+    y el historial de conciliaciones (jobs y grupos) — sin esto, repetir el
+    mismo archivo del kit lo mostraba como "ya conciliado" en vez de correrlo
+    de nuevo. Los fixtures de datos/demo/ y los archivos de static/kit-demo/
+    no se tocan (son los mismos en cada demo); para refrescar sus fechas
+    correr scripts/generar_kit_demo.py."""
+    if not DEMO_MODE:
+        return JSONResponse(status_code=404, content={"error": "No disponible"})
+    STAGING.clear()
+    RESULTADOS.clear()
+    for ruta in (RUTA_ARRASTRE, RUTA_MEMORIA):
+        if os.path.exists(ruta):
+            os.remove(ruta)
+    for nombre in os.listdir(DATOS_DIR):
+        if _ID_JOB_RE.match(nombre) or _ID_GRUPO_RE.match(nombre):
+            os.remove(os.path.join(DATOS_DIR, nombre))
+    return {"ok": True}
+
+
+if DEMO_MODE:
+    @app.middleware("http")
+    async def _demo_no_index(request, call_next):
+        resp = await call_next(request)
+        resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return resp
 
 
 @app.get("/diario")
