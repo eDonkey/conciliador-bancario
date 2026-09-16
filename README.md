@@ -1,64 +1,55 @@
 # Conciliador bancario
 
-Sistema web para conciliar extractos de **Banco Santander** (PDF) contra el
-libro mayor del sistema contable **FES** (Excel con las cuentas **E** y **O**).
+Aplicación web que cruza los extractos bancarios del grupo Orbis / Nave contra el libro mayor del FBS, su sistema de gestión, y clasifica lo que no cruza. La usa la administración del grupo, por marca. Es parte de Orbit.
 
-## Cómo funciona
+Cada comando de este archivo se probó en un clon limpio el 2026-09-16, con Python 3.13 en un entorno virtual: la instalación completó y `python app.py` respondió 200 en `/` y en `/diario`.
 
-El sistema contable registra los movimientos así:
+El servicio de producción no pide ninguna credencial: la clave de acceso se quitó el 2026-07-29 y no se reemplazó [`6803948`; `docs/decisiones/0006-quitar-la-clave-de-acceso.md`].
 
-- **Cuenta O (operativa/transitoria):** las órdenes de pago y recibos entran acá
-  por defecto. Son movimientos *pendientes de confirmación*.
-- **Cuenta E:** al confirmar el ingreso/egreso, se hace la contrapartida en la O
-  y el asiento pasa a la E. La cuenta E debería coincidir con el extracto.
+## El modelo contable, en cinco líneas
 
-La conciliación automática hace:
+El FBS registra cada movimiento en dos cuentas. La O es la operativa: órdenes de pago y recibos entran ahí, pendientes de confirmación. Al confirmarse se hace la contrapartida en la O y el asiento pasa a la E, que debería reflejar el extracto. Conciliar es cruzar el extracto contra la E; lo que no está en la E se busca en la O pendiente [`README.md:8-26`; `engine/matcher.py:4-13`].
 
-1. **Parsea los PDFs** del extracto (débito/crédito se valida con la aritmética
-   de saldos, por lo que es a prueba de errores de lectura).
-2. **Parsea el Excel** del mayor (hojas "… E" y "… O").
-3. **Netea la cuenta O**: cancela los pares asiento + contrapartida (movimientos
-   ya confirmados) y deja solo los pendientes.
-4. **Concilia extracto vs cuenta E** en tres pases: importe + número de
-   referencia compartido → importe único → importe + fecha más cercana.
-   (Convención: crédito del banco ↔ Debe del mayor.)
-5. Lo que no está en E lo **busca en la O pendiente** → esos movimientos están
-   en el banco pero falta confirmarlos en el FES.
-6. Clasifica el resto: **gastos/impuestos bancarios** (comisiones, IVA, SIRCREB,
-   ley 25.413…) vs **movimientos sin contabilizar**.
-   Los gastos además se **agrupan por período en la nota de débito mensual**,
-   replicando el criterio contable: comisiones gravadas al 21% con su IVA,
-   intereses sobre saldo deudor al 10,5% con su IVA, y los conceptos no
-   gravados (ley 25.413, SIRCREB, percepciones IIBB). El sistema detecta el
-   asiento "GASTOS BANCARIOS" del mayor de cada mes (y las NC de impuestos),
-   compara los totales y muestra la diferencia, con control de que el IVA
-   cobrado coincida con el calculado sobre la base gravada.
-7. **(Opcional) IA:** los casos que quedan sin resolver se mandan a Claude, que
-   sugiere emparejamientos difíciles (combinaciones N-a-1, diferencias por
-   comisión, coincidencia de beneficiario/CUIT) con nivel de confianza y motivo.
-   Cada sugerencia se puede **aceptar con un clic**.
-8. **Conciliación manual:** la pestaña "✋ Conciliar manualmente" muestra los
-   residuales del banco y del mayor en dos paneles con filtros. Seleccionás
-   ítems de cada lado (soporta N contra M), ves la suma y la diferencia en
-   vivo, y conciliás el grupo. Al seleccionar un solo ítem, el otro panel se
-   reordena por cercanía de importe para encontrar la contrapartida rápido.
-   Todo se puede deshacer, queda guardado en disco y sale en el Excel.
-9. **Aprendizaje:** cada conciliación manual (o sugerencia de IA aceptada)
-   genera una regla en `datos/reglas_aprendidas.json` — la "firma" del concepto
-   bancario y la del asiento. En las próximas conciliaciones, los pares que
-   cumplan una regla (con importes que cierren, incluso grupos por día que
-   suman igual) se concilian solos con método "regla aprendida". Deshacer un
-   match debilita/elimina la regla.
+## Los dos modos
 
-## Uso
+**Mensual** (`/`). Se suben los extractos del período y el Excel del mayor, y se concilia de una vez. Acepta los formatos PDF, XLS, XLSX y CSV de cinco bancos (Santander, BBVA, Galicia, Macro, Ciudad) [`f53f7e8`].
 
-En Windows:
+**Diario multibanco** (`/diario`). Un tablero por cuenta bancaria. Lo que queda pendiente un día se arrastra al siguiente, la memoria evita que un movimiento se consuma dos veces, y el ciclo O→E confirma contra el mayor de hoy lo que ayer cruzó contra la O [`efee321`; `app.py:851-920`].
+
+## Las dos ramas
+
+`master` es lo que corre en Railway. El mayor entra como archivo exportado del FBS.
+
+`origin/fbs-sql` lee el mayor directo del SQL Server del FBS, con protección de solo lectura en tres capas, y agrega las variables `FBS_SQL_*` y el módulo `engine/fbs_sql.py` [`76f791e`; `1e4a143`]. Tiene 31 commits que no están en `master` y corre on-premise en una máquina Windows del cliente, en el puerto 8766 [`b559d13`]. Antes de tocar cualquiera de las dos, mirá si el cambio ya existe en la otra: cinco arreglos se aplicaron dos veces [`git log --all`]. Ver `docs/decisiones/0001-leer-el-fbs-por-sql-server.md`.
+
+## Stack
+
+| Qué | Versión | Para qué |
+|---|---|---|
+| Python | 3.12 en el `Dockerfile`, 3.11+ según el README anterior | Todo el backend |
+| `fastapi` | `>=0.110` | Servidor y las 34 rutas |
+| `uvicorn` | `>=0.29` | ASGI |
+| `python-multipart` | `>=0.0.9` | Subida de archivos |
+| `pdfplumber` | `>=0.11` | Extracto de Santander en PDF |
+| `openpyxl` | `>=3.1` | Mayor en XLSX, extractos de Galicia y Santander, Excel de salida |
+| `xlrd` | `>=2.0` | XLS binarios de BBVA, Macro y del FBS |
+| `anthropic` | `>=0.90` | `claude-sonnet-5` para sugerencias, `claude-haiku-4-5` para el análisis |
+| `psycopg2-binary` | `>=2.9` | Postgres del hub, solo lectura |
+| `pymssql` y `pyodbc` | `>=2.3` y `>=5.0`, solo en `fbs-sql` | SQL Server del FBS |
+
+No hay lockfile: las ocho líneas de `requirements.txt` usan `>=` [`requirements.txt`].
+
+No hay base de datos propia. El estado son trece archivos JSON de nombre fijo en `datos/`, más uno por corrida y uno por tablero diario. Esa carpeta no está versionada [`app.py:78-82,1111`; `engine/*`; `.gitignore:1-4`].
+
+## Puesta en marcha
+
+Prerequisitos: Python 3.12 o 3.13 (probado con 3.13). En Windows alcanza con el `.bat`.
 
 ```bat
 iniciar.bat
 ```
 
-Manual (cualquier sistema con Python 3.11+):
+En cualquier otro sistema:
 
 ```bash
 pip install -r requirements.txt
@@ -72,65 +63,55 @@ docker build -t conciliador .
 docker run -p 8765:8765 conciliador
 ```
 
-Abre http://localhost:8765 — arrastrá los PDFs del extracto y el Excel del
-mayor, y apretá **Conciliar**. Al final podés **exportar todo a Excel**.
+Variables de entorno. Ninguna es obligatoria para levantar el servicio; cambia qué funciona.
 
-### Deploy en Railway (u otro hosting)
+| Nombre | Para qué | Si falta |
+|---|---|---|
+| `PORT` | Puerto del servidor | Escucha en 8765, en `127.0.0.1` [`app.py:1801`] |
+| `ANTHROPIC_API_KEY` o `ANTHROPIC_AUTH_TOKEN` | Sugerencias y análisis con Claude | La conciliación determinística funciona igual; la IA queda en `sin_credenciales` [`app.py:281-283`] |
+| `DATABASE_URL` | Postgres del hub, de donde salen marcas y cuentas | Usa `datos/cuentas_nave.json` o la semilla del código [`engine/cuentas.py:82-105`] |
+| `DEMO_MODE` | Ambiente de demostración | Las rutas y la interfaz de demostración no existen [`app.py:51`] |
+| `ANALISIS_MAX_DIA` | Tope diario de análisis con IA | Vale 150 [`engine/analisis.py:27`] |
+| `FBS_SQL_SERVIDOR`, `FBS_SQL_PUERTO`, `FBS_SQL_BASE`, `FBS_SQL_USUARIO`, `FBS_SQL_CLAVE`, `FBS_SQL_TDS`, `FBS_SQL_DRIVER` | Conexión al FBS, solo en `fbs-sql` | Sin ellas no hay lectura directa del mayor [`76f791e`] |
 
-1. En [railway.app](https://railway.app): **New Project → Deploy from GitHub repo**
-   → elegir `conciliador-bancario`. Railway detecta el `Dockerfile` solo.
-2. En **Variables** agregar:
-   - `ANTHROPIC_API_KEY` — para las sugerencias con IA (opcional).
-3. En **Settings → Networking → Generate Domain** para obtener la URL pública.
-4. (Opcional) Montar un **Volume** en `/app/datos` para que las conciliaciones
-   guardadas y las reglas aprendidas sobrevivan a los redeploys.
+La credencial de IA también se puede dejar en `datos/anthropic_key.txt`, que el proceso carga al entorno al arrancar [`engine/ai_assist.py:18-33`]. No lo recomendamos: el valor queda en texto plano dentro del volumen.
 
-### Progreso y modo simulación
+## Cómo se corre
 
-El procesamiento corre en segundo plano en el servidor: la interfaz muestra un
-overlay con la fase actual, porcentaje y tiempo estimado restante
-(`GET /api/progreso/<job>`). Si se cierra la pestaña, el proceso sigue y al
-volver a entrar se ofrece retomar el resultado.
+Abrí `http://localhost:8765`. No hay seed ni usuario de prueba. El modo mensual necesita los dos archivos; el diario, al menos un extracto reconocible.
 
-Para probar la interfaz sin gastar API, entrá con **`?simular`** en la URL
-(p.ej. `http://localhost:8765/?simular`): con la casilla de IA activada, genera
-sugerencias de prueba marcadas como SIMULACIÓN, emulando la latencia por tandas.
+Para probar la interfaz sin gastar API, entrá con `?simular` en la URL: genera sugerencias marcadas como SIMULACIÓN, emulando la latencia por tandas [`engine/ai_assist.py:116-151`].
 
-### IA (opcional)
+Con `DEMO_MODE=true` aparece el kit de extractos descargable, el mayor sembrado se inyecta solo y hay un botón para reiniciar la demostración [`README-DEMO.md`].
 
-Para habilitar las sugerencias con IA definí la variable de entorno
-`ANTHROPIC_API_KEY`, o guardá la clave en `datos/anthropic_key.txt` (la carpeta
-`datos/` nunca se sube al repo). Sin credenciales, el sistema funciona igual
-con la conciliación determinística.
+## Tests
 
-```bat
-set ANTHROPIC_API_KEY=sk-ant-...
-iniciar.bat
-```
+No hay. Ni `tests/`, ni pytest, ni CI [`find`; `requirements.txt`]. Lo más cercano es el `RESULTADOS_ESPERADOS.md` que genera el kit de demostración, verificado a mano una vez y con la advertencia escrita de que re-correrlo no revalida nada [`scripts/generar_kit_demo.py:217-220`].
 
-## Estructura
+Sin cobertura quedan los parsers binarios, el ciclo O→E, la memoria, el arrastre, la nota de débito y el Excel.
 
-```
-conciliador/
-├── app.py                  # servidor FastAPI + export a Excel
-├── parsers/
-│   ├── santander_pdf.py    # parser del extracto PDF
-│   └── mayor_xlsx.py       # parser del mayor (hojas E y O)
-├── engine/
-│   ├── matcher.py          # motor de conciliación determinística
-│   └── ai_assist.py        # sugerencias con Claude (claude-opus-5)
-└── static/index.html       # interfaz web
-```
+## Deploy
 
-## Resultado
+Producción en Railway, construida desde el `Dockerfile`, que es el único archivo que define el deploy. Hace falta un Volume montado en `/app/datos`: sin eso, cada redeploy borra reglas, equivalencias, memoria, arrastre y conciliaciones [`README.md:85-86`]. El paso a paso está en `docs/operacion.md`.
 
-| Categoría | Significado |
-|---|---|
-| Conciliados (E) | Movimiento del banco con asiento confirmado en la cuenta E |
-| Pendientes de confirmar (O) | Está en el banco y en la O: hay que confirmarlo en el FBS para que pase a la E |
-| Banco sin contabilizar | Está en el extracto pero no aparece ni en E ni en O |
-| Gastos bancarios | Comisiones/impuestos del banco sin asiento individual |
-| Gastos por mes (ND) | Nota de débito mensual: gastos agrupados por categoría impositiva vs el asiento del mayor, con diferencia |
-| Mayor E sin banco | Asiento confirmado que no aparece en el extracto |
-| O pendientes sin banco | Pendiente en la O que tampoco está en el banco |
-| Sugerencias IA | Posibles matches difíciles propuestos por Claude, para revisión humana |
+## Mapa del repo
+
+- `app.py` — 1.803 líneas: rutas, persistencia, ciclo O→E, arrastre, vetos y el Excel de hasta trece hojas.
+- `engine/` — nueve módulos: `matcher.py` (motor y nota de débito), `analisis.py`, `cuentas.py`, `ai_assist.py`, `equivalencias.py`, `reglas.py`, `gastos_conf.py`, `ia_log.py`.
+- `parsers/` — `diarios.py` (multibanco y reportes FBS), `santander_pdf.py`, `mayor_xlsx.py`.
+- `static/` — `index.html` (mensual) y `diario.html` (diario), sin framework.
+- `scripts/` — `generar_kit_demo.py` y, en `fbs-sql`, `migrar_aprendizajes.py`.
+- `datos/` — todo el estado, fuera del control de versiones.
+
+Los cinco archivos donde está la lógica: `app.py`, `engine/matcher.py`, `parsers/diarios.py`, `engine/cuentas.py` y `engine/analisis.py`.
+
+## Documentación
+
+- `docs/arquitectura.md`
+- `docs/operacion.md`
+- `docs/modelo-de-datos.md`
+- `docs/decisiones/`
+- `CHANGELOG.md`
+- `README-DEMO.md`, sobre el ambiente de demostración
+
+No hay `docs/api.md`: las rutas `/api` son el backend de las dos páginas del propio repo y no tienen consumidores externos.
