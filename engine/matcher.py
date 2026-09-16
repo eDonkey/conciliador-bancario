@@ -361,7 +361,7 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
 
 
 def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
-              equivalencias=None, terminos_gasto=None):
+              equivalencias=None, terminos_gasto=None, excepciones_gasto=None):
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
     from engine import reglas as reglas_mod
     from engine import equivalencias as eq_mod
@@ -414,12 +414,16 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
         forzado = getattr(m, "_forzar_gasto", None)
-        if forzado is True or (forzado is None and (
-                GASTO_RE.search(m.descripcion)
-                or gastos_conf.es_gasto(m.descripcion, terminos_gasto))):
-            gastos_bancarios.append(m)
+        if forzado is not None:
+            # decisión manual sobre ESTE movimiento: pisa todo
+            es_gasto = forzado
+        elif gastos_conf.es_gasto(m.descripcion, excepciones_gasto):
+            # concepto aprendido como "nunca es gasto": pisa a los detectores
+            es_gasto = False
         else:
-            sin_contabilizar.append(m)
+            es_gasto = bool(GASTO_RE.search(m.descripcion)
+                            or gastos_conf.es_gasto(m.descripcion, terminos_gasto))
+        (gastos_bancarios if es_gasto else sin_contabilizar).append(m)
 
     # 4) nota de débito mensual: agrupar gastos por período y cruzar contra
     #    los asientos "GASTOS BANCARIOS" del mayor

@@ -68,3 +68,23 @@ def eliminar(term_id: str, ruta: str = RUTA_DEFAULT) -> list[dict]:
 
 def es_gasto(descripcion: str, terminos: list[dict]) -> bool:
     return any(contiene(descripcion, t["termino"]) for t in terminos or [])
+
+
+# --- Excepciones: conceptos que NUNCA son gasto bancario --------------------
+# El detector de fábrica (o un término del usuario) puede clasificar de más;
+# al transferir un movimiento fuera de Gastos se puede aprender el concepto
+# como excepción, y ningún movimiento parecido vuelve a caer ahí.
+RUTA_EXCEPCIONES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "datos", "gastos_excepciones.json")
+
+
+def cargar_excepciones(ruta: str = RUTA_EXCEPCIONES) -> list[dict]:
+    return cargar(ruta)
+
+
+def agregar_excepcion(texto: str, ruta: str = RUTA_EXCEPCIONES):
+    return agregar(texto, ruta)
+
+
+def eliminar_excepcion(term_id: str, ruta: str = RUTA_EXCEPCIONES) -> list[dict]:
+    return eliminar(term_id, ruta)
