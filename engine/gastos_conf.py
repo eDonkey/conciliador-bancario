@@ -20,9 +20,15 @@ RUTA_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fi
 
 
 def limpiar_termino(texto: str) -> str:
-    """Concepto sin números/signos: 'Percep perc rg 5617 30%' -> 'percep perc rg'."""
-    t = re.sub(r'[\d$.,/%-]+', ' ', (texto or '').lower())
-    return ' '.join(t.split())
+    """Concepto sin números: los tokens que contienen dígitos se descartan
+    ENTEROS. 'Percep perc rg 5617 30%' -> 'percep perc rg';
+    'REG REC SIRC 28/08/26 00014Q' -> 'reg rec sirc'.
+    (Antes solo se borraban los dígitos y un comprobante como '00014Q' dejaba
+    una 'q' suelta que hacía que el término no matcheara nada.)"""
+    tokens = (texto or '').lower().split()
+    limpios = [re.sub(r'[$.,/%-]+', '', t) for t in tokens
+               if not re.search(r'\d', t)]
+    return ' '.join(t for t in limpios if t)
 
 
 def cargar(ruta: str = RUTA_DEFAULT) -> list[dict]:

@@ -1414,7 +1414,9 @@ def api_gastos_agregar(cuerpo: dict = Body(...)):
     """Agrega un concepto de gasto. Si viene job_id, además reclasifica en ese
     resultado los movimientos de 'banco sin contabilizar' que lo contengan."""
     terminos, error = gastos_conf.agregar(cuerpo.get("termino"))
-    if error:
+    # un término ya registrado no es un error fatal: se re-aplica igual al job
+    # (típico reintento del usuario cuando el primer clic no movió nada)
+    if error and "ya está registrado" not in error:
         return JSONResponse(status_code=422, content={"error": error})
 
     datos, movidos = None, 0
