@@ -17,8 +17,11 @@ for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8766 " ^| findstr LISTENING
 echo Instalando dependencias (solo la primera vez tarda)...
 python -m pip install -r requirements.txt --quiet
 
-set PORT=8766
 echo.
 echo Conciliador (rama fbs-sql) en http://%COMPUTERNAME%:8766/diario
+echo Con AUTORECARGA: despues de un "git pull" el server se recarga solo
+echo (solo si el pull trae dependencias nuevas hay que volver a correr este .bat).
 start "" http://localhost:8766/diario
-python app.py
+rem --reload vigila solo los .py (los json de datos/ no disparan recargas).
+rem Ojo: --reload-exclude con globs no sirve en Windows (Click los expande).
+python -m uvicorn app:app --host 0.0.0.0 --port 8766 --reload
