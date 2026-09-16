@@ -21,7 +21,9 @@ from collections import defaultdict
 # "cooperatIVA de seguros" y "com " matchea "teleCOM" (pasó con pagos a
 # proveedores reales que cayeron como gastos).
 GASTO_RE = re.compile(
-    r'comision|(?<![a-z])iva(?![a-z])|impuesto|sircreb|percepcion|iibb|'
+    # (?<![a-z])sirc cubre "SIRCREB" (Santander) y el abreviado "REG REC SIRC"
+    # del BBVA/Francés
+    r'comision|(?<![a-z])iva(?![a-z])|impuesto|(?<![a-z])sirc|percepcion|iibb|'
     r'ley ?2[57]\.?[47]?\d*|mantenimiento|sellados|intereses|(?<![a-z])com\.? ',
     re.IGNORECASE,
 )
