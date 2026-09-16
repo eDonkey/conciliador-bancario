@@ -1769,6 +1769,16 @@ if DEMO_MODE:
         resp.headers["X-Robots-Tag"] = "noindex, nofollow"
         return resp
 
+    # el kit de demo (extractos de ejemplo + fixtures del mayor) es material
+    # GENERADO: no vive en el repo. Se regenera en cada arranque, lo que
+    # además mantiene las fechas de la demo siempre frescas.
+    try:
+        import runpy
+        runpy.run_path(os.path.join(BASE_DIR, "scripts", "generar_kit_demo.py"),
+                       run_name="__main__")
+    except Exception as exc:  # noqa: BLE001 — la demo degrada, no rompe
+        print(f"[demo] No pude generar el kit de demo: {exc}")
+
 
 @app.get("/diario")
 def pagina_diario():

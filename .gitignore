@@ -13,5 +13,9 @@ venv/
 .env
 *.xlsx
 *.pdf
+
+# Kit de demo: material GENERADO por scripts/generar_kit_demo.py
+# (se regenera solo al arrancar con DEMO_MODE)
+static/kit-demo/
 # excepto el kit de demo (datos ficticios, se commitean)
 !static/kit-demo/*.xlsx

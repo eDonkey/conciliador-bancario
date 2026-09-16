@@ -2,7 +2,7 @@
  {
   "hoja": "E",
   "asiento": 4001,
-  "fecha": "2026-09-05",
+  "fecha": "2026-09-06",
   "referencia": "TR301",
   "comentario": "Transferencia recibida Cliente C",
   "debe": 300000.0,
@@ -11,7 +11,7 @@
  {
   "hoja": "E",
   "asiento": 4002,
-  "fecha": "2026-09-06",
+  "fecha": "2026-09-07",
   "referencia": "PG410",
   "comentario": "Pago proveedor Lubricantes SA",
   "debe": 0.0,
@@ -20,7 +20,7 @@
  {
   "hoja": "E",
   "asiento": 4003,
-  "fecha": "2026-09-09",
+  "fecha": "2026-09-10",
   "referencia": "CB512",
   "comentario": "Cobranza Cliente D",
   "debe": 45000.0,
@@ -29,7 +29,7 @@
  {
   "hoja": "E",
   "asiento": 4004,
-  "fecha": "2026-09-12",
+  "fecha": "2026-09-13",
   "referencia": "PG413",
   "comentario": "Pago servicios",
   "debe": 0.0,

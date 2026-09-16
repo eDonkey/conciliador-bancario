@@ -42,11 +42,12 @@ formas distintas:
   "Consulta del Mayor" real (hojas "Cuenta E"/"Cuenta O"), para subirlo a
   mano en el conciliador mensual.
 
-Las fechas son relativas a hoy: volvé a correrlo si la demo se ve vieja (por
-ejemplo, desde un cron o al arrancar el servicio — todavía no está
-automatizado, es un paso manual). El resultado esperado de cada archivo del
-kit está documentado y **verificado a mano** (en ambos modos) en
-`static/kit-demo/RESULTADOS_ESPERADOS.md`.
+**No hace falta correrlo a mano**: al arrancar con `DEMO_MODE=true` el
+servicio regenera el kit solo, con fechas relativas a hoy (así la demo nunca
+se ve vieja). Por lo mismo, los archivos del kit y los fixtures **no viven en
+el repo** (están gitignoreados): son material generado. El resultado esperado
+de cada archivo queda documentado en el
+`static/kit-demo/RESULTADOS_ESPERADOS.md` generado.
 
 **Las cuentas acá (banco/número/moneda) tienen que coincidir exactamente con
 las que siembra `hub-grupo/scripts/seed-demo.js`** — son las dos mitades del

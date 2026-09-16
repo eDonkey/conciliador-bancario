@@ -2,7 +2,7 @@
  {
   "hoja": "E",
   "asiento": 4001,
-  "fecha": "2026-09-01",
+  "fecha": "2026-09-02",
   "referencia": "TR001",
   "comentario": "Transferencia recibida Cliente A",
   "debe": 500000.0,
@@ -11,7 +11,7 @@
  {
   "hoja": "E",
   "asiento": 4002,
-  "fecha": "2026-09-03",
+  "fecha": "2026-09-04",
   "referencia": "PG204",
   "comentario": "Pago proveedor Repuestos SA",
   "debe": 0.0,
@@ -20,7 +20,7 @@
  {
   "hoja": "E",
   "asiento": 4003,
-  "fecha": "2026-09-05",
+  "fecha": "2026-09-06",
   "referencia": "CB077",
   "comentario": "Cobranza Cliente B",
   "debe": 85000.0,
@@ -29,7 +29,7 @@
  {
   "hoja": "E",
   "asiento": 4004,
-  "fecha": "2026-09-07",
+  "fecha": "2026-09-08",
   "referencia": "PG205",
   "comentario": "Pago proveedor Insumos XYZ",
   "debe": 0.0,
@@ -38,7 +38,7 @@
  {
   "hoja": "E",
   "asiento": 4006,
-  "fecha": "2026-08-26",
+  "fecha": "2026-08-27",
   "referencia": "CHQ456123",
   "comentario": "Cheque Nro 00456123",
   "debe": 0.0,
