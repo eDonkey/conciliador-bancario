@@ -467,6 +467,11 @@
       <button class="mini" id="gasAgregar">Agregar</button>
     </div>
     <div id="gasError"></div>
+    <h3 style="margin-top:18px;">Excepciones — nunca son gasto</h3>
+    <p class="exp">Conceptos que el detector clasificaba como gasto y ustedes marcaron
+      que no lo son (desde el botón "Transferir" de la solapa Gastos bancarios).
+      Ningún movimiento parecido vuelve a caer en Gastos.</p>
+    <div class="eq-lista" id="excLista"></div>
     <div style="text-align:right; margin-top:6px;">
       <button class="secundario" id="gasCerrar">Cerrar</button>
     </div>
@@ -480,6 +485,11 @@
     <div id="trDestinos" style="margin:14px 0; display:flex; flex-direction:column; gap:8px; font-size:13.5px;"></div>
     <textarea id="trMotivo" rows="2" placeholder="¿Por qué va ahí? (queda registrado y las próximas corridas lo respetan)"
       style="width:100%; font-family:inherit; font-size:13px; background:rgba(255,255,255,0.05); color:var(--texto); border:1px solid var(--border); border-radius:10px; padding:9px 12px; resize:vertical;"></textarea>
+    <label id="trAprenderBox" style="display:none; gap:8px; align-items:flex-start; margin-top:10px; font-size:12.5px; cursor:pointer;">
+      <input type="checkbox" id="trAprender" style="margin-top:2px;">
+      <span>Además, aprender el concepto: <b>nunca</b> clasificar como gasto bancario
+        los movimientos parecidos (<span id="trConcepto" style="color:var(--texto2)"></span>) —
+        vale para todas las conciliaciones futuras.</span></label>
     <div id="trError" style="color:var(--rojo); font-size:12.5px; margin-top:8px;"></div>
     <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
       <button class="secundario" id="trCerrar">Cancelar</button>
@@ -931,6 +941,13 @@ window.abrirTransfer = bancoId => {
       Transferir a <b>${NOMBRES_CLASIF[k]}</b></label>`).join('');
   $('#trMotivo').value = '';
   $('#trError').textContent = '';
+  // saliendo de Gastos se puede aprender el concepto como "nunca es gasto"
+  const concepto = (m.descripcion || '').toLowerCase().split(/\s+/)
+    .filter(t => !/\d/.test(t)).join(' ').trim();
+  $('#trAprenderBox').style.display =
+    (actual === 'gastos_bancarios' && concepto.length >= 4) ? 'flex' : 'none';
+  $('#trAprender').checked = false;
+  $('#trConcepto').textContent = `"${concepto}"`;
   $('#modalTransfer').classList.remove('oculto');
   $('#trMotivo').focus();
 };
@@ -942,12 +959,14 @@ $('#trGuardar').addEventListener('click', async () => {
   try {
     const resp = await fetch(`/api/reclasificar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ banco_id: transferId, destino, motivo }),
+      body: JSON.stringify({ banco_id: transferId, destino, motivo,
+                             aprender_concepto: $('#trAprender').checked }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
     $('#modalTransfer').classList.add('oculto');
+    if (json.excepcion_aprendida) cargarGastos();   // refresca la lista de excepciones
     refrescarTrasManual(tabActiva);
   } catch (err) { $('#trError').textContent = err.message; }
 });
@@ -1541,6 +1560,8 @@ window.eliminarEquiv = async id => {
 /* ============ gastos bancarios configurables ============ */
 let gastosConf = [];
 
+let gastosExc = [];
+
 function pintarGastos() {
   $('#btnGastos').textContent = `Gastos (${gastosConf.length})`;
   $('#gasLista').innerHTML = gastosConf.map(t => `
@@ -1549,12 +1570,28 @@ function pintarGastos() {
       <button class="quitar" title="Eliminar" onclick="eliminarGasto('${esc(t.id)}')">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:13px;">Todavía no cargaron conceptos propios. También podés usar el botón "→ gasto" en la solapa "Banco sin contabilizar".</p>';
+  $('#excLista').innerHTML = gastosExc.map(t => `
+    <div class="eq-fila">
+      <span class="lado-eq"><b>${esc(t.termino)}</b><small>nunca se clasifica como gasto bancario</small></span>
+      <button class="quitar" title="Eliminar la excepción" onclick="eliminarExcepcion('${esc(t.id)}')">×</button>
+    </div>`).join('') ||
+    '<p style="color:var(--texto2);font-size:13px;">Sin excepciones todavía.</p>';
 }
+
+window.eliminarExcepcion = async id => {
+  try {
+    const r = await fetch(`/api/gastos/excepciones/${id}`, { method: 'DELETE' });
+    gastosExc = (await r.json()).excepciones || [];
+    pintarGastos();
+  } catch {}
+};
 
 async function cargarGastos() {
   try {
     const r = await fetch('/api/gastos');
-    gastosConf = (await r.json()).gastos || [];
+    const j = await r.json();
+    gastosConf = j.gastos || [];
+    gastosExc = j.excepciones || [];
     pintarGastos();
   } catch {}
 }

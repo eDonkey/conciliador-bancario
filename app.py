@@ -270,7 +270,8 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
                               mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias,
-                              terminos_gasto=terminos_gasto)
+                              terminos_gasto=terminos_gasto,
+                              excepciones_gasto=gastos_conf.cargar_excepciones())
 
         # --- IA (real o simulada) sobre los residuales --------------------
         ia_sugerencias, ia_estado = [], "desactivada"
@@ -1044,7 +1045,8 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             continue
         _forzar_gastos_movs(movs)
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias, terminos_gasto=terminos_gasto)
+                              equivalencias=equivalencias, terminos_gasto=terminos_gasto,
+                              excepciones_gasto=gastos_conf.cargar_excepciones())
         # período cubierto por los extractos de HOY (sin contar los arrastrados,
         # que traen fechas de días anteriores)
         fechas = [m.fecha for m in movs if m.fecha and m.id.startswith("B#")]
@@ -1221,8 +1223,17 @@ def api_diario_eliminar(grupo_id: str):
 
 @app.get("/api/gastos")
 def api_gastos():
-    """Conceptos definidos por el usuario que se clasifican como gasto bancario."""
-    return {"gastos": gastos_conf.cargar()}
+    """Conceptos definidos por el usuario que se clasifican como gasto
+    bancario, y excepciones (conceptos que NUNCA lo son)."""
+    return {"gastos": gastos_conf.cargar(),
+            "excepciones": gastos_conf.cargar_excepciones()}
+
+
+@app.delete("/api/gastos/excepciones/{exc_id}")
+def api_gastos_excepcion_eliminar(exc_id: str):
+    """(Declarada antes que /api/gastos/{term_id} para que 'excepciones' no
+    se interprete como un id de término.)"""
+    return {"excepciones": gastos_conf.eliminar_excepcion(exc_id)}
 
 
 @app.post("/api/gastos")
@@ -1458,11 +1469,31 @@ def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
                   "fecha": date.today().isoformat(), "job": job_id})
     _guardar_reclas(items)
 
+    # "que quede grabado que este CONCEPTO nunca es gasto": al sacarlo de
+    # gastos se puede aprender la excepción, que vale para movimientos
+    # parecidos en TODAS las corridas futuras (no solo este movimiento)
+    excepcion_aprendida = None
+    if cuerpo.get("aprender_concepto") and destino != "gastos_bancarios":
+        _, err = gastos_conf.agregar_excepcion(mov.get("descripcion"))
+        if err and "ya está registrado" not in err:
+            return JSONResponse(status_code=422, content={"error": err})
+        excepcion_aprendida = gastos_conf.limpiar_termino(mov.get("descripcion"))
+        # mover ya mismo los demás gastos de este resultado que la contengan
+        parecidos = [m for m in datos["gastos_bancarios"]
+                     if gastos_conf.es_gasto(m.get("descripcion"),
+                                             [{"termino": excepcion_aprendida}])]
+        if parecidos:
+            ids = {m["id"] for m in parecidos}
+            datos["gastos_bancarios"] = [m for m in datos["gastos_bancarios"]
+                                         if m["id"] not in ids]
+            datos["banco_sin_contabilizar"].extend(parecidos)
+            datos["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
+
     _recalcular_resumen(datos)
     _guardar(job_id)
     # los totales de la ND mensual de ESTE resultado no se rearman acá;
     # quedan bien en la próxima corrida (el matcher ya respeta la decisión)
-    return datos
+    return {**datos, "excepcion_aprendida": excepcion_aprendida}
 
 
 @app.post("/api/anular/{job_id}")
