@@ -40,15 +40,20 @@ NUM_RE = re.compile(r'\d{5,}')
 CATEGORIAS_GASTO = [
     ("IVA 10,5%", re.compile(r'iva\s*10[.,]?5', re.I)),
     ("IVA 21%", re.compile(r'iva', re.I)),
-    ("Impuesto ley 25.413", re.compile(r'ley\s*25\.?413', re.I)),
-    ("SIRCREB", re.compile(r'sircreb', re.I)),
-    ("Percepciones IIBB", re.compile(r'iibb|percepcion', re.I)),
-    ("Intereses saldo deudor (grav. 10,5%)", re.compile(r'inter[eé]s', re.I)),
-    ("Comisiones (grav. 21%)", re.compile(r'comision|mantenimiento|sellado|com\.? ', re.I)),
+    ("Impuesto ley 25.413", re.compile(r'ley\s*25\.?413|(?<!\d)25\.?413(?!\d)', re.I)),
+    ("SIRCREB", re.compile(r'(?<![a-z])sirc', re.I)),
+    ("Percepciones IIBB", re.compile(r'iibb|percep', re.I)),   # "percep" abreviado incluido
 ]
+# comisiones e intereses pueden estar gravados al 21% o al 10,5% (feedback del
+# cliente): si el concepto trae la alícuota en el texto se respeta; si no, el
+# default histórico (comisiones -> 21%, intereses -> 10,5%)
+COMISION_RE = re.compile(r'comision|mantenimiento|sellado|com\.? ', re.I)
+INTERES_RE = re.compile(r'inter[eé]s|(?<![a-z])inter\.', re.I)
+TASA_105_RE = re.compile(r'10[.,]5')
+TASA_21_RE = re.compile(r'(?<![\d.,])21(?![\d.,])')
 ORDEN_CATEGORIAS = [
-    "Comisiones (grav. 21%)", "IVA 21%",
-    "Intereses saldo deudor (grav. 10,5%)", "IVA 10,5%",
+    "Comisiones (grav. 21%)", "Intereses saldo deudor (grav. 21%)", "IVA 21%",
+    "Comisiones (grav. 10,5%)", "Intereses saldo deudor (grav. 10,5%)", "IVA 10,5%",
     "Impuesto ley 25.413", "SIRCREB", "Percepciones IIBB", "Otros",
 ]
 ND_RE = re.compile(r'gastos?\s*banc', re.I)
@@ -62,9 +67,18 @@ MES_TXT_RE = re.compile(
 
 
 def _categoria_gasto(descripcion: str) -> str:
+    d = descripcion or ""
     for nombre, rx in CATEGORIAS_GASTO:
-        if rx.search(descripcion):
+        if rx.search(d):
             return nombre
+    if INTERES_RE.search(d):
+        if TASA_21_RE.search(d) and not TASA_105_RE.search(d):
+            return "Intereses saldo deudor (grav. 21%)"
+        return "Intereses saldo deudor (grav. 10,5%)"
+    if COMISION_RE.search(d):
+        if TASA_105_RE.search(d):
+            return "Comisiones (grav. 10,5%)"
+        return "Comisiones (grav. 21%)"
     return "Otros"
 
 
