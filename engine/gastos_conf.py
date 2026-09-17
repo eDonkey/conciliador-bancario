@@ -66,8 +66,26 @@ def eliminar(term_id: str, ruta: str = RUTA_DEFAULT) -> list[dict]:
     return terminos
 
 
+def _comparable(texto: str) -> str:
+    """El texto en la MISMA forma que los términos guardados: sin tokens con
+    dígitos y sin signos. Así 'DBCR 25413 S/DB TASA GRAL' se compara como
+    'dbcr sdb tasa gral' y el término aprendido de ese mismo movimiento lo
+    matchea (antes se buscaba el término literal dentro de la descripción
+    original, y el 25413 del medio o la barra de S/DB lo hacían imposible)."""
+    return _norm(limpiar_termino(texto))
+
+
 def es_gasto(descripcion: str, terminos: list[dict]) -> bool:
-    return any(contiene(descripcion, t["termino"]) for t in terminos or [])
+    if not terminos:
+        return False
+    base = " " + _comparable(descripcion) + " "
+    for t in terminos:
+        term = _norm(t.get("termino") or "").strip()
+        # anclado a inicio de palabra; el final admite prefijo ('credit'
+        # matchea 'creditos'), como el matching histórico
+        if term and (" " + term) in base:
+            return True
+    return False
 
 
 # --- Excepciones: conceptos que NUNCA son gasto bancario --------------------
