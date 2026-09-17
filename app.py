@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 
 from fastapi import Body, FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1149,6 +1149,9 @@ def api_diario_historial(marca: str = ""):
             "desde": min(fechas_mov) if fechas_mov else None,
             "hasta": max(fechas_mov) if fechas_mov else None,
             "grupo_id": g.get("grupo_id"), "marca": g.get("marca"),
+            "bancos": sorted({cuentas_mod.BANCOS.get(
+                (c.get("cuenta_id") or "").split("-")[0], "")
+                for c in cuentas if c.get("cuenta_id")} - {""}),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
             "cuentas": len(cuentas), "conciliadas": len(ok),
             "incompletas": len(cuentas) - len(ok),
@@ -1163,6 +1166,74 @@ def api_diario_historial(marca: str = ""):
     for g in grupos:
         g.pop("_orden")
     return {"grupos": grupos}
+
+
+@app.get("/api/diario/{grupo_id}/excel")
+def api_diario_excel(grupo_id: str):
+    """Exporta el tablero de una corrida diaria completo a Excel: resumen por
+    cuenta + listas consolidadas de todas las cuentas (pendientes del banco,
+    haberes, gastos y pendientes del mayor), con la columna Cuenta en cada
+    hoja. El detalle completo de UNA cuenta se sigue exportando desde adentro
+    de esa conciliación."""
+    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
+    if not os.path.exists(ruta):
+        return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
+    with open(ruta, encoding="utf-8") as f:
+        grupo = json.load(f)
+
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tablero"
+    ws.append(["Cuenta", "Estado", "Movimientos", "Conciliados", "Arrastrados",
+               "Pendientes banco", "Pendientes mayor", "% explicado"])
+    hojas = {
+        "Banco sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
+                                   "Detalle", "Débito", "Crédito"],
+        "Haberes sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
+                                     "Detalle", "Débito", "Crédito"],
+        "Gastos bancarios": ["Cuenta", "Fecha", "Comprobante", "Descripción",
+                             "Detalle", "Débito", "Crédito"],
+        "Mayor sin banco": ["Cuenta", "Hoja", "Asiento", "Fecha", "Referencia",
+                            "Comentario", "Debe", "Haber"],
+    }
+    for nombre, headers in hojas.items():
+        wb.create_sheet(nombre).append(headers)
+
+    def fila_mov(etiqueta, m):
+        return [etiqueta, m.get("fecha"), m.get("comprobante"), m.get("descripcion"),
+                m.get("detalle"), m.get("debito") or None, m.get("credito") or None]
+
+    for fila in grupo.get("cuentas", []):
+        etiqueta = fila.get("etiqueta") or fila.get("cuenta_id") or ""
+        r = fila.get("resumen") or {}
+        ws.append([etiqueta, fila.get("estado"),
+                   r.get("movimientos_banco"), r.get("conciliados"),
+                   r.get("arrastrados"), r.get("banco_sin_contabilizar"),
+                   r.get("mayor_sin_banco"), r.get("porcentaje_explicado")])
+        datos = _obtener(fila["job_id"]) if fila.get("job_id") else None
+        if not datos:
+            continue
+        for m in datos.get("banco_sin_contabilizar", []):
+            destino = ("Haberes sin contabilizar" if m.get("es_haberes")
+                       else "Banco sin contabilizar")
+            wb[destino].append(fila_mov(etiqueta, m))
+        for m in datos.get("gastos_bancarios", []):
+            wb["Gastos bancarios"].append(fila_mov(etiqueta, m))
+        for lista in ("e_sin_banco", "o_pendientes_sin_banco"):
+            for a in datos.get(lista, []):
+                wb["Mayor sin banco"].append(
+                    [etiqueta, a.get("hoja"), a.get("asiento"), a.get("fecha"),
+                     a.get("referencia"), a.get("comentario"),
+                     a.get("debe") or None, a.get("haber") or None])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    nombre = f"Conciliacion_diaria_{grupo.get('procesado') or grupo_id}.xlsx"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
 
 
 @app.get("/api/diario/{grupo_id}")

@@ -193,6 +193,8 @@
     <div class="contenedor-tabla"><table id="tablaTablero"><thead></thead><tbody></tbody></table></div>
     <div id="sinAsignar"></div>
     <div class="acciones">
+      <button class="secundario" id="btnExcelTablero"
+        title="Excel con el resumen por cuenta y las listas consolidadas del día (pendientes del banco, haberes, gastos y pendientes del mayor). El detalle completo de una cuenta se exporta desde adentro de esa conciliación.">Exportar a Excel</button>
       <button class="secundario" id="btnCopiarTablero">Copiar link del tablero</button>
       <button class="secundario" onclick="location.href = location.pathname">Nueva conciliación diaria</button>
     </div>
@@ -439,6 +441,10 @@ function pintarTablero() {
   $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
 }
 
+$('#btnExcelTablero').addEventListener('click', () => {
+  if (grupo) location.href = `/api/diario/${grupo.grupo_id}/excel`;
+});
+
 $('#btnCopiarTablero').addEventListener('click', async () => {
   const url = `${location.origin}${conMarca(`${location.pathname}?grupo=${grupo.grupo_id}`)}`;
   try { await navigator.clipboard.writeText(url); } catch { prompt('Copiá el link:', url); return; }
@@ -455,7 +461,7 @@ async function cargarHistorial() {
     $('#histCard').classList.toggle('oculto', !json.grupos.length);
     if (!json.grupos.length) return;
     const actual = grupo && grupo.grupo_id;
-    $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Cuentas</th>
+    $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Bancos</th><th>Cuentas</th>
       <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
       <th title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
       <th title="Movimientos procesados (incluye los arrastrados de días previos)">Movimientos</th>
@@ -469,6 +475,7 @@ async function cargarHistorial() {
           ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${dia(g.desde)}${
             g.hasta && g.hasta !== g.desde ? ' al ' + dia(g.hasta) : ''}</small>` : ''}
           ${g.grupo_id === actual ? ' <span class="chip extracto">este tablero</span>' : ''}</td>
+        <td>${esc((g.bancos || []).join(', '))}</td>
         <td class="num">${g.cuentas}</td>
         <td class="num">${g.conciliadas}</td>
         <td class="num">${g.incompletas || ''}</td>
