@@ -99,6 +99,10 @@
   td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td .metodo { font-size: 10.5px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.35); color: var(--acento); border-radius: 99px; padding: 1px 8px; white-space:nowrap; }
+  /* control de carga en el FBS: la fila queda tachada/pintada, como en Excel */
+  tr.cargado td { background: rgba(52, 211, 153, 0.10); color: var(--texto2); }
+  tr.cargado td:nth-child(3) { text-decoration: line-through; text-decoration-color: rgba(52, 211, 153, 0.7); }
+  td .chip-cargado { font-size: 10.5px; background: rgba(52, 211, 153, 0.14); border: 1px solid rgba(52, 211, 153, 0.45); color: var(--verde); border-radius: 99px; padding: 1px 8px; white-space:nowrap; text-decoration: none; display:inline-block; }
   td .conf-alta { color: var(--verde); font-weight: 600; }
   td .conf-media { color: var(--ambar); font-weight: 600; }
   td .conf-baja { color: var(--texto2); }
@@ -280,6 +284,8 @@
   body.claro button.secundario, body.claro a.secundario { background: #fff; }
   body.claro button.secundario:hover, body.claro a.secundario:hover { background: #eef3fa; }
   body.claro td .metodo { background: rgba(9, 147, 227, 0.09); border-color: rgba(9, 147, 227, 0.35); }
+  body.claro tr.cargado td { background: rgba(15, 157, 109, 0.10); }
+  body.claro td .chip-cargado { background: rgba(15, 157, 109, 0.10); border-color: rgba(15, 157, 109, 0.4); }
   body.claro .aviso.info { background: rgba(9, 147, 227, 0.06); border-color: rgba(9, 147, 227, 0.3); }
   body.claro .aviso.error { background: rgba(214, 69, 80, 0.07); border-color: rgba(214, 69, 80, 0.35); }
   body.claro .ov-barra { background: rgba(15, 23, 52, 0.08); }
@@ -903,6 +909,12 @@ function mostrarResultados() {
       solo para pruebas de la interfaz.</div>`;
   else if (ia.estado.startsWith('error'))
     avisos += `<div class="aviso error">IA: ${esc(ia.estado)}</div>`;
+  const nCargados = datos.resumen.cargados_fbs || 0;
+  if (nCargados)
+    avisos += `<div class="aviso info">Control de carga: <b>${nCargados}</b>
+      movimiento(s) ya marcados como cargados en el FBS (quedan pintados en verde).
+      Los que no marcaste siguen sin pintar — cuando aparezcan en el mayor, cruzan
+      solos y salen de esta lista.</div>`;
   $('#avisos').innerHTML = avisos;
 
   const nHaberes = datos.banco_sin_contabilizar.filter(m => m.es_haberes).length;
@@ -956,6 +968,20 @@ window.confirmarMatch = async (bancoId, valor) => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
     refrescarTrasManual('conciliados_o');
+  } catch (err) { alert(err.message); }
+};
+
+/* marca de control "ya lo cargué en el FBS": pinta la fila, no la mueve */
+window.marcarCargado = async (bancoId, cargado) => {
+  try {
+    const resp = await fetch(`/api/cargado/${datos.job_id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ banco_id: bancoId, cargado }),
+    });
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    datos = json;
+    refrescarTrasManual(tabActiva);
   } catch (err) { alert(err.message); }
 };
 
@@ -1086,10 +1112,20 @@ function pintarTabla() {
     filas = items.map(b => {
       const marca = b.reclasificado
         ? ` <span class="metodo" title="Transferido a mano: ${esc(b.reclasificado)}">reclasificado</span>` : '';
+      const chipCargado = b.cargado_fbs
+        ? ` <span class="chip-cargado" title="Marcado como cargado en el FBS el ${esc(b.cargado_fbs)}">cargado en FBS</span>` : '';
       const f = [b.fecha, b.comprobante,
-        { html: esc(b.descripcion) + marca, texto: b.descripcion }, b.detalle,
+        { html: esc(b.descripcion) + marca + chipCargado, texto: b.descripcion }, b.detalle,
         { num: b.debito }, { num: b.credito }, b.archivo];
-      let botones = `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+      // marca de control del operador: no mueve el movimiento, pinta la fila
+      let botones = b.cargado_fbs
+        ? `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+            title="Quitar la marca: vuelve a figurar como pendiente de cargar"
+            onclick="marcarCargado('${esc(b.id)}', false)">Desmarcar</button>`
+        : `<button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
+            title="Ya cargué este movimiento en el FBS. Queda pintado para el control (sigue en esta solapa hasta que cruce solo en la próxima conciliación)"
+            onclick="marcarCargado('${esc(b.id)}', true)">Cargado</button>`;
+      botones += ` <button class="secundario" style="padding:3px 8px;font-size:11px;white-space:nowrap;"
           title="Cambiar la clasificación de este movimiento, explicando el porqué (las próximas corridas lo respetan)"
           onclick="abrirTransfer('${esc(b.id)}')">Transferir</button>`;
       if (tabActiva === 'banco_sin_contabilizar')
@@ -1097,6 +1133,7 @@ function pintarTabla() {
           title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras (aprende el término, no solo este movimiento)"
           onclick="marcarGasto('${esc(b.descripcion).replace(/'/g, '&#39;')}')">→ gasto</button>`;
       f.push({ html: botones });
+      if (b.cargado_fbs) f._clase = 'cargado';
       return f;
     });
   } else if (tabActiva === 'excluidos') {
@@ -1161,7 +1198,7 @@ function pintarTabla() {
   tbody.innerHTML = filas
     .filter(f => !filtro || f.some(c =>
       String(typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
-    .map(f => '<tr>' + f.map(c => {
+    .map(f => `<tr${f._clase ? ` class="${f._clase}"` : ''}>` + f.map(c => {
       if (c && typeof c === 'object') {
         if ('html' in c) return `<td>${c.html}</td>`;
         return `<td class="num">${c.num ? fmt(c.num) : ''}</td>`;

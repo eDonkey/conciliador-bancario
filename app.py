@@ -116,6 +116,14 @@ def _recalcular_resumen(datos):
             m["es_haberes"] = False
         else:
             m["es_haberes"] = _es_haberes(m)
+    # "ya lo cargué en el FBS": marca de control del operador. Vive por clave
+    # de movimiento, así sigue al movimiento cuando se arrastra al día
+    # siguiente o se reprocesa el período.
+    cargados = _cargados_fbs()
+    for lista in LISTAS_BANCO:
+        for m in datos.get(lista, []):
+            info = cargados.get(_clave_mov_dict(m))
+            m["cargado_fbs"] = info["fecha"] if info else None
     r = datos["resumen"]
     imp_b = lambda x: x["credito"] or x["debito"]
     imp_m = lambda x: x["debe"] or x["haber"]
@@ -128,6 +136,11 @@ def _recalcular_resumen(datos):
                                      "importe": round(sum(imp_b(x) for x in habs), 2)}
     r["banco_sin_contabilizar"] = {"cantidad": len(resto),
                                    "importe": round(sum(imp_b(x) for x in resto), 2)}
+    # control de carga: cuántos de los pendientes ya se cargaron en el FBS
+    r["cargados_fbs"] = sum(1 for lista in LISTAS_BANCO
+                            for x in datos.get(lista, []) if x.get("cargado_fbs"))
+    r["cargados_fbs_pendientes"] = len(habs) + len(resto) - sum(
+        1 for x in datos["banco_sin_contabilizar"] if x.get("cargado_fbs"))
     for lista in LISTAS_MAYOR:
         r[lista] = {"cantidad": len(datos[lista]),
                     "importe": round(sum(imp_m(x) for x in datos[lista]), 2)}
@@ -972,6 +985,31 @@ def _overrides_reclas() -> dict:
             if r.get("destino") in DESTINOS_RECLAS}
 
 
+# --- "ya lo cargué en el FBS": marca de control del operador ----------------
+# El cajero carga los movimientos en el FBS salteado (algunos los tiene que
+# resolver con otra persona) y necesita tachar lo hecho, como venía haciendo
+# en Excel. La marca NO mueve el movimiento de solapa: solo pinta la fila,
+# para que al volver a mirar sepa qué le falta. Vive por clave de movimiento,
+# así lo acompaña cuando se arrastra al día siguiente o se reprocesa el mes.
+RUTA_CARGADOS = os.path.join(DATOS_DIR, "cargados_fbs.json")
+
+
+def _cargados_fbs() -> dict:
+    """clave de movimiento -> {fecha, nota}."""
+    if os.path.exists(RUTA_CARGADOS):
+        try:
+            with open(RUTA_CARGADOS, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _guardar_cargados(d: dict):
+    with open(RUTA_CARGADOS, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
+
+
 def _forzar_gastos_movs(movs):
     """Pre-cruce: marca en los movimientos las reclasificaciones guardadas,
     para que el matcher (y la ND mensual) clasifique según lo decidido."""
@@ -1373,11 +1411,11 @@ def api_diario_excel(grupo_id: str):
                "Pendientes banco", "Pendientes mayor", "% explicado"])
     hojas = {
         "Banco sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
-                                   "Detalle", "Débito", "Crédito"],
+                                   "Detalle", "Débito", "Crédito", "Cargado en FBS"],
         "Haberes sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
-                                     "Detalle", "Débito", "Crédito"],
+                                     "Detalle", "Débito", "Crédito", "Cargado en FBS"],
         "Gastos bancarios": ["Cuenta", "Fecha", "Comprobante", "Descripción",
-                             "Detalle", "Débito", "Crédito"],
+                             "Detalle", "Débito", "Crédito", "Cargado en FBS"],
         "Mayor sin banco": ["Cuenta", "Hoja", "Asiento", "Fecha", "Referencia",
                             "Comentario", "Debe", "Haber"],
     }
@@ -1386,7 +1424,8 @@ def api_diario_excel(grupo_id: str):
 
     def fila_mov(etiqueta, m):
         return [etiqueta, m.get("fecha"), m.get("comprobante"), m.get("descripcion"),
-                m.get("detalle"), m.get("debito") or None, m.get("credito") or None]
+                m.get("detalle"), m.get("debito") or None, m.get("credito") or None,
+                m.get("cargado_fbs") or ""]
 
     for fila in grupo.get("cuentas", []):
         etiqueta = fila.get("etiqueta") or fila.get("cuenta_id") or ""
@@ -1687,6 +1726,36 @@ def api_confirmar(job_id: str, cuerpo: dict = Body(...)):
     return datos
 
 
+@app.post("/api/cargado/{job_id}")
+def api_marcar_cargado(job_id: str, cuerpo: dict = Body(...)):
+    """Marca (o desmarca) un movimiento del banco como YA CARGADO en el FBS.
+    Es una marca de control: el movimiento no cambia de solapa, solo queda
+    pintado, para que el operador sepa qué le falta cargar cuando vuelve a
+    mirar. La marca persiste por movimiento y lo sigue al día siguiente."""
+    datos = _obtener(job_id)
+    if not datos:
+        return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
+    banco_id = cuerpo.get("banco_id")
+    mov = next((m for lista in LISTAS_BANCO for m in datos.get(lista, [])
+                if m["id"] == banco_id), None)
+    if not mov:
+        return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
+
+    cargados = _cargados_fbs()
+    clave = _clave_mov_dict(mov)
+    if cuerpo.get("cargado", True):
+        cargados[clave] = {"fecha": date.today().isoformat(),
+                           "nota": (cuerpo.get("nota") or "").strip()[:300],
+                           "descripcion": mov.get("descripcion"), "job": job_id}
+    else:
+        cargados.pop(clave, None)
+    _guardar_cargados(cargados)
+
+    _recalcular_resumen(datos)   # re-etiqueta y actualiza los contadores
+    _guardar(job_id)
+    return datos
+
+
 @app.post("/api/reclasificar/{job_id}")
 def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
     """Transfiere un movimiento del banco a otra clasificación (banco sin
@@ -1890,9 +1959,11 @@ def _generar_excel(datos):
          [fila_match(m) + ("SÍ" if m.get("confirmado") else "",)
           for m in datos["conciliados_o"]])
 
-    cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito", "Archivo"]
+    cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
+                  "Archivo", "Cargado en FBS"]
     fila_banco = lambda b: (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
-                            b["debito"] or "", b["credito"] or "", b["archivo"])
+                            b["debito"] or "", b["credito"] or "", b["archivo"],
+                            b.get("cargado_fbs") or "")
     habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
     resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
     # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
