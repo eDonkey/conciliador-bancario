@@ -1648,7 +1648,8 @@ $('#modalAnalisis').addEventListener('click', e => {
 
 $('#buscador').addEventListener('input', pintarTabla);
 $('#btnExportar').addEventListener('click', () => {
-  if (datos) window.location = `/api/exportar/${datos.job_id}`;
+  // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
+  if (datos) window.location = `api/exportar/${datos.job_id}`;
 });
 $('#btnCompartir').addEventListener('click', async () => {
   if (!datos) return;

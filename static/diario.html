@@ -916,7 +916,8 @@ function pintarTablero() {
 }
 
 $('#btnExcelTablero').addEventListener('click', () => {
-  if (grupo) location.href = `/api/diario/${grupo.grupo_id}/excel`;
+  // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
+  if (grupo) location.href = `api/diario/${grupo.grupo_id}/excel`;
 });
 
 $('#btnCopiarTablero').addEventListener('click', async () => {
