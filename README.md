@@ -37,7 +37,7 @@ La conciliación automática hace:
    sugiere emparejamientos difíciles (combinaciones N-a-1, diferencias por
    comisión, coincidencia de beneficiario/CUIT) con nivel de confianza y motivo.
    Cada sugerencia se puede **aceptar con un clic**.
-8. **Conciliación manual:** la pestaña "✋ Conciliar manualmente" muestra los
+8. **Conciliación manual:** la pestaña "Conciliar a mano" muestra los
    residuales del banco y del mayor en dos paneles con filtros. Seleccionás
    ítems de cada lado (soporta N contra M), ves la suma y la diferencia en
    vivo, y conciliás el grupo. Al seleccionar un solo ítem, el otro panel se
@@ -126,11 +126,11 @@ conciliador/
 
 | Categoría | Significado |
 |---|---|
-| Conciliados (E) | Movimiento del banco con asiento confirmado en la cuenta E |
-| Pendientes de confirmar (O) | Está en el banco y en la O: hay que confirmarlo en el FBS para que pase a la E |
-| Banco sin contabilizar | Está en el extracto pero no aparece ni en E ni en O |
+| Cruzados con la cuenta E | Movimiento del banco con asiento confirmado en la cuenta E |
+| Confirmar en FBS (cuenta O) | Está en el banco y en la O: hay que confirmarlo en el FBS para que pase a la E |
+| Banco sin asiento | Está en el extracto pero no aparece ni en E ni en O |
 | Gastos bancarios | Comisiones/impuestos del banco sin asiento individual |
-| Gastos por mes (ND) | Nota de débito mensual: gastos agrupados por categoría impositiva vs el asiento del mayor, con diferencia |
-| Mayor E sin banco | Asiento confirmado que no aparece en el extracto |
-| O pendientes sin banco | Pendiente en la O que tampoco está en el banco |
+| Nota de débito por mes | Nota de débito mensual: gastos agrupados por categoría impositiva vs el asiento del mayor, con diferencia |
+| Asientos E sin banco | Asiento confirmado que no aparece en el extracto |
+| Asientos O sin banco | Pendiente en la O que tampoco está en el banco |
 | Sugerencias IA | Posibles matches difíciles propuestos por Claude, para revisión humana |

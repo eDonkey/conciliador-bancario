@@ -9,19 +9,52 @@
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
+    color-scheme: dark;
     --acento: #38bdf8;
+    --texto-sobre-acento: #06131f;
+    --texto-sobre-verde: #06281c;
     --fondo1: #070b18; --fondo2: #0d1430;
+    --bg: var(--fondo1);
     --panel: rgba(255, 255, 255, 0.055);
+    --panel-2: rgba(255, 255, 255, 0.04);
+    --campo: rgba(255, 255, 255, 0.05);
     --border: rgba(255, 255, 255, 0.12);
     --texto: #e8ecf8; --texto2: #94a0c2;
-    --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --azul: var(--acento);
-    --th-bg: rgba(255, 255, 255, 0.03);
+    --rojo: #ff8896; --verde: #34d399; --ambar: #fbbf24; --violeta: #c4b5fd; --azul: var(--acento);
+    --th-bg: #10173a; --sel-bg: #10173a;
+    --velo: rgba(4, 7, 18, 0.7);
+    --dialogo: color-mix(in srgb, var(--fondo2) 96%, #fff);
+    --hueco: rgba(0, 0, 0, 0.16);
+    --sombra-modal: 0 30px 80px rgba(0, 0, 0, 0.55);
+    --foco: 0 0 0 3px color-mix(in srgb, var(--acento) 40%, transparent);
+    --acento-tope: color-mix(in srgb, var(--acento) 88%, #fff);
+    --verde-tope: color-mix(in srgb, var(--verde) 85%, #fff);
+    --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 14px; --fs-xl: 16px; --fs-kpi: 26px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner, .ov-anillo { animation-duration: 1.8s; }
+    #ovBarra, .zona, button, a { transition-duration: 0.01s; }
+  }
+  ::selection { background: color-mix(in srgb, var(--acento) 35%, transparent); }
+  * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--texto2) 45%, transparent) transparent; }
+  input, textarea, select { caret-color: var(--acento); }
+  :focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: none; border-color: var(--acento) !important; box-shadow: var(--foco); }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  input[type=checkbox], input[type=radio] { width: 16px; height: 16px; flex-shrink: 0; }
+  @media (pointer: coarse) {
+    button.secundario, a.secundario, a.volver, button.mini, .btn-fila, .btn-chico, .btn-info,
+    ul.archivos li button, .eq-fila .quitar, nav.tabs button { min-height: 44px; }
+    .btn-info, ul.archivos li button, .eq-fila .quitar { min-width: 44px; }
+    input[type=checkbox], input[type=radio] { width: 22px; height: 22px; }
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     font-family: "Inter", system-ui, sans-serif;
     background: radial-gradient(ellipse at 50% 0%, var(--fondo2), var(--fondo1) 70%) fixed;
-    color: var(--texto); min-height: 100vh;
+    color: var(--texto); min-height: 100vh; line-height: 1.45;
   }
   body::before {
     content: ""; position: fixed; inset: -2px; z-index: -1; pointer-events: none;
@@ -35,85 +68,161 @@
   header {
     background: rgba(9, 13, 30, 0.75); backdrop-filter: blur(14px);
     border-bottom: 1px solid var(--border);
-    padding: 14px 28px; display:flex; align-items:center; gap:14px;
+    padding: 12px 24px; display:flex; align-items:center; gap:14px; row-gap: 10px; flex-wrap: wrap;
     position: sticky; top: 0; z-index: 60;
   }
+  header > div:first-of-type { min-width: 0; flex: 1 1 0; }
+  .zona-derecha { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  @media (max-width: 720px) {
+    header { padding: 10px 16px; position: static; }
+    header p { letter-spacing: .04em; }
+    .zona-derecha { margin-left: 0; width: 100%; }
+    .zona-derecha > * { flex: 1 1 auto; text-align: center; }
+  }
+  button.secundario, a.secundario, a.volver, button.mini { min-height: 40px; }
+  button.secundario:disabled, button.mini:disabled, .btn-fila:disabled, .btn-chico:disabled {
+    background: color-mix(in srgb, var(--texto2) 9%, transparent) !important; color: var(--texto2) !important;
+    border-color: transparent !important; cursor: not-allowed; opacity: .7; filter: none; }
+  .btn-fila { padding: 5px 10px !important; font-size: var(--fs-sm) !important; min-height: 32px; white-space: nowrap; }
+  .btn-chico { padding: 6px 12px !important; font-size: var(--fs-sm) !important; min-height: 34px; }
+  .peligro { border-color: color-mix(in srgb, var(--rojo) 45%, transparent) !important; color: var(--rojo) !important; background: color-mix(in srgb, var(--rojo) 10%, transparent) !important; }
+  .peligro:hover { background: color-mix(in srgb, var(--rojo) 20%, transparent) !important; }
+  .zona-cta { display: block; border-radius: 8px; }
+  main p, .glosario dd, .exp, .paso + p { max-width: 72ch; }
+  .zona p { margin-left: auto; margin-right: auto; }
+  input[type=date], input[type=number], select { min-height: 36px; }
+  @media (pointer: coarse) { input[type=date], input[type=number], select { min-height: 44px; } }
+  .modal { position: fixed; inset: 0; background: var(--velo); backdrop-filter: blur(8px);
+    display: flex; align-items: center; justify-content: center; z-index: 90; padding: 16px; }
+  .modal.oculto { display: none; }
+  .modal-card { background: var(--dialogo); border: 1px solid var(--border); border-radius: 20px;
+    box-shadow: var(--sombra-modal); width: 560px; max-width: 100%; max-height: calc(100vh - 32px);
+    overflow-y: auto; padding: 26px 28px 22px; }
+  .modal-card h3 { font-family: "Sora", sans-serif; font-size: var(--fs-xl); font-weight: 700; margin-bottom: 4px; }
+  .modal-card .exp { font-size: var(--fs-sm); color: var(--texto2); line-height: 1.55; }
+  .pie-modal { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .error-inline { color: var(--rojo); font-size: var(--fs-sm); margin-top: 8px; min-height: 16px; }
+  #toasts { position: fixed; left: 16px; right: 16px; bottom: 16px; display: flex; flex-direction: column;
+    gap: 8px; align-items: center; z-index: 130; pointer-events: none; }
+  .toast { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; width: 100%; max-width: 560px;
+    margin-top: 0 !important; box-shadow: var(--sombra-modal); }
+  .toast.aviso.error { background: color-mix(in srgb, var(--rojo) 14%, var(--dialogo)); }
+  .toast.aviso.info { background: color-mix(in srgb, var(--acento) 12%, var(--dialogo)); }
+  .toast span { flex: 1; overflow-wrap: anywhere; }
+  .toast-cerrar { border: none; background: none; color: inherit; font-size: var(--fs-lg); cursor: pointer;
+    min-width: 32px; min-height: 32px; margin: -6px -8px -6px 0; border-radius: 8px; }
+  .glosario { margin-top: 12px; font-size: var(--fs-sm); color: var(--texto2); }
+  .glosario summary { cursor: pointer; color: var(--texto); font-weight: 600; padding: 8px 0; list-style: none; }
+  .glosario summary::-webkit-details-marker { display: none; }
+  .glosario summary::before { content: ""; display: inline-block; width: 7px; height: 7px; margin: 0 12px 2px 4px;
+    border-right: 2px solid var(--acento); border-bottom: 2px solid var(--acento); transform: rotate(-45deg); transition: transform .2s; }
+  .glosario[open] summary::before { transform: rotate(45deg); }
+  .glosario dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 6px 0 4px; line-height: 1.5; }
+  .glosario dt { color: var(--texto); font-weight: 600; white-space: nowrap; }
+  .glosario dd { margin: 0; }
+  @media (max-width: 560px) { .glosario dl { grid-template-columns: 1fr; gap: 2px 0; } .glosario dd { margin-bottom: 8px; } }
+  ul.archivos li button { min-width: 32px; min-height: 32px; border-radius: 8px; }
   header .logo {
     width: 12px; height: 12px; border-radius: 50%;
     background: var(--acento);
-    box-shadow: 0 0 14px var(--acento), 0 0 4px var(--acento);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 22%, transparent);
     flex-shrink: 0; font-size: 0;
   }
-  header h1 { font-family: "Sora", sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 0.04em; }
-  header p { font-size: 11px; color: var(--texto2); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
-  header a.volver { margin-left:auto; font-family: inherit; font-size: 13px; color: var(--texto); text-decoration:none; border:1px solid var(--border); border-radius:10px; padding: 8px 16px; background: rgba(255,255,255,0.06); transition: background .2s, border-color .2s; }
+  header h1 { font-family: "Sora", sans-serif; font-size: var(--fs-xl); font-weight: 700; letter-spacing: 0.04em; }
+  header p { font-size: var(--fs-xs); color: var(--texto2); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+  header a.volver { font-family: inherit; font-size: var(--fs-md); color: var(--texto); text-decoration:none; border:1px solid var(--border); border-radius:10px; padding: 8px 16px; display:inline-flex; align-items:center; justify-content:center; background: rgba(255,255,255,0.06); transition: background .2s, border-color .2s; }
   header a.volver:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   main { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
-  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; margin-bottom: 18px; backdrop-filter: blur(14px); }
+  .tarjeta { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 22px; margin-bottom: 18px; }
   .zona { border: 1px dashed var(--border); border-radius: 12px; padding: 26px; text-align: center; cursor: pointer; transition: .2s; background: rgba(255,255,255,0.02); }
-  .zona:hover, .zona.arrastrando { border-color: var(--acento); background: rgba(56, 189, 248, 0.06); box-shadow: 0 0 30px rgba(56, 189, 248, 0.08) inset; }
-  .zona h3 { font-family: "Sora", sans-serif; font-size: 14px; font-weight: 700; margin-bottom: 4px; }
-  .zona p { font-size: 12.5px; color: var(--texto2); }
-  ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: 13px; }
-  ul.archivos li { padding: 7px 11px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
-  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; font-size: 14px; }
+  .zona:hover, .zona.arrastrando { border-color: var(--acento); background: color-mix(in srgb, var(--acento) 6%, transparent); }
+  .zona h3 { font-family: "Sora", sans-serif; font-size: var(--fs-lg); font-weight: 700; margin-bottom: 4px; }
+  .zona p { font-size: var(--fs-sm); color: var(--texto2); }
+  ul.archivos { list-style: none; margin-top: 10px; text-align: left; font-size: var(--fs-md); }
+  ul.archivos li { padding: 7px 11px; background: var(--campo); border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; display:flex; justify-content:space-between; gap:8px; }
+  ul.archivos li button { border:none; background:none; color: var(--rojo); cursor:pointer; font-weight:700; font-size: var(--fs-lg); }
   .acciones { display:flex; align-items:center; gap:14px; margin-top: 16px; flex-wrap: wrap; }
   button.principal {
-    font-family: inherit; border: none; color: #fff;
-    background: linear-gradient(160deg, var(--acento), color-mix(in srgb, var(--acento) 55%, #1a2447));
-    padding: 11px 24px; border-radius: 10px; font-size: 14px; font-weight: 600;
-    cursor: pointer; transition: filter .2s; box-shadow: 0 6px 24px rgba(56, 189, 248, 0.25);
+    font-family: inherit; border: none; color: var(--texto-sobre-acento);
+    background: linear-gradient(180deg, var(--acento-tope), var(--acento));
+    padding: 12px 26px; border-radius: 10px; font-size: var(--fs-lg); font-weight: 600; min-height: 44px;
+    cursor: pointer; transition: filter .2s;
   }
-  button.principal:hover { filter: brightness(1.15); }
-  button.principal:disabled { background: rgba(255,255,255,0.09); color: var(--texto2); cursor:not-allowed; box-shadow: none; }
-  button.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 8px 16px; border-radius: 10px; font-size: 13px; cursor:pointer; transition: background .2s, border-color .2s; }
+  button.principal:hover { filter: brightness(1.08); }
+  button.principal:disabled { background: rgba(255,255,255,0.09); color: var(--texto2); cursor:not-allowed; }
+  button.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 8px 16px; border-radius: 10px; font-size: var(--fs-md); cursor:pointer; transition: background .2s, border-color .2s; }
   button.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   .contenedor-tabla { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; background: var(--th-bg); }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .1em; color: var(--texto2); white-space: nowrap; background: var(--th-bg); }
   td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: middle; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td a { color: var(--acento); }
-  select { font-family: inherit; padding: 6px 8px; background: var(--sel-bg, #10173a); color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: 12.5px; max-width: 320px; outline: none; }
+  select { font-family: inherit; padding: 6px 8px; background: var(--sel-bg); color: var(--texto); border:1px solid var(--border); border-radius: 8px; font-size: var(--fs-sm); max-width: 320px; outline: none; }
   input[type=text], input[type=password], input[type=number], input[type=date], input:not([type]), textarea {
-    font-family: inherit; padding: 7px 10px; background: var(--sel-bg, #10173a);
+    font-family: inherit; padding: 7px 10px; background: var(--sel-bg);
     color: var(--texto); border: 1px solid var(--border); border-radius: 8px;
-    font-size: 12.5px; outline: none; }
+    font-size: var(--fs-sm); outline: none; }
   input:focus, textarea:focus { border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   body.claro input, body.claro textarea, body.claro select { background: #fff; }
-  #modalFbs { display: flex; align-items: center; justify-content: center; }
-  #modalFbs.oculto { display: none; }
-  .chip { font-size: 10.5px; border-radius: 99px; padding: 2px 9px; white-space:nowrap; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
-  .chip.extracto { background: rgba(56, 189, 248, 0.12); border-color: rgba(56, 189, 248, 0.35); color: var(--acento); }
-  .chip.fbs { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.4); color: #c4b5fd; }
-  .chip.err { background: rgba(248, 81, 100, 0.12); border-color: rgba(248, 81, 100, 0.4); color: var(--rojo); }
-  .chip.ok { background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.4); color: var(--verde); }
-  .chip.warn { background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.4); color: var(--ambar); }
+  .chip { font-size: var(--fs-xs); border-radius: 99px; padding: 2px 9px; white-space:nowrap; font-weight: 600; letter-spacing: 0.03em; border: 1px solid transparent; }
+  .chip.extracto { background: color-mix(in srgb, var(--acento) 12%, transparent); border-color: color-mix(in srgb, var(--acento) 35%, transparent); color: var(--acento); }
+  .chip.fbs { background: color-mix(in srgb, var(--violeta) 12%, transparent); border-color: color-mix(in srgb, var(--violeta) 40%, transparent); color: var(--violeta); }
+  .chip.err { background: color-mix(in srgb, var(--rojo) 12%, transparent); border-color: color-mix(in srgb, var(--rojo) 40%, transparent); color: var(--rojo); }
+  .chip.ok { background: color-mix(in srgb, var(--verde) 12%, transparent); border-color: color-mix(in srgb, var(--verde) 40%, transparent); color: var(--verde); }
+  .chip.warn { background: color-mix(in srgb, var(--ambar) 10%, transparent); border-color: color-mix(in srgb, var(--ambar) 40%, transparent); color: var(--ambar); }
   .oculto { display:none; }
-  .aviso { font-size: 13px; padding: 10px 14px; border-radius: 10px; margin-top: 12px; line-height: 1.55; }
-  .aviso.error { background: rgba(248, 81, 100, 0.1); border: 1px solid rgba(248, 81, 100, 0.35); color: var(--rojo); }
-  .aviso.info { background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); color: var(--texto); }
+  .aviso { font-size: var(--fs-md); padding: 10px 14px; border-radius: 10px; margin-top: 12px; line-height: 1.55; }
+  .aviso.error { background: color-mix(in srgb, var(--rojo) 10%, transparent); border: 1px solid color-mix(in srgb, var(--rojo) 35%, transparent); color: var(--rojo); }
+  .aviso.info { background: color-mix(in srgb, var(--acento) 8%, transparent); border: 1px solid color-mix(in srgb, var(--acento) 30%, transparent); color: var(--texto); }
   input[type=checkbox] { accent-color: var(--acento); }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--acento); border-radius:50%; animation: g .8s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes g { to { transform: rotate(360deg); } }
-  h2.seccion { font-family: "Sora", sans-serif; font-size: 14.5px; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 10px; }
+  #overlay { z-index: 100; }
+  .ov-card { background: var(--dialogo); border: 1px solid var(--border);
+    border-radius: 20px;
+    box-shadow: var(--sombra-modal); width: 430px;
+    max-width: calc(100vw - 40px); padding: 30px 32px 24px;
+    text-align: center; }
+  .ov-anillo { width: 46px; height: 46px; margin: 2px auto 18px;
+    border-radius: 50%; border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: var(--acento); animation: g 1s linear infinite; }
+  .ov-card h3 { font-family: "Sora", sans-serif; font-size: var(--fs-xl); font-weight: 700; margin-bottom: 6px; }
+  #ovFase { font-size: var(--fs-md); color: var(--texto2); min-height: 18px; }
+  .ov-nota { font-size: var(--fs-sm); color: var(--texto2); margin-top: 16px;
+    line-height: 1.5; border-top: 1px solid var(--border); padding-top: 12px; }
+  #ovError { color: var(--rojo); font-size: var(--fs-md); margin-top: 10px; }
+  body.claro .ov-anillo { border-color: rgba(15, 23, 52, 0.1); border-top-color: var(--acento); }
+  h3.paso { font-family: "Sora", sans-serif; font-size: var(--fs-md); font-weight: 700; color: var(--texto); margin-bottom: 2px; }
+  h2.seccion { font-family: "Sora", sans-serif; font-size: var(--fs-lg); font-weight: 700; letter-spacing: 0.03em; margin-bottom: 10px; }
   .pct { font-weight: 700; }
   .pct.alto { color: var(--verde); } .pct.medio { color: var(--ambar); } .pct.bajo { color: var(--rojo); }
   .demo-banner {
     text-align: center; padding: 6px 12px; font-family: "Sora", sans-serif;
-    font-weight: 700; font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    font-weight: 700; font-size: var(--fs-sm); letter-spacing: 0.12em; text-transform: uppercase;
     color: #1a1006; background: repeating-linear-gradient(135deg, #fbbf24, #fbbf24 14px, #f59e0b 14px, #f59e0b 28px);
   }
-  .kit-demo a { display:inline-block; margin: 4px 10px 4px 0; font-size: 12.5px; color: var(--acento); }
+  .kit-demo a { display:inline-block; margin: 4px 10px 4px 0; font-size: var(--fs-sm); color: var(--acento); }
 
   /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
   body.claro {
-    --acento: #0993e3;
+    color-scheme: light;
+    --acento: #0a6fb5;
+    --texto-sobre-acento: #ffffff;
+    --texto-sobre-verde: #ffffff;
     --texto: #17203a; --texto2: #5b6880;
     --border: rgba(15, 23, 52, 0.14);
     --panel: rgba(255, 255, 255, 0.82);
-    --rojo: #d64550; --verde: #0f9d6d; --ambar: #b07507;
+    --panel-2: rgba(255, 255, 255, 0.75);
+    --campo: #ffffff;
+    --rojo: #c0313d; --verde: #0b7a54; --ambar: #8a5a00; --violeta: #6d4fc4;
     --th-bg: #e9edf5; --sel-bg: #ffffff;
+    --velo: rgba(23, 32, 58, 0.35);
+    --dialogo: #ffffff;
+    --hueco: rgba(15, 23, 52, 0.03);
+    --sombra-modal: 0 30px 80px rgba(23, 32, 58, 0.25);
+    --acento-tope: color-mix(in srgb, var(--acento) 92%, #000);
+    --verde-tope: color-mix(in srgb, var(--verde) 92%, #000);
     background: radial-gradient(ellipse at 50% 0%, #ffffff, #e9edf4 70%) fixed;
   }
   body.claro::before {
@@ -125,86 +234,97 @@
   body.claro header a.volver, body.claro button.secundario { background: #fff; }
   body.claro header a.volver:hover, body.claro button.secundario:hover { background: #eef3fa; }
   body.claro .zona { background: rgba(255, 255, 255, 0.55); }
-  body.claro .zona:hover, body.claro .zona.arrastrando { background: rgba(9, 147, 227, 0.06); }
+  body.claro .zona:hover, body.claro .zona.arrastrando { background: color-mix(in srgb, var(--acento) 6%, transparent); }
   body.claro ul.archivos li { background: #fff; }
   body.claro button.principal:disabled { background: rgba(15, 23, 52, 0.08); }
   body.claro td { border-bottom-color: rgba(15, 23, 52, 0.08); }
-  body.claro .chip.extracto { background: rgba(9, 147, 227, 0.09); border-color: rgba(9, 147, 227, 0.35); }
-  body.claro .chip.fbs { background: rgba(109, 79, 196, 0.09); border-color: rgba(109, 79, 196, 0.35); color: #6d4fc4; }
-  body.claro .chip.err { background: rgba(214, 69, 80, 0.08); border-color: rgba(214, 69, 80, 0.35); }
-  body.claro .chip.ok { background: rgba(15, 157, 109, 0.09); border-color: rgba(15, 157, 109, 0.35); }
-  body.claro .chip.warn { background: rgba(176, 117, 7, 0.08); border-color: rgba(176, 117, 7, 0.35); }
-  body.claro .aviso.info { background: rgba(9, 147, 227, 0.06); border-color: rgba(9, 147, 227, 0.3); }
-  body.claro .aviso.error { background: rgba(214, 69, 80, 0.07); border-color: rgba(214, 69, 80, 0.35); }
+  body.claro .chip.extracto { background: color-mix(in srgb, var(--acento) 9%, transparent); border-color: color-mix(in srgb, var(--acento) 35%, transparent); }
+  body.claro .chip.fbs { background: color-mix(in srgb, var(--violeta) 9%, transparent); border-color: color-mix(in srgb, var(--violeta) 35%, transparent); color: var(--violeta); }
+  body.claro .chip.err { background: color-mix(in srgb, var(--rojo) 8%, transparent); border-color: color-mix(in srgb, var(--rojo) 35%, transparent); }
+  body.claro .chip.ok { background: color-mix(in srgb, var(--verde) 9%, transparent); border-color: color-mix(in srgb, var(--verde) 35%, transparent); }
+  body.claro .chip.warn { background: color-mix(in srgb, var(--ambar) 8%, transparent); border-color: color-mix(in srgb, var(--ambar) 35%, transparent); }
+  body.claro .aviso.info { background: color-mix(in srgb, var(--acento) 6%, transparent); border-color: color-mix(in srgb, var(--acento) 30%, transparent); }
+  body.claro .aviso.error { background: color-mix(in srgb, var(--rojo) 7%, transparent); border-color: color-mix(in srgb, var(--rojo) 35%, transparent); }
 </style>
 </head>
 <body>
+<script>
+  // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
+  (function () {
+    var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
+    if (t === 'claro' || (!t && matchMedia('(prefers-color-scheme: light)').matches))
+      document.body.classList.add('claro');
+  })();
+</script>
 <div id="demoBanner" class="demo-banner oculto">DEMO — datos ficticios, sin conexión a FBS real</div>
 <header>
   <span class="logo" aria-hidden="true"></span>
   <div>
-    <h1>Conciliación diaria <span id="chipMarca" class="oculto" style="font-family:'Sora',sans-serif; font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--acento); border:1px solid color-mix(in srgb, var(--acento) 45%, transparent); border-radius:999px; padding:3px 10px; margin-left:8px; vertical-align:2px;"></span></h1>
+    <h1>Conciliación diaria <span id="chipMarca" class="oculto" style="font-family:'Sora',sans-serif; font-size:var(--fs-xs); font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--acento); border:1px solid color-mix(in srgb, var(--acento) 45%, transparent); border-radius:999px; padding:3px 10px; margin-left:8px; vertical-align:2px;"></span></h1>
     <p id="subtitulo">Extractos + reportes FBS por cuenta — Nave Motors</p>
   </div>
-  <button class="secundario oculto" id="btnResetDemo" style="margin-left:auto"
-    title="Vuelve a dejar la demo como recién sembrada">Reiniciar demo</button>
-  <button class="secundario" id="btnTema" style="margin-left:auto" title="Alternar entre tema claro y oscuro">Modo claro</button>
-  <a class="volver" id="linkMensual" href="/" style="margin-left:0">Conciliador mensual</a>
+  <div class="zona-derecha">
+    <button class="secundario oculto" id="btnResetDemo" title="Vuelve a dejar la demo como recién sembrada">Reiniciar demo</button>
+    <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
+    <a class="volver" id="linkMensual" href="/">Conciliador mensual</a>
+  </div>
 </header>
 
 <main>
   <section class="tarjeta" id="cargaCard">
-    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:16px; font-size:12.5px; color:var(--texto2);">
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">1 · Subí los extractos del día</b><br>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:16px; font-size:var(--fs-sm); color:var(--texto2);">
+      <div style="flex:1; min-width:200px;"><h3 class="paso">1 · Subí los extractos del día</h3>
         Solo los extractos de cada banco. El mayor del FBS ya no se sube:
         se trae directo de la base contable.</div>
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">2 · Traé el mayor del FBS</b><br>
+      <div style="flex:1; min-width:200px;"><h3 class="paso">2 · Traé el mayor del FBS</h3>
         Tildá las cuentas (ya configuradas en el hub), elegí el rango de fechas
         y el sistema consulta el FBS y asigna cada cuenta solo — sin archivos
         y sin elegir nada dos veces.</div>
-      <div style="flex:1; min-width:200px;"><b style="color:var(--texto)">3 · Conciliá — lo pendiente se arrastra</b><br>
+      <div style="flex:1; min-width:200px;"><h3 class="paso">3 · Conciliá — lo pendiente se arrastra</h3>
         Lo que hoy no cruza (movimientos sin asiento, asientos sin movimiento)
         entra automáticamente en la conciliación de mañana, hasta que aparezca
         su contrapartida.</div>
     </div>
-    <div id="kitDemo" class="kit-demo oculto" style="margin-bottom:14px;font-size:12.5px;color:var(--texto2);">
+    <div id="kitDemo" class="kit-demo oculto" style="margin-bottom:14px;font-size:var(--fs-sm);color:var(--texto2);">
       <b style="color:var(--texto)">Kit de demo:</b> descargá un extracto de ejemplo y soltalo abajo — el
       mayor de esa empresa ya está "sincronizado", no hace falta subir nada más.
       <div id="kitLinks" style="margin-top:6px;"></div>
     </div>
     <div class="zona" id="zona">
+      <div class="zona-cta" role="button" tabindex="0" aria-describedby="zonaTexto">
       <h3 id="zonaTitulo">Extractos bancarios del día</h3>
       <p id="zonaTexto">Arrastrá o hacé clic — los extractos de cada banco (Santander/Río, BBVA/Francés,
         Galicia, Macro, Ciudad). Los reportes FBS ya no hacen falta: el mayor se trae
         directo de la base con el bloque de abajo (si igual subís uno, se procesa).</p>
+      </div>
       <input type="file" id="inputArchivos" multiple hidden>
       <ul class="archivos" id="listaArchivos"></ul>
     </div>
     <div class="acciones">
       <button class="principal" id="btnIdentificar" disabled>Identificar archivos</button>
-      <span id="estadoCarga"></span>
+      <span id="estadoCarga" role="status" aria-live="polite"></span>
     </div>
 
     <div id="fbsSqlBloque" style="margin-top:16px; padding:14px 16px; border:1px dashed var(--border); border-radius:12px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
       <div style="min-width:220px; flex:1;">
-        <b style="font-size:13px;">Mayor FBS directo desde la base</b><br>
-        <span id="fbsSqlEstado" style="font-size:12px; color:var(--texto2);">Consultando configuración…</span>
+        <b style="font-size:var(--fs-md);">Mayor FBS directo desde la base</b><br>
+        <span id="fbsSqlEstado" aria-live="polite" style="font-size:var(--fs-sm); color:var(--texto2);">Consultando configuración…</span>
       </div>
-      <label style="font-size:12px; color:var(--texto2);">Desde
+      <label style="font-size:var(--fs-sm); color:var(--texto2);">Desde
         <input type="date" id="fbsDesde" style="margin-left:4px;"></label>
-      <label style="font-size:12px; color:var(--texto2);">Hasta
+      <label style="font-size:var(--fs-sm); color:var(--texto2);">Hasta
         <input type="date" id="fbsHasta" style="margin-left:4px;"></label>
-      <button class="secundario" id="btnFbsTraer" disabled>Traer E y O del FBS</button>
+      <button class="secundario" id="btnFbsTraer" disabled aria-describedby="fbsSqlEstado">Traer E y O del FBS</button>
       <button class="secundario" id="btnFbsConf">Configurar conexión</button>
-      <span id="fbsSqlMsj" style="font-size:12px;"></span>
-      <div id="fbsCuentas" style="display:none; flex-basis:100%; gap:6px 18px; flex-wrap:wrap; margin-top:6px; font-size:12.5px;"></div>
+      <span id="fbsSqlMsj" role="status" aria-live="polite" style="font-size:var(--fs-sm);"></span>
+      <div id="fbsCuentas" style="display:none; flex-basis:100%; gap:6px 18px; flex-wrap:wrap; margin-top:6px; font-size:var(--fs-sm);"></div>
     </div>
   </section>
 
-  <div id="modalFbs" class="oculto" style="position:fixed; inset:0; z-index:120; background:rgba(4,7,18,0.7); backdrop-filter:blur(4px); padding:20px;">
+  <div id="modalFbs" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modalFbsTitulo" style="z-index:120;">
     <div class="tarjeta" style="max-width:640px; width:100%; margin:0; max-height:90vh; overflow:auto;">
-      <h2 class="seccion">Conexión directa al FBS (SQL Server)</h2>
-      <p style="font-size:12.5px; color:var(--texto2); margin-bottom:12px;">
+      <h2 class="seccion" id="modalFbsTitulo">Conexión directa al FBS (SQL Server)</h2>
+      <p style="font-size:var(--fs-sm); color:var(--texto2); margin-bottom:12px;">
         Las columnas del FBS se reconocen con su nombre real
         (<code>DetMovNro, DetFecha, DetRef, DetComenta, DetDebe, DetHaber</code>).
         Solo hay que anteponer dos literales que digan de qué cuenta es cada
@@ -213,18 +333,18 @@
         fechas entra con <code>%(desde)s</code> y <code>%(hasta)s</code>.
         La clave no se muestra: dejala vacía para conservar la actual.</p>
       <div style="display:grid; grid-template-columns:2fr 1fr; gap:10px;">
-        <input id="fbsServidor" placeholder="Servidor (IP o nombre)">
-        <input id="fbsPuerto" type="number" placeholder="Puerto" value="1433">
-        <input id="fbsBase" placeholder="Base de datos">
-        <input id="fbsUsuario" placeholder="Usuario SQL">
-        <input id="fbsClave" type="password" placeholder="Clave (vacío = sin cambio)" style="grid-column:1 / -1;" autocomplete="new-password">
+        <input id="fbsServidor" aria-label="Servidor" placeholder="Servidor (IP o nombre)">
+        <input id="fbsPuerto" type="number" aria-label="Puerto" placeholder="Puerto" value="1433">
+        <input id="fbsBase" aria-label="Base de datos" placeholder="Base de datos">
+        <input id="fbsUsuario" aria-label="Usuario SQL" placeholder="Usuario SQL">
+        <input id="fbsClave" type="password" aria-label="Clave" placeholder="Clave (vacío = sin cambio)" style="grid-column:1 / -1;" autocomplete="new-password">
       </div>
-      <textarea id="fbsQuery" rows="8" style="width:100%; margin-top:10px; font-family:ui-monospace,monospace; font-size:12px;"></textarea>
-      <div id="fbsConfMsj" style="font-size:12.5px; margin-top:8px;"></div>
+      <textarea id="fbsQuery" rows="8" aria-label="Query SQL del mayor" style="width:100%; margin-top:10px; font-family:ui-monospace,monospace; font-size:var(--fs-sm);"></textarea>
+      <div id="fbsConfMsj" role="status" aria-live="polite" style="font-size:var(--fs-sm); margin-top:8px;"></div>
       <div class="acciones" style="margin-top:12px;">
         <button class="secundario" id="btnFbsProbar">Probar conexión</button>
         <span style="flex:1"></span>
-        <button class="secundario" id="btnFbsCerrar">Cerrar</button>
+        <button class="secundario" id="btnFbsCerrar" data-cerrar>Cerrar</button>
         <button class="principal" id="btnFbsGuardar">Guardar</button>
       </div>
     </div>
@@ -232,21 +352,36 @@
 
   <section class="tarjeta oculto" id="identCard">
     <h2 class="seccion">Paso 2 — Confirmá qué es cada archivo</h2>
-    <p style="font-size:12.5px;color:var(--texto2);margin-bottom:10px;">
+    <p style="font-size:var(--fs-sm);color:var(--texto2);margin-bottom:10px;">
       Lo traído del FBS ya viene con su cuenta fija (configurada en el hub) y los extractos
       detectados vienen seleccionados. Solo asigná a mano lo que falte: ese vínculo queda
       aprendido para siempre.</p>
     <div class="contenedor-tabla"><table id="tablaIdent"><thead></thead><tbody></tbody></table></div>
     <div class="acciones">
       <button class="principal" id="btnConciliar">Conciliar el día</button>
-      <span id="estadoConciliar"></span>
+      <span id="estadoConciliar" role="status" aria-live="polite"></span>
     </div>
   </section>
 
   <section class="tarjeta oculto" id="tableroCard">
-    <h2 class="seccion">Tablero del día <span id="fechaProc" style="font-weight:400;color:var(--texto2);font-size:13px;"></span></h2>
+    <h2 class="seccion">Tablero del día <span id="fechaProc" style="font-weight:400;color:var(--texto2);font-size:var(--fs-md);"></span></h2>
     <div class="contenedor-tabla"><table id="tablaTablero"><thead></thead><tbody></tbody></table></div>
-    <div id="sinAsignar"></div>
+    <details class="glosario">
+      <summary>Qué significa cada columna y cada estado</summary>
+      <dl>
+        <dt>Período</dt><dd>Días que cubren los extractos subidos en esta corrida. "Varios días" quiere decir que se acumularon y se cruzan todos juntos: un pago de un día puede tener su asiento al día siguiente.</dd>
+        <dt>Movs del día</dt><dd>Movimientos que trajeron los extractos subidos hoy.</dd>
+        <dt>Arrastrados</dt><dd>Pendientes de conciliaciones anteriores que entraron al cruce de hoy. "Ya conciliados, omitidos" son ítems que los archivos de hoy re-incluían y ya estaban cruzados: se omiten para no duplicar.</dd>
+        <dt>Conciliados</dt><dd>Movimientos con asiento encontrado en el FBS, en la cuenta E o en la O.</dd>
+        <dt>Gastos banc.</dt><dd>Comisiones, impuestos y percepciones del banco. No se registran asiento por asiento.</dd>
+        <dt>Sin asiento aún</dt><dd>Movimientos del banco que siguen sin asiento. Quedan pendientes y se arrastran a mañana.</dd>
+        <dt>FBS sin banco</dt><dd>Asientos del FBS que siguen sin movimiento del banco. También se arrastran.</dd>
+        <dt>% explicado</dt><dd>Movimientos del banco con justificación contable (conciliados más gastos bancarios justificados) sobre el total. Verde de 85% para arriba, ámbar de 60% a 85%, rojo por debajo.</dd>
+        <dt>Falta el FBS</dt><dd>Llegó el extracto del banco pero no el mayor E y O de esta cuenta: no hay contra qué cruzar.</dd>
+        <dt>Falta el extracto</dt><dd>Llegó el FBS pero ningún extracto del banco de esta cuenta, y no había pendientes arrastrados para cruzar.</dd>
+      </dl>
+    </details>
+    <div id="sinAsignar" aria-live="polite"></div>
     <div class="acciones">
       <button class="secundario" id="btnExcelTablero"
         title="Excel con el resumen por cuenta y las listas consolidadas del día (pendientes del banco, haberes, gastos y pendientes del mayor). El detalle completo de una cuenta se exporta desde adentro de esa conciliación.">Exportar a Excel</button>
@@ -257,23 +392,126 @@
 
   <section class="tarjeta oculto" id="histCard">
     <h2 class="seccion" style="display:flex; align-items:center; gap:12px;">Memoria diaria
-      <button class="secundario" id="btnBorrarMemoria" style="margin-left:auto; font-size:12px;"
+      <button class="secundario btn-chico" id="btnBorrarMemoria" style="margin-left:auto;"
         title="Fase de prueba: olvida qué asientos y movimientos ya se conciliaron en corridas anteriores">
         Borrar memoria de conciliados</button></h2>
-    <p style="font-size:12.5px; color:var(--texto2); margin-bottom:10px;">
+    <p style="font-size:var(--fs-sm); color:var(--texto2); margin-bottom:10px;">
       Cada conciliación diaria queda guardada acá para siempre. Los pendientes de un
       día encadenan con el siguiente: si abrís un tablero viejo vas a ver qué quedó
       sin cruzar ese día, y en los siguientes cómo se fue resolviendo.</p>
     <div class="contenedor-tabla"><table id="tablaHist"><thead></thead><tbody></tbody></table></div>
+    <details class="glosario">
+      <summary>Qué significa cada columna</summary>
+      <dl>
+        <dt>Bancos</dt><dd>Bancos de los extractos que entraron ese día.</dd>
+        <dt>Conciliadas</dt><dd>Cuentas que se pudieron cruzar ese día (extracto más FBS).</dd>
+        <dt>Incompletas</dt><dd>Cuentas a las que les faltó el extracto o el FBS ese día.</dd>
+        <dt>Movimientos</dt><dd>Movimientos procesados, incluidos los arrastrados de días previos.</dd>
+        <dt>Arrastrados</dt><dd>Pendientes que venían arrastrados de días anteriores.</dd>
+        <dt>Quedaron pendientes</dt><dd>Lo que quedó sin cruzar ese día (movimientos sin asiento más asientos sin banco). Pasa al día siguiente.</dd>
+      </dl>
+    </details>
   </section>
 </main>
 
+<div id="modalConfirmar" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modalConfirmarTitulo" aria-describedby="modalConfirmarTexto">
+  <div class="modal-card" style="width: 480px;">
+    <h3 id="modalConfirmarTitulo"></h3>
+    <p class="exp" id="modalConfirmarTexto" style="margin-top:8px; white-space: pre-line;"></p>
+    <div class="pie-modal">
+      <button type="button" class="secundario" id="confCancelar" data-cerrar>Cancelar</button>
+      <button type="button" class="principal" id="confOk">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div id="overlay" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="ovTitulo" aria-describedby="ovFase">
+  <div class="ov-card" tabindex="-1">
+    <div class="ov-anillo" id="ovAnillo"></div>
+    <h3 id="ovTitulo">Conciliando el día</h3>
+    <p id="ovFase" role="status" aria-live="polite"></p>
+    <p class="ov-nota">El cruce corre en el servidor. Si esta pestaña se cierra, el tablero
+      queda igual guardado en la memoria diaria al volver a entrar.</p>
+    <div id="ovError" class="oculto" role="alert"></div>
+    <button id="ovCerrar" data-cerrar class="secundario oculto" type="button" style="margin-top:12px;">Cerrar</button>
+  </div>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
+
+/* ============ diálogos accesibles (foco, Escape, retorno) ============ */
+const SCROLL = { behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' };
+let modalOpener = null;
+function abrirModal(id, foco) {
+  const m = document.getElementById(id);
+  if (!m.classList.contains('oculto')) return;
+  modalOpener = document.activeElement;
+  m.classList.remove('oculto');
+  const el = (foco && document.querySelector(foco))
+    || [...m.querySelectorAll('input, textarea, select, button, [tabindex="-1"]')]
+      .find(x => x.offsetParent !== null);
+  if (el) el.focus();
+}
+function cerrarModal(id) {
+  const m = document.getElementById(id);
+  if (m.classList.contains('oculto')) return;
+  m.classList.add('oculto');
+  if (modalOpener && modalOpener.focus && document.contains(modalOpener)) modalOpener.focus();
+  modalOpener = null;
+}
+document.addEventListener('keydown', e => {
+  const abierto = [...document.querySelectorAll('[role="dialog"]')]
+    .filter(m => !m.classList.contains('oculto')).pop();
+  if (!abierto) return;
+  if (e.key === 'Escape') {
+    const cerrar = abierto.querySelector('[data-cerrar]');
+    if (cerrar && cerrar.offsetParent !== null) { e.preventDefault(); cerrar.click(); }
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const f = [...abierto.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')]
+    .filter(x => x.offsetParent !== null);
+  if (!f.length) { e.preventDefault(); return; }
+  const primero = f[0], ultimo = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
+  else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
+  else if (!abierto.contains(document.activeElement)) { e.preventDefault(); primero.focus(); }
+});
+
+// confirmar({ titulo, texto, ok, peligro }) -> Promise<boolean>: reemplaza a confirm()
+let confResolver = null;
+function confirmar({ titulo, texto, ok = 'Confirmar', peligro = false }) {
+  document.getElementById('modalConfirmarTitulo').textContent = titulo;
+  document.getElementById('modalConfirmarTexto').textContent = texto;
+  const b = document.getElementById('confOk');
+  b.textContent = ok;
+  b.className = peligro ? 'secundario peligro' : 'principal';
+  return new Promise(res => { confResolver = res; abrirModal('modalConfirmar', '#confCancelar'); });
+}
+function resolverConf(v) { const r = confResolver; confResolver = null; cerrarModal('modalConfirmar'); if (r) r(v); }
+document.getElementById('confOk').addEventListener('click', () => resolverConf(true));
+document.getElementById('confCancelar').addEventListener('click', () => resolverConf(false));
+document.getElementById('modalConfirmar').addEventListener('click', e => { if (e.target.id === 'modalConfirmar') resolverConf(false); });
+
+// avisar(msg, 'error' | 'info'): aviso flotante con rol de alerta, reemplaza a alert()
+function avisar(msg, tipo = 'error') {
+  let cont = document.getElementById('toasts');
+  if (!cont) { cont = document.createElement('div'); cont.id = 'toasts'; document.body.appendChild(cont); }
+  const d = document.createElement('div');
+  d.className = 'aviso ' + tipo + ' toast';
+  d.setAttribute('role', tipo === 'error' ? 'alert' : 'status');
+  const s = document.createElement('span'); s.textContent = msg; d.appendChild(s);
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'toast-cerrar';
+  b.setAttribute('aria-label', 'Cerrar aviso'); b.textContent = '×';
+  b.addEventListener('click', () => d.remove()); d.appendChild(b);
+  cont.appendChild(d);
+  if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
+}
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 // Tema claro/oscuro: elección compartida entre las páginas del conciliador
-if (localStorage.getItem('tema') === 'claro') document.body.classList.add('claro');
 function pintarTema() {
   $('#btnTema').textContent = document.body.classList.contains('claro')
     ? 'Modo oscuro' : 'Modo claro';
@@ -299,7 +537,7 @@ fetch('/api/demo/estado').then(r => r.json()).then(j => {
   const btnReset = $('#btnResetDemo');
   btnReset.classList.remove('oculto');
   btnReset.addEventListener('click', async () => {
-    if (!confirm('¿Reiniciar la demo del conciliador? Se pierde lo que se haya conciliado en esta sesión.')) return;
+    if (!(await confirmar({ titulo: '¿Reiniciar la demo?', texto: 'Se pierde lo que se haya conciliado en esta sesión y la demo vuelve a quedar como recién sembrada.', ok: 'Reiniciar demo', peligro: true }))) return;
     btnReset.disabled = true;
     try {
       await fetch('/api/demo/reset', { method: 'POST' });
@@ -309,7 +547,7 @@ fetch('/api/demo/estado').then(r => r.json()).then(j => {
   fetch('/api/demo/kit').then(r => r.json()).then(k => {
     if (!k.archivos || !k.archivos.length) return;
     $('#kitLinks').innerHTML = k.archivos.map(f =>
-      `<a href="/static/kit-demo/${encodeURIComponent(f)}" download>⬇ ${esc(f)}</a>`).join('');
+      `<a href="/static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
     $('#kitDemo').classList.remove('oculto');
   }).catch(() => {});
 }).catch(() => {});
@@ -338,6 +576,10 @@ fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
 
 const zona = $('#zona'), input = $('#inputArchivos');
 zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
+zona.addEventListener('keydown', e => {
+    if (!e.target.classList.contains('zona-cta')) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+  });
 zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
 zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
 zona.addEventListener('drop', e => { e.preventDefault(); zona.classList.remove('arrastrando'); agregar([...e.dataTransfer.files]); });
@@ -347,7 +589,7 @@ function agregar(fs) { archivos = archivos.concat(fs); pintarArchivos(); }
 window.quitar = (i, e) => { e.stopPropagation(); archivos.splice(i, 1); pintarArchivos(); };
 function pintarArchivos() {
   $('#listaArchivos').innerHTML = archivos.map((f, i) =>
-    `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)">×</button></li>`).join('');
+    `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)" aria-label="Quitar ${esc(f.name)}">×</button></li>`).join('');
   $('#btnIdentificar').disabled = !archivos.length;
 }
 
@@ -370,7 +612,8 @@ $('#btnIdentificar').addEventListener('click', async () => {
     $('#estadoCarga').textContent = '';
     pintarIdent();
   } catch (err) {
-    $('#estadoCarga').textContent = err.message;
+    $('#estadoCarga').textContent = '';
+    avisar(err.message);
     $('#btnIdentificar').disabled = false;
   }
 });
@@ -459,9 +702,9 @@ $('#btnFbsConf').addEventListener('click', async () => {
     $('#fbsQuery').value = j.query || '';
   }
   $('#fbsConfMsj').textContent = '';
-  $('#modalFbs').classList.remove('oculto');
+  abrirModal('modalFbs');
 });
-$('#btnFbsCerrar').addEventListener('click', () => $('#modalFbs').classList.add('oculto'));
+$('#btnFbsCerrar').addEventListener('click', () => cerrarModal('modalFbs'));
 
 async function guardarConfFbs() {
   const cuerpo = {
@@ -509,7 +752,7 @@ function selectorCuenta(a) {
   }
   const ops = cuentas.map(c =>
     `<option value="${esc(c.id)}" ${a.cuenta_id === c.id ? 'selected' : ''}>${esc(c.etiqueta)}</option>`);
-  return `<select data-archivo="${esc(a.archivo)}">
+  return `<select data-archivo="${esc(a.archivo)}" aria-label="Cuenta para ${esc(a.archivo)}">
     <option value="ignorar" ${!a.cuenta_id ? 'selected' : ''}>— elegir cuenta / ignorar —</option>
     ${ops.join('')}</select>`;
 }
@@ -517,7 +760,7 @@ function selectorCuenta(a) {
 function pintarIdent() {
   $('#identCard').classList.remove('oculto');
   const thead = $('#tablaIdent thead'), tbody = $('#tablaIdent tbody');
-  thead.innerHTML = '<tr><th>Archivo</th><th>Detectado</th><th>Movs</th><th>Rango</th><th>Cuenta</th></tr>';
+  thead.innerHTML = '<tr><th scope="col">Archivo</th><th scope="col">Detectado</th><th scope="col">Movs</th><th scope="col">Rango</th><th scope="col">Cuenta</th></tr>';
   tbody.innerHTML = staging.archivos.map(a => {
     let det;
     if (a.tipo === 'extracto')
@@ -537,7 +780,7 @@ function pintarIdent() {
       <td>${a.tipo === 'desconocido' ? '—' : selectorCuenta(a)}</td>
     </tr>`;
   }).join('');
-  $('#identCard').scrollIntoView({ behavior: 'smooth' });
+  $('#identCard').scrollIntoView(SCROLL);
 }
 
 $('#btnConciliar').addEventListener('click', async () => {
@@ -545,8 +788,10 @@ $('#btnConciliar').addEventListener('click', async () => {
   document.querySelectorAll('#tablaIdent select').forEach(s => {
     asignaciones[s.dataset.archivo] = s.value;
   });
-  $('#estadoConciliar').innerHTML = '<span class="spinner"></span>Conciliando cuenta por cuenta…';
+  const nCuentas = new Set(Object.values(asignaciones).filter(v => v && v !== 'ignorar')).size
+    + (staging.archivos || []).filter(a => a.cuenta_fija).length;
   $('#btnConciliar').disabled = true;
+  mostrarOverlay(nCuentas);
   try {
     const resp = await fetch(`/api/diario/conciliar/${staging.staging_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -556,13 +801,49 @@ $('#btnConciliar').addEventListener('click', async () => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     grupo = json;
     history.replaceState(null, '', conMarca(`?grupo=${grupo.grupo_id}`));
-    $('#estadoConciliar').textContent = '';
+    ocultarOverlay();
     pintarTablero();
   } catch (err) {
-    $('#estadoConciliar').textContent = err.message;
+    overlayError(err.message);
     $('#btnConciliar').disabled = false;
   }
 });
+
+/* ============ overlay de progreso del cruce diario ============ */
+// el endpoint es sincrónico: no hay porcentaje real, así que se muestra la
+// fase y el tiempo transcurrido, nunca una barra inventada
+let ovTimer = null, ovInicio = 0;
+function faseOverlay(n) {
+  const s = Math.round((Date.now() - ovInicio) / 1000);
+  const cuentas = n ? `${n} cuenta${n === 1 ? '' : 's'}` : 'las cuentas';
+  $('#ovFase').textContent = `Cruzando ${cuentas} contra el mayor del FBS` + (s >= 3 ? ` · ${s} s` : '');
+}
+function mostrarOverlay(n) {
+  ovInicio = Date.now();
+  $('#ovTitulo').textContent = 'Conciliando el día';
+  $('#ovError').classList.add('oculto');
+  $('#ovCerrar').classList.add('oculto');
+  $('#ovAnillo').style.display = '';
+  faseOverlay(n);
+  clearInterval(ovTimer);
+  ovTimer = setInterval(() => faseOverlay(n), 1000);
+  abrirModal('overlay');
+}
+function ocultarOverlay() {
+  clearInterval(ovTimer); ovTimer = null;
+  cerrarModal('overlay');
+}
+function overlayError(msg) {
+  clearInterval(ovTimer); ovTimer = null;
+  $('#ovAnillo').style.display = 'none';
+  $('#ovTitulo').textContent = 'No se pudo conciliar el día';
+  $('#ovFase').textContent = '';
+  $('#ovError').textContent = msg;
+  $('#ovError').classList.remove('oculto');
+  $('#ovCerrar').classList.remove('oculto');
+  $('#ovCerrar').focus();
+}
+$('#ovCerrar').addEventListener('click', ocultarOverlay);
 
 function chipEstado(f) {
   if (f.estado === 'ok') {
@@ -583,14 +864,14 @@ function pintarTablero() {
   $('#tableroCard').classList.remove('oculto');
   $('#fechaProc').textContent = `procesado el ${grupo.procesado}`;
   const thead = $('#tablaTablero thead'), tbody = $('#tablaTablero tbody');
-  thead.innerHTML = `<tr><th>Cuenta</th><th>Estado</th>
-    <th title="Días que cubren los extractos subidos en esta corrida (pueden ser varios si se acumularon)">Período</th>
-    <th title="Movimientos que trajeron los extractos subidos hoy">Movs del día</th>
-    <th title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">Arrastrados</th>
-    <th title="Movimientos con asiento encontrado en el FBS (E u O)">Conciliados</th>
-    <th title="Comisiones, impuestos y percepciones del banco (no se registran asiento por asiento)">Gastos banc.</th>
-    <th title="Movimientos del banco que siguen sin asiento: quedan pendientes y se arrastran a mañana">Sin asiento aún</th>
-    <th title="Asientos del FBS que siguen sin movimiento del banco: también se arrastran">FBS sin banco</th><th></th></tr>`;
+  thead.innerHTML = `<tr><th scope="col">Cuenta</th><th scope="col">Estado</th>
+    <th scope="col" title="Días que cubren los extractos subidos en esta corrida (pueden ser varios si se acumularon)">Período</th>
+    <th scope="col" title="Movimientos que trajeron los extractos subidos hoy">Movs del día</th>
+    <th scope="col" title="Pendientes de conciliaciones anteriores que entraron al cruce de hoy">Arrastrados</th>
+    <th scope="col" title="Movimientos con asiento encontrado en el FBS (E u O)">Conciliados</th>
+    <th scope="col" title="Comisiones, impuestos y percepciones del banco (no se registran asiento por asiento)">Gastos banc.</th>
+    <th scope="col" title="Movimientos del banco que siguen sin asiento: quedan pendientes y se arrastran a mañana">Sin asiento aún</th>
+    <th scope="col" title="Asientos del FBS que siguen sin movimiento del banco: también se arrastran">FBS sin banco</th><th scope="col"></th></tr>`;
   tbody.innerHTML = grupo.cuentas.map(f => {
     const r = f.resumen || {};
     const delDia = r.movimientos_banco != null ?
@@ -619,7 +900,7 @@ function pintarTablero() {
   $('#sinAsignar').innerHTML = (grupo.sin_asignar.length ?
     `<div class="aviso info">Archivos no procesados: ${grupo.sin_asignar.map(x =>
       `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '') +
-    `<div style="font-size:12px; color:var(--texto2); margin-top:12px; line-height:1.6;">
+    `<div style="font-size:var(--fs-sm); color:var(--texto2); margin-top:12px; line-height:1.6; max-width:72ch;">
       <b>Cómo leer el tablero:</b> "Sin asiento aún" y "FBS sin banco" no son errores —
       son operaciones cuya contrapartida todavía no llegó (el asiento se carga después,
       o el movimiento aparece en el extracto de mañana). Esos pendientes
@@ -631,7 +912,7 @@ function pintarTablero() {
       re-incluyen días ya procesados (o directamente el mes entero), lo ya conciliado
       se omite solo y no se duplica nada.</div>`;
   cargarHistorial();
-  $('#tableroCard').scrollIntoView({ behavior: 'smooth' });
+  $('#tableroCard').scrollIntoView(SCROLL);
 }
 
 $('#btnExcelTablero').addEventListener('click', () => {
@@ -640,17 +921,14 @@ $('#btnExcelTablero').addEventListener('click', () => {
 
 $('#btnCopiarTablero').addEventListener('click', async () => {
   const url = `${location.origin}${conMarca(`${location.pathname}?grupo=${grupo.grupo_id}`)}`;
-  try { await navigator.clipboard.writeText(url); } catch { prompt('Copiá el link:', url); return; }
+  try { await navigator.clipboard.writeText(url); } catch { avisar('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
   $('#btnCopiarTablero').textContent = 'Link copiado';
   setTimeout(() => { $('#btnCopiarTablero').textContent = 'Copiar link del tablero'; }, 2000);
 });
 
 /* ============ memoria diaria (historial persistente) ============ */
 $('#btnBorrarMemoria').addEventListener('click', async () => {
-  if (!confirm('¿Borrar TODA la memoria de conciliados?\n\n' +
-      'Los asientos y movimientos que ya se conciliaron en corridas anteriores ' +
-      'volverán a aparecer como pendientes en las próximas traídas.\n' +
-      'No borra los tableros ni el arrastre. Pensado para la fase de prueba.')) return;
+  if (!(await confirmar({ titulo: '¿Borrar toda la memoria de conciliados?', texto: 'Los asientos y movimientos que ya se conciliaron en corridas anteriores volverán a aparecer como pendientes en las próximas traídas. No borra los tableros ni el arrastre. Pensado para la fase de prueba.', ok: 'Borrar memoria', peligro: true }))) return;
   const b = $('#btnBorrarMemoria');
   b.disabled = true;
   try {
@@ -676,16 +954,16 @@ async function cargarHistorial() {
       return;
     }
     const actual = grupo && grupo.grupo_id;
-    $('#tablaHist thead').innerHTML = `<tr><th>Día</th><th>Bancos</th><th>Cuentas</th>
-      <th title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
-      <th title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
-      <th title="Movimientos procesados (incluye los arrastrados de días previos)">Movimientos</th>
-      <th title="Pendientes que venían arrastrados de días anteriores">Arrastrados</th>
-      <th title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
-      <th>% explicado</th><th></th></tr>`;
+    $('#tablaHist thead').innerHTML = `<tr><th scope="col">Día</th><th scope="col">Bancos</th><th scope="col">Cuentas</th>
+      <th scope="col" title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
+      <th scope="col" title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
+      <th scope="col" title="Movimientos procesados (incluye los arrastrados de días previos)">Movimientos</th>
+      <th scope="col" title="Pendientes que venían arrastrados de días anteriores">Arrastrados</th>
+      <th scope="col" title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
+      <th scope="col">% explicado</th><th scope="col"></th></tr>`;
     const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
     $('#tablaHist tbody').innerHTML = json.grupos.map(g => `
-      <tr style="${g.grupo_id === actual ? 'background:rgba(56,189,248,0.07);' : ''}">
+      <tr style="${g.grupo_id === actual ? 'background:color-mix(in srgb, var(--acento) 7%, transparent);' : ''}">
         <td style="white-space:nowrap">${esc(g.procesado || '')}${g.hora ? ' · ' + esc(g.hora) : ''}
           ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${dia(g.desde)}${
             g.hasta && g.hasta !== g.desde ? ' al ' + dia(g.hasta) : ''}</small>` : ''}
@@ -699,27 +977,30 @@ async function cargarHistorial() {
         <td class="num">${g.pendientes || ''}</td>
         <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
         <td style="white-space:nowrap"><a href="${conMarca(`?grupo=${esc(g.grupo_id)}`)}" style="color:var(--azul)">Abrir tablero →</a>
-          <button onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
+          <button class="secundario btn-fila peligro" onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
+            aria-label="Eliminar la corrida del ${esc(g.procesado || '')}"
             title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
-            style="font-family:inherit;font-size:11px;border:1px solid rgba(248,81,100,0.4);background:rgba(248,81,100,0.12);color:var(--rojo);cursor:pointer;font-weight:600;margin-left:8px;border-radius:8px;padding:3px 9px;">Eliminar</button></td>
+            style="margin-left:8px;">Eliminar</button></td>
       </tr>`).join('');
   } catch {}
 }
 cargarHistorial();
 
 window.eliminarGrupo = async (id, fecha) => {
-  if (!confirm(`¿Eliminar la corrida del ${fecha}?\n\n` +
-    'Se borra el tablero y el detalle de sus cuentas (incluido lo conciliado a mano ahí), ' +
-    'y el arrastre de cada cuenta vuelve a su corrida anterior.\n\n' +
-    'Usalo cuando se subió un archivo equivocado y hay que rehacer la carga. ' +
-    'Esta acción no se puede deshacer.')) return;
+  const ok = await confirmar({
+    titulo: `Eliminar la corrida del ${fecha}`,
+    texto: 'Se borra el tablero y el detalle de sus cuentas, incluido lo conciliado a mano ahí, ' +
+      'y el arrastre de cada cuenta vuelve a su corrida anterior. ' +
+      'Usalo cuando se subió un archivo equivocado y hay que rehacer la carga. Esta acción no se puede deshacer.',
+    ok: 'Eliminar corrida', peligro: true });
+  if (!ok) return;
   try {
     const resp = await fetch(`/api/diario/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     if (grupo && grupo.grupo_id === id) { location.href = location.pathname; return; }
     cargarHistorial();
-  } catch (err) { alert(err.message); }
+  } catch (err) { avisar(err.message); }
 };
 
 // al entrar con ?grupo=... se retoma el tablero guardado

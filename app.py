@@ -6,6 +6,7 @@ Uso:
 o simplemente:
     python app.py
 """
+import hashlib
 import io
 import json
 import os
@@ -955,6 +956,50 @@ def _aplicar_vetos_datos(datos) -> int:
     return n
 
 
+def _veto_id(v) -> str:
+    """Los vetos viejos no traen id: se deriva del par para poder borrarlos."""
+    return v.get("id") or hashlib.sha1(
+        f'{v.get("mov")}|{v.get("asiento")}'.encode("utf-8")).hexdigest()[:12]
+
+
+def _veto_legible(v) -> dict:
+    """Abre las claves 'fecha|descripcion|neto|comprobante' y
+    'hoja|asiento|fecha|debe|haber' para mostrarlas en la interfaz."""
+    def num(s):
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            return None
+    m = (v.get("mov") or "").split("|")
+    a = (v.get("asiento") or "").split("|")
+    mov = {"fecha": m[0] if m else "", "descripcion": "|".join(m[1:-2]) if len(m) >= 4 else "",
+           "neto": num(m[-2]) if len(m) >= 4 else None, "comprobante": m[-1] if len(m) >= 4 else ""}
+    asiento = {"hoja": a[0] if a else "", "asiento": "|".join(a[1:-3]) if len(a) >= 5 else "",
+               "fecha": a[-3] if len(a) >= 5 else "", "debe": num(a[-2]) if len(a) >= 5 else None,
+               "haber": num(a[-1]) if len(a) >= 5 else None}
+    return {"id": _veto_id(v), "metodo": v.get("metodo"), "job": v.get("job"),
+            "fecha": v.get("fecha"), "mov": mov, "asiento": asiento}
+
+
+@app.get("/api/vetos")
+def api_vetos_listar():
+    """Cruces anulados por el usuario (vetos): pares que ninguna corrida
+    vuelve a proponer, para que se puedan ver y revertir."""
+    return {"vetos": [_veto_legible(v) for v in _cargar_vetos()]}
+
+
+@app.delete("/api/vetos/{veto_id}")
+def api_vetos_borrar(veto_id: str):
+    """Saca un veto: el par puede volver a cruzarse en la próxima corrida.
+    No toca los resultados ya guardados."""
+    vetos = _cargar_vetos()
+    quedan = [v for v in vetos if _veto_id(v) != veto_id]
+    if len(quedan) == len(vetos):
+        return JSONResponse(status_code=404, content={"error": "Cruce anulado no encontrado"})
+    _guardar_vetos(quedan)
+    return {"vetos": [_veto_legible(v) for v in quedan]}
+
+
 # --- reclasificaciones manuales: el usuario mueve un movimiento del banco
 # entre "Banco sin contabilizar", "Gastos bancarios" y "Haberes", explicando
 # el porqué. La decisión persiste por clave y se respeta en toda corrida
@@ -1839,7 +1884,8 @@ def api_anular_cruce(job_id: str, cuerpo: dict = Body(...)):
         return JSONResponse(status_code=404, content={"error": "Cruce no encontrado"})
 
     vetos = _cargar_vetos()
-    vetos.append({"mov": _clave_mov_dict(match["banco"]),
+    vetos.append({"id": uuid.uuid4().hex[:12],
+                  "mov": _clave_mov_dict(match["banco"]),
                   "asiento": _clave_asiento_dict(match["asiento"]),
                   "metodo": match.get("metodo"), "job": job_id,
                   "fecha": date.today().isoformat()})
