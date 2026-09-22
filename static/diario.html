@@ -175,6 +175,7 @@
   .aviso { font-size: var(--fs-md); padding: 10px 14px; border-radius: 10px; margin-top: 12px; line-height: 1.55; }
   .aviso.error { background: color-mix(in srgb, var(--rojo) 10%, transparent); border: 1px solid color-mix(in srgb, var(--rojo) 35%, transparent); color: var(--rojo); }
   .aviso.info { background: color-mix(in srgb, var(--acento) 8%, transparent); border: 1px solid color-mix(in srgb, var(--acento) 30%, transparent); color: var(--texto); }
+  .aviso.alerta { background: color-mix(in srgb, var(--ambar) 9%, transparent); border: 1px solid color-mix(in srgb, var(--ambar) 35%, transparent); color: var(--texto); }
   input[type=checkbox] { accent-color: var(--acento); }
   .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color: var(--acento); border-radius:50%; animation: g .8s linear infinite; vertical-align:-2px; margin-right:6px; }
   @keyframes g { to { transform: rotate(360deg); } }
@@ -355,6 +356,28 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
     </div>
   </div>
 
+  <div id="modalHist" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modalHistTitulo" style="z-index:120;">
+    <div class="tarjeta" style="max-width:1100px; width:100%; margin:0; max-height:90vh; overflow:auto;">
+      <h2 class="seccion" id="modalHistTitulo">Historial de conciliados</h2>
+      <p style="font-size:var(--fs-sm); color:var(--texto2); margin-bottom:12px; max-width:80ch;">
+        Todo lo que el sistema dio por resuelto en esta cuenta, corrida por corrida: con qué
+        asiento se cruzó cada movimiento y <b>cómo</b> lo cruzó. Es lo que la memoria de
+        conciliados da por consumido — por eso no vuelve a aparecer en las corridas siguientes.
+        Buscá por importe, fecha, nombre o número de asiento para corroborar un caso puntual.</p>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+        <select id="histCuenta" aria-label="Cuenta"></select>
+        <input id="histBuscar" placeholder="Buscar (importe, fecha, nombre, asiento…)"
+               aria-label="Buscar en el historial" style="flex:1; min-width:220px;">
+        <span id="histEstado" role="status" aria-live="polite" style="font-size:var(--fs-sm); color:var(--texto2);"></span>
+      </div>
+      <div class="contenedor-tabla"><table id="tablaHistConc"><thead></thead><tbody></tbody></table></div>
+      <div class="acciones" style="margin-top:12px;">
+        <span style="flex:1"></span>
+        <button class="secundario" id="btnHistCerrar" data-cerrar>Cerrar</button>
+      </div>
+    </div>
+  </div>
+
   <section class="tarjeta oculto" id="identCard">
     <h2 class="seccion">Paso 2 — Confirmá qué es cada archivo</h2>
     <p style="font-size:var(--fs-sm);color:var(--texto2);margin-bottom:10px;">
@@ -390,6 +413,8 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
     <div class="acciones">
       <button class="secundario" id="btnExcelTablero"
         title="Excel con el resumen por cuenta y las listas consolidadas del día (pendientes del banco, haberes, gastos y pendientes del mayor). El detalle completo de una cuenta se exporta desde adentro de esa conciliación.">Exportar a Excel</button>
+      <button class="secundario" id="btnHistConc"
+        title="Qué cruzó el sistema en esta y en las corridas anteriores de una cuenta, y contra qué asiento. Sirve para corroborar un movimiento que figura sin asiento: si su asiento ya se consumió antes, acá se ve con qué se cruzó.">Historial de conciliados</button>
       <button class="secundario" id="btnCopiarTablero">Copiar link del tablero</button>
       <button class="secundario" onclick="location.href = location.pathname">Nueva conciliación diaria</button>
     </div>
@@ -628,6 +653,29 @@ const hoyIso = new Date().toISOString().slice(0, 10);
 $('#fbsDesde').value = hoyIso;
 $('#fbsHasta').value = hoyIso;
 
+// El mayor se trae por rango: si el rango no cubre las fechas del extracto,
+// esos movimientos no tienen contra qué cruzar y figuran "sin asiento" aunque
+// en el FBS estén. Por eso el rango se copia solo del extracto subido, salvo
+// que el usuario lo haya elegido a mano.
+let rangoTocado = false;
+['#fbsDesde', '#fbsHasta'].forEach(sel =>
+  $(sel).addEventListener('change', () => { rangoTocado = true; }));
+
+function rangoDesdeExtractos() {
+  if (rangoTocado || !staging) return;
+  const fechas = (staging.archivos || [])
+    .filter(a => a.tipo === 'extracto')
+    .flatMap(a => [a.desde, a.hasta]).filter(Boolean).sort();
+  if (!fechas.length) return;
+  $('#fbsDesde').value = fechas[0];
+  $('#fbsHasta').value = fechas[fechas.length - 1] > hoyIso ? fechas[fechas.length - 1] : hoyIso;
+  const m = $('#fbsSqlMsj');
+  if (!m.textContent) {
+    m.style.color = 'var(--texto2)';
+    m.textContent = 'Rango tomado de los extractos subidos.';
+  }
+}
+
 async function refrescarFbsSql() {
   try {
     const j = await (await fetch(conMarca(`${BASE}api/fbs-sql`))).json();
@@ -785,6 +833,7 @@ function pintarIdent() {
       <td>${a.tipo === 'desconocido' ? '—' : selectorCuenta(a)}</td>
     </tr>`;
   }).join('');
+  rangoDesdeExtractos();
   $('#identCard').scrollIntoView(SCROLL);
 }
 
@@ -863,6 +912,23 @@ function chipEstado(f) {
   return `<span class="chip err">${esc(f.estado)}</span>`;
 }
 
+const diaCorto = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
+
+function textoCobertura(c) {
+  const partes = [];
+  if (c.antes) partes.push(`${c.antes} movimiento${c.antes === 1 ? '' : 's'} anterior${c.antes === 1 ? '' : 'es'} al ${diaCorto(c.mayor_desde)}`);
+  if (c.despues) partes.push(`${c.despues} posterior${c.despues === 1 ? '' : 'es'} al ${diaCorto(c.mayor_hasta)}`);
+  return `el mayor que se trajo del FBS cubre del ${diaCorto(c.mayor_desde)} al ${diaCorto(c.mayor_hasta)},
+    y el extracto llega del ${diaCorto(c.banco_desde)} al ${diaCorto(c.banco_hasta)}:
+    ${partes.join(' y ')} no tienen asiento contra el cual cruzarse — no es que falte en el FBS,
+    es que no se trajo. Traé el mayor desde el ${diaCorto(c.banco_desde)} y volvé a conciliar.`;
+}
+
+function chipCobertura(c) {
+  if (!c) return '';
+  return ` <span class="chip warn" title="${esc(textoCobertura(c).replace(/\s+/g, ' '))}">mayor incompleto: ${c.fuera} movs fuera del rango</span>`;
+}
+
 function pintarTablero() {
   $('#identCard').classList.add('oculto');
   $('#cargaCard').classList.add('oculto');
@@ -888,7 +954,7 @@ function pintarTablero() {
       (f.desde === f.hasta ? dia(f.desde) : `${dia(f.desde)} → ${dia(f.hasta)}`) : '';
     return `<tr>
       <td>${esc(f.etiqueta)}</td>
-      <td>${chipEstado(f)}</td>
+      <td>${chipEstado(f)}${chipCobertura(f.cobertura_mayor)}</td>
       <td style="white-space:nowrap">${periodo}${f.desde && f.desde !== f.hasta ?
         ' <span class="chip extracto" title="Esta corrida acumuló extractos de más de un día: se cruzan todos juntos (es lo correcto: un pago de un día puede tener su asiento al día siguiente)">varios días</span>' : ''}</td>
       <td class="num">${delDia ?? ''}</td>
@@ -902,9 +968,13 @@ function pintarTablero() {
         style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
     </tr>`;
   }).join('');
+  const incompletas = grupo.cuentas.filter(f => f.cobertura_mayor);
   $('#sinAsignar').innerHTML = (grupo.sin_asignar.length ?
     `<div class="aviso info">Archivos no procesados: ${grupo.sin_asignar.map(x =>
       `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '') +
+    (incompletas.length ?
+      `<div class="aviso alerta"><b>El mayor no cubre todo el extracto.</b> ${incompletas.map(f =>
+        `<div style="margin-top:6px"><b>${esc(f.etiqueta)}</b>: ${textoCobertura(f.cobertura_mayor)}</div>`).join('')}</div>` : '') +
     `<div style="font-size:var(--fs-sm); color:var(--texto2); margin-top:12px; line-height:1.6; max-width:72ch;">
       <b>Cómo leer el tablero:</b> "Sin asiento aún" y "FBS sin banco" no son errores —
       son operaciones cuya contrapartida todavía no llegó (el asiento se carga después,
@@ -930,6 +1000,77 @@ $('#btnCopiarTablero').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(url); } catch { avisar('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
   $('#btnCopiarTablero').textContent = 'Link copiado';
   setTimeout(() => { $('#btnCopiarTablero').textContent = 'Copiar link del tablero'; }, 2000);
+});
+
+/* ============ historial de conciliados por cuenta ============ */
+// Para el control que antes no se podía hacer: un movimiento figura "sin
+// asiento" y en el FBS está — acá se ve si ese asiento ya se había consumido
+// en otra corrida, y con qué movimiento se cruzó.
+let histTimer = null;
+
+function pintarHistConc(json) {
+  const thead = $('#tablaHistConc thead'), tbody = $('#tablaHistConc tbody');
+  const pesos = n => n == null ? '' : n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  thead.innerHTML = `<tr><th scope="col">Corrida</th><th scope="col">Cómo se resolvió</th>
+    <th scope="col">Movimiento del banco</th><th scope="col" class="num">Importe</th>
+    <th scope="col">Asiento del FBS</th><th scope="col" class="num">Debe / Haber</th><th scope="col"></th></tr>`;
+  if (!json.filas.length) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:var(--texto2)">
+      Nada conciliado todavía para esta cuenta${$('#histBuscar').value ? ' con ese texto' : ''}.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = json.filas.map(f => {
+    const b = f.banco || {}, a = f.asiento || {};
+    const imp = b.debito ? `-${pesos(b.debito)}` : (b.credito ? pesos(b.credito) : '');
+    return `<tr>
+      <td style="white-space:nowrap">${esc(f.procesado || '')}${f.hora ? '<br><small style="color:var(--texto2)">' + esc(f.hora) + '</small>' : ''}</td>
+      <td>${esc(f.tipo)}<br><small style="color:var(--texto2)">${esc(f.metodo || '')}</small></td>
+      <td>${b.fecha ? diaCorto(b.fecha) + ' · ' : ''}${esc(b.descripcion || '')}
+        ${b.comprobante ? `<br><small style="color:var(--texto2)">comp. ${esc(b.comprobante)}</small>` : ''}</td>
+      <td class="num">${imp}</td>
+      <td>${a.fecha ? diaCorto(a.fecha) + ' · ' : ''}${a.asiento ? 'as. ' + esc(a.asiento) : ''}
+        ${a.hoja ? `<span class="chip ${a.hoja === 'E' ? 'ok' : 'extracto'}">${esc(a.hoja)}</span>` : ''}
+        ${a.referencia || a.comentario ? `<br><small style="color:var(--texto2)">${esc(a.referencia || '')} ${esc(a.comentario || '')}</small>` : ''}</td>
+      <td class="num">${a.debe ? pesos(a.debe) : ''}${a.haber ? '-' + pesos(a.haber) : ''}</td>
+      <td><a href="${conMarca(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank" style="color:var(--azul); white-space:nowrap">Ver corrida →</a></td>
+    </tr>`;
+  }).join('');
+}
+
+async function cargarHistConc() {
+  const cuenta = $('#histCuenta').value || '';
+  const q = $('#histBuscar').value.trim();
+  $('#histEstado').innerHTML = '<span class="spinner"></span>Buscando…';
+  try {
+    const url = `${BASE}api/diario/conciliados?cuenta=${encodeURIComponent(cuenta)}&q=${encodeURIComponent(q)}`;
+    const resp = await fetch(url);
+    const json = await resp.json();
+    if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    $('#histEstado').textContent =
+      `${json.total} resultado${json.total === 1 ? '' : 's'} en las últimas ${json.corridas} corrida${json.corridas === 1 ? '' : 's'}`;
+    pintarHistConc(json);
+  } catch (err) {
+    $('#histEstado').textContent = err.message;
+  }
+}
+
+function abrirHistConc(cuentaId) {
+  const cuentas = (grupo?.cuentas || []).filter(c => c.cuenta_id);
+  $('#histCuenta').innerHTML = cuentas.map(c =>
+    `<option value="${esc(c.cuenta_id)}">${esc(c.etiqueta)}</option>`).join('') ||
+    '<option value="">todas las cuentas</option>';
+  if (cuentaId) $('#histCuenta').value = cuentaId;
+  $('#histBuscar').value = '';
+  abrirModal('modalHist', '#histBuscar');
+  cargarHistConc();
+}
+
+$('#btnHistConc').addEventListener('click', () => abrirHistConc());
+$('#btnHistCerrar').addEventListener('click', () => cerrarModal('modalHist'));
+$('#histCuenta').addEventListener('change', cargarHistConc);
+$('#histBuscar').addEventListener('input', () => {
+  clearTimeout(histTimer);
+  histTimer = setTimeout(cargarHistConc, 350);
 });
 
 /* ============ memoria diaria (historial persistente) ============ */
@@ -1019,6 +1160,10 @@ window.eliminarGrupo = async (id, fecha) => {
     if (!resp.ok) throw new Error(json.error || 'no encontrado');
     grupo = json;
     pintarTablero();
+    // ?conciliados=<cuenta> abre el historial de esa cuenta: es el link que
+    // trae el detalle de una conciliación ("¿esto ya se cruzó antes?")
+    const c = new URLSearchParams(location.search).get('conciliados');
+    if (c) abrirHistConc(c);
   } catch (err) {
     document.querySelector('main').insertAdjacentHTML('afterbegin',
       `<div class="aviso error">No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);

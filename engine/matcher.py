@@ -32,6 +32,11 @@ GASTO_RE = re.compile(
 
 NUM_RE = re.compile(r'\d{5,}')
 
+# Ventana para los cruces "a ciegas": mismo importe, sin comprobante ni una
+# sola palabra en común. Más allá de esto es más probable que sean dos
+# operaciones distintas del mismo monto que la misma.
+TOL_CIEGO_DIAS = 10
+
 # --- Nota de débito mensual de gastos bancarios -----------------------------
 # Los gastos no se contabilizan día por día: se agrupan en una sola nota de
 # débito mensual, separando comisiones gravadas al 21%, intereses al 10,5%
@@ -229,6 +234,31 @@ def match_tolerancia(banco_libres, asiento_libres):
     return pares, usados_b, usados_a
 
 
+PALABRA_RE = re.compile(r'[a-zñ]{4,}')
+# palabras que aparecen en casi todos los textos y no distinguen nada
+VACIAS = {'banco', 'santander', 'frances', 'galicia', 'macro', 'ciudad', 'cuenta',
+          'corriente', 'pesos', 'transferencia', 'realizada', 'recibida', 'pago',
+          'pagos', 'terceros', 'varios', 'fecha', 'importe', 'movimiento'}
+
+
+def _palabras(texto: str) -> set[str]:
+    """Palabras significativas de un texto, sin acentos ni relleno."""
+    t = (texto or '').lower()
+    for a, b in (('á', 'a'), ('é', 'e'), ('í', 'i'), ('ó', 'o'), ('ú', 'u'), ('ü', 'u')):
+        t = t.replace(a, b)
+    return set(PALABRA_RE.findall(t)) - VACIAS
+
+
+def _afinidad(m, a) -> int:
+    """Cuánto se parecen los textos de un movimiento y un asiento (palabras en
+    común). Solo se usa para DESEMPATAR entre candidatos que ya coinciden en
+    importe y fecha: el mayor del FBS casi nunca repite el texto del banco,
+    así que exigirlo perdería cruces buenos, pero cuando dos candidatos empatan
+    gana el que además comparte el nombre o el concepto."""
+    return len(_palabras(f"{m.descripcion} {m.detalle}")
+               & _palabras(f"{a.referencia} {a.comentario}"))
+
+
 def _numeros(texto: str) -> set[str]:
     """Extrae números de referencia (5+ dígitos) de un texto."""
     return {n.lstrip('0') for n in NUM_RE.findall(texto or '') if n.lstrip('0')}
@@ -352,7 +382,8 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
         lista_a = [a for a in idx.get(clave, [])]
         if not lista_a:
             continue
-        # greedy por menor distancia de fechas
+        # greedy por menor distancia de fechas; entre empates gana el que
+        # comparte palabras (nombre del beneficiario, concepto) con el asiento
         pares = []
         for m in lista_b:
             for a in lista_a:
@@ -360,14 +391,22 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
                     d = abs((m.fecha - a.fecha).days)
                 else:
                     d = 9999
-                if d <= tolerancia_dias:
-                    pares.append((d, m, a))
-        pares.sort(key=lambda p: p[0])
-        for d, m, a in pares:
+                af = _afinidad(m, a)
+                # sin comprobante ni texto en común el cruce es a ciegas: ahí
+                # la ventana se achica. Con 45 días terminaba cruzando un pago
+                # con un asiento ajeno del mismo importe de dos semanas antes
+                # (feedback del cliente) y consumiéndolo para siempre.
+                if d <= (tolerancia_dias if af else TOL_CIEGO_DIAS):
+                    pares.append((d, -af, m, a))
+        pares.sort(key=lambda p: (p[0], p[1], p[2].id, p[3].id))
+        for d, menos_af, m, a in pares:
             if m.id in usados_b or a.id in usados_a:
                 continue
+            # aviso honesto: acá no hubo comprobante en común, solo importe y
+            # fecha. Es el cruce que conviene revisar a mano.
+            detalle = "" if menos_af else " · sin comprobante ni texto en común"
             matches.append({"banco": m, "asiento": a,
-                            "metodo": f"importe+fecha (±{d}d)"})
+                            "metodo": f"importe+fecha (±{d}d){detalle}"})
             usados_b.add(m.id)
             usados_a.add(a.id)
     banco_libres = [m for m in banco_libres if m.id not in usados_b]

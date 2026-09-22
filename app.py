@@ -724,6 +724,11 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
                                         stag.get("marca") or marca)
     for info in infos:
         _agregar_a_staging(stag, info["archivo"], info, cuentas)
+    # el rango PEDIDO (no el de los asientos que volvieron): es lo que después
+    # deja avisar "el mayor que trajiste no llega a las fechas del extracto"
+    ant = stag.get("rango_fbs")
+    stag["rango_fbs"] = [min(d1.isoformat(), ant[0]) if ant else d1.isoformat(),
+                         max(d2.isoformat(), ant[1]) if ant else d2.isoformat()]
     return {"staging_id": staging_id, "archivos": stag["resumen"],
             "marca": stag.get("marca"),
             "fbs_sql": {"cuentas": len(infos),
@@ -1172,6 +1177,30 @@ def _procesar_confirmaciones(prev, g):
     return confirmados, pendientes, canceladas
 
 
+def _cobertura_mayor(movs, rango_mayor):
+    """El mayor se trae por rango de fechas: lo que el banco tiene FUERA de ese
+    rango no tiene contra qué cruzar. No es que falte el asiento en el FBS —
+    es que no se trajo. Devuelve None si el mayor cubre todo el extracto.
+
+    El rango del mayor sale de los archivos/traídas de HOY (no de los asientos
+    que sobrevivieron a la memoria de conciliados: si el mayor de hoy ya estaba
+    todo conciliado, el rango igual se trajo).
+
+    Del lado de adelante se toleran 2 días: es normal que los últimos
+    movimientos del banco todavía no tengan asiento cargado."""
+    d1, d2 = rango_mayor
+    fb = [m.fecha for m in movs if m.fecha]
+    if not d1 or not d2 or not fb:
+        return None
+    antes = sum(1 for m in movs if m.fecha and m.fecha < d1)
+    despues = sum(1 for m in movs if m.fecha and (m.fecha - d2).days > 2)
+    if not antes and not despues:
+        return None
+    return {"mayor_desde": d1.isoformat(), "mayor_hasta": d2.isoformat(),
+            "banco_desde": min(fb).isoformat(), "banco_hasta": max(fb).isoformat(),
+            "antes": antes, "despues": despues, "fuera": antes + despues}
+
+
 def _resumen_mini(r):
     return {
         "movimientos_banco": r["movimientos_banco"],
@@ -1215,11 +1244,16 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                                 "motivo": fila.get("error") or "sin cuenta asignada"})
             continue
         info = stag["archivos"][nombre]
-        g = grupos.setdefault(cid, {"movs": [], "e": [], "o": [], "archivos": []})
+        g = grupos.setdefault(cid, {"movs": [], "e": [], "o": [], "archivos": [],
+                                    "mayor_fechas": []})
         g["archivos"].append(nombre)
         if fila["tipo"] == "extracto":
             g["movs"].extend(info["movimientos"])
         else:
+            # qué rango de fechas trajo el mayor de hoy (para avisar si se
+            # quedó corto contra el extracto)
+            g["mayor_fechas"] += [date.fromisoformat(fila[k]) for k in ("desde", "hasta")
+                                  if fila.get(k)]
             # un archivo FBS puede traer la hoja E, la O, o las dos juntas
             g["e"].extend(a for a in info["asientos"] if a.hoja == "E")
             g["o"].extend(a for a in info["asientos"] if a.hoja == "O")
@@ -1288,6 +1322,14 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         # confirmación; si el E de hoy la trae, pasa directo a Conciliados (E)
         conf_e, carried_o, contrap_cancel = _procesar_confirmaciones(prev, g)
 
+        # ¿el mayor que se trajo cubre las fechas del extracto? Se mira ANTES
+        # del arrastre: lo arrastrado trae asientos viejos y taparía el hueco.
+        fm = g.get("mayor_fechas") or []
+        pedido = stag.get("rango_fbs")
+        if fm and pedido:      # el mayor vino del FBS directo: vale lo pedido
+            fm = [date.fromisoformat(pedido[0]), date.fromisoformat(pedido[1])]
+        cobertura = _cobertura_mayor(movs, (min(fm), max(fm)) if fm else (None, None))
+
         # arrastre: los pendientes de la conciliación anterior de esta cuenta
         # entran al cruce de hoy (lo de ayer aparece en el FBS de hoy y viceversa)
         arr_movs, arr_asientos = _aplicar_arrastre(cid, movs, g, arrastre)
@@ -1318,6 +1360,8 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["job_id"] = job_id
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
         salida["grupo_diario"] = grupo_id
+        if cobertura:
+            salida["cobertura_mayor"] = cobertura
         # ciclo O -> E: sumar confirmados y arrastrar los que siguen pendientes
         if conf_e or carried_o:
             salida["conciliados_e"].extend(conf_e)
@@ -1356,6 +1400,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                         "job_id": job_id, "archivos": g["archivos"],
                         "desde": fechas and min(fechas).isoformat() or None,
                         "hasta": fechas and max(fechas).isoformat() or None,
+                        "cobertura_mayor": cobertura,
                         "resumen": _resumen_mini(salida["resumen"])})
 
     _guardar_arrastre(arrastre)
@@ -1435,6 +1480,96 @@ def api_diario_historial(marca: str = ""):
     for g in grupos:
         g.pop("_orden")
     return {"grupos": grupos}
+
+
+def _filas_conciliadas(datos: dict) -> list[dict]:
+    """Todo lo que una conciliación dio por resuelto, como filas planas
+    banco <-> asiento. Es lo que la memoria de conciliados da por consumido:
+    por eso un movimiento ya cruzado no vuelve a aparecer en las corridas
+    siguientes."""
+    filas = []
+
+    def fila(tipo, metodo, banco=None, asiento=None):
+        filas.append({"tipo": tipo, "metodo": metodo,
+                      "banco": banco, "asiento": asiento})
+
+    for m in datos.get("conciliados_e", []):
+        fila("Cruzado con la cuenta E", m.get("metodo"), m.get("banco"), m.get("asiento"))
+    for m in datos.get("conciliados_o", []):
+        fila("Conciliado contra la O" + (" (confirmado)" if m.get("confirmado") else ""),
+             m.get("metodo"), m.get("banco"), m.get("asiento"))
+    for m in datos.get("conciliados_manual", []):
+        bancos, mayor = m.get("banco") or [], m.get("mayor") or []
+        for i in range(max(len(bancos), len(mayor))):
+            fila("Conciliado a mano", m.get("nota") or "conciliación manual",
+                 bancos[i] if i < len(bancos) else None,
+                 mayor[i] if i < len(mayor) else None)
+    for b in datos.get("gastos_bancarios", []):
+        fila("Gasto bancario", "no se cruza asiento por asiento", b, None)
+    return filas
+
+
+def _texto_fila(f: dict) -> str:
+    b, a = f.get("banco") or {}, f.get("asiento") or {}
+    return " ".join(str(x) for x in (
+        f.get("tipo"), f.get("metodo"), b.get("fecha"), b.get("descripcion"),
+        b.get("detalle"), b.get("comprobante"), b.get("debito"), b.get("credito"),
+        a.get("hoja"), a.get("asiento"), a.get("fecha"), a.get("referencia"),
+        a.get("comentario"), a.get("debe"), a.get("haber")) if x)
+
+
+@app.get("/api/diario/conciliados")
+def api_diario_conciliados(cuenta: str = "", q: str = "", corridas: int = 40,
+                           limite: int = 1500):
+    """Historial de conciliados de una cuenta en el modo diario: qué cruzó cada
+    corrida y contra qué asiento. Sirve para el control que no se podía hacer:
+    si un movimiento del banco figura sin asiento, acá se ve si ese asiento ya
+    se había consumido antes — y con qué movimiento se cruzó.
+
+    Se arma leyendo los tableros guardados (no una copia aparte), así refleja
+    también lo que se conció a mano o se anuló después de la corrida."""
+    num = cuentas_mod.numero_cuenta(cuenta) if cuenta else ""
+    grupos = []
+    for nombre in os.listdir(DATOS_DIR):
+        if nombre.startswith("grupo_") and nombre.endswith(".json"):
+            ruta = os.path.join(DATOS_DIR, nombre)
+            grupos.append((os.path.getmtime(ruta), ruta))
+    grupos.sort(reverse=True)
+
+    filas, corridas_leidas, truncado = [], 0, False
+    for _, ruta in grupos:
+        if corridas_leidas >= max(1, corridas) or len(filas) >= limite:
+            truncado = truncado or len(filas) >= limite
+            break
+        try:
+            with open(ruta, encoding="utf-8") as f:
+                g = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        usadas = [c for c in g.get("cuentas", [])
+                  if c.get("estado") == "ok" and c.get("job_id")
+                  and (not cuenta or cuentas_mod.numero_cuenta(c.get("cuenta_id")) == num)]
+        if not usadas:
+            continue
+        corridas_leidas += 1
+        for c in usadas:
+            datos = _obtener(c["job_id"])
+            if not datos:
+                continue
+            cabecera = {"grupo_id": g.get("grupo_id"), "job_id": c["job_id"],
+                        "cuenta_id": c.get("cuenta_id"), "etiqueta": c.get("etiqueta"),
+                        "procesado": g.get("procesado"), "hora": g.get("hora")}
+            for f in _filas_conciliadas(datos):
+                filas.append({**cabecera, **f})
+
+    if q:
+        termino = q.strip().lower()
+        filas = [f for f in filas if termino in _texto_fila(f).lower()]
+    filas.sort(key=lambda f: ((f.get("banco") or {}).get("fecha")
+                              or (f.get("asiento") or {}).get("fecha") or ""),
+               reverse=True)
+    return {"cuenta": cuenta, "corridas": corridas_leidas, "total": len(filas),
+            "truncado": truncado, "filas": filas[:limite]}
 
 
 @app.delete("/api/diario/memoria")
