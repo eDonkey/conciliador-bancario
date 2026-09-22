@@ -180,13 +180,34 @@ def slug(s: str) -> str:
     return re.sub(r'[^a-z0-9]', '', plano.lower())
 
 
+def _palabras(s: str) -> set:
+    """Palabras normalizadas de un nombre de marca, sin separadores."""
+    plano = unicodedata.normalize("NFD", s or "")
+    plano = "".join(ch for ch in plano if not unicodedata.combining(ch))
+    return {p for p in re.split(r'[^a-z0-9]+', plano.lower()) if p}
+
+
 def filtrar_marca(cuentas: list[dict], marca: str) -> list[dict]:
     """Cuentas de una marca. Matchea por nombre completo o abreviado:
-    'gac-kyoto' alcanza para 'Gac - Kyoto Driving Automoviles SA'."""
+    'gac-kyoto' alcanza para 'Gac - Kyoto Driving Automoviles SA'.
+
+    Si así no encuentra nada, compara las palabras sin importar el orden:
+    el nombre viaja en la URL desde el hub y un renombre ('Renault - Lumiere'
+    contra 'Lumiere - Renault') dejaba la página sin cuentas ni conexiones FBS.
+    """
     m = slug(marca)
     if not m:
         return cuentas
-    return [c for c in cuentas if m in slug(c["empresa"])]
+    exactas = [c for c in cuentas if m in slug(c["empresa"])]
+    if exactas:
+        return exactas
+    pedidas = _palabras(marca)
+    return [c for c in cuentas if pedidas and pedidas <= _palabras(c["empresa"])]
+
+
+def marcas_con_cuentas(cuentas: list[dict]) -> list[str]:
+    """Marcas que hoy tienen cuentas cargadas (para explicar un filtro vacío)."""
+    return sorted({c["empresa"] for c in cuentas if c.get("empresa")})
 
 
 def etiqueta(c: dict) -> str:

@@ -565,11 +565,14 @@ def api_equivalencias_eliminar(eq_id: str):
 def api_cuentas(marca: str = ""):
     """Cuentas bancarias del grupo con su etiqueta y mapeo FBS. Con ?marca=
     se limita a esa marca (nombre completo o abreviado)."""
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)
+    todas = cuentas_mod.cargar()
+    cuentas = cuentas_mod.filtrar_marca(todas, marca)
     return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
             "bancos": cuentas_mod.BANCOS, "marca": marca or None,
             "marca_nombre": (sorted({c["empresa"] for c in cuentas})[0]
-                             if marca and cuentas else None)}
+                             if marca and cuentas else None),
+            # para explicar un filtro vacío sin tener que adivinar el nombre
+            "marcas_disponibles": cuentas_mod.marcas_con_cuentas(todas)}
 
 
 def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
