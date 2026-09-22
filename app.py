@@ -1200,6 +1200,9 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     asignaciones = cuerpo.get("asignaciones") or {}
     cuentas = cuentas_mod.cargar()
     por_id = {c["id"]: c for c in cuentas}
+    # el id del tablero se conoce de entrada: cada job guarda a qué corrida
+    # diaria pertenece, así su detalle sabe volver al tablero del día
+    grupo_id = uuid.uuid4().hex[:10]
 
     # agrupar archivos por cuenta y aprender mapeos FBS nuevos
     grupos = {}
@@ -1314,6 +1317,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         salida["resumen"]["reglas_disponibles"] = len(reglas)
         salida["job_id"] = job_id
         salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
+        salida["grupo_diario"] = grupo_id
         # ciclo O -> E: sumar confirmados y arrastrar los que siguen pendientes
         if conf_e or carried_o:
             salida["conciliados_e"].extend(conf_e)
@@ -1356,7 +1360,6 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 
     _guardar_arrastre(arrastre)
     _guardar_memoria(memoria)
-    grupo_id = uuid.uuid4().hex[:10]
     grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
              "hora": time.strftime("%H:%M"),
              "marca": stag.get("marca"),

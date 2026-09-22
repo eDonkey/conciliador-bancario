@@ -419,7 +419,7 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   </div>
   <div class="zona-derecha">
     <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
-    <a href="/diario" class="secundario" id="linkDiario">Modo diario</a>
+    <a href="diario" class="secundario" id="linkDiario">Modo diario</a>
     <button class="secundario" id="btnEquiv">Equivalencias</button>
     <button class="secundario" id="btnGastos">Gastos</button>
     <span id="badgeSim" class="badge-sim oculto">MODO SIMULACIÓN
@@ -434,7 +434,12 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
     <button class="secundario btn-chico" style="margin-left:10px;"
       onclick="location.href = location.pathname">Salir del modo simulación</button>
   </div>
-  <section class="tarjeta">
+  <div id="barraDetalle" class="aviso info oculto" style="margin: 0 0 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+    <span id="detalleQue" style="flex:1; min-width:240px;"></span>
+    <a id="btnVolverDiario" class="secundario btn-chico oculto" href="#">Volver al tablero del día</a>
+    <button class="secundario btn-chico" type="button" id="btnNuevaConc">Hacer una conciliación nueva</button>
+  </div>
+  <section class="tarjeta" id="cargaCard">
     <div id="kitDemo" class="kit-demo oculto" style="margin-bottom:14px;font-size:var(--fs-sm);color:var(--texto2);">
       <b style="color:var(--texto)">Kit de demo:</b> descargá el extracto y el libro mayor de ejemplo y
       soltalos en las dos zonas de abajo.
@@ -789,7 +794,7 @@ const conMarca = (url) => MARCA
   ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
   : url;
 if (MARCA) {
-  $('#linkDiario').href = conMarca('/diario');
+  $('#linkDiario').href = conMarca(`${BASE}diario`);
   fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
     const nombre = j.marca_nombre || MARCA;
     $('#chipMarca').textContent = nombre;
@@ -1008,11 +1013,41 @@ async function cargarResultado(jobId) {
   $('#btnConciliar').disabled = false;
 }
 
+/* Entrar con ?job= es ver el DETALLE de una conciliación ya procesada (el
+   link del tablero diario, o uno compartido). En ese caso la zona para subir
+   archivos no corresponde: confunde ("me mandó a la mensual") y, peor, desde
+   ahí se podía disparar una conciliación mensual sin querer. */
+function modoDetalle() {
+  $('#cargaCard').classList.add('oculto');
+  const barra = $('#barraDetalle');
+  const esDiaria = datos && datos.cuenta;
+  $('#detalleQue').innerHTML = esDiaria
+    ? `Estás viendo el <b>detalle de la conciliación diaria</b> de
+       <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que hagas acá (conciliar a
+       mano, marcar cargados, reglas) se guarda en esa conciliación.`
+    : 'Estás viendo el <b>detalle de una conciliación ya procesada</b>.';
+  const volver = $('#btnVolverDiario');
+  if (esDiaria) {
+    const g = datos.grupo_diario;
+    volver.href = conMarca(`${BASE}diario${g ? `?grupo=${encodeURIComponent(g)}` : ''}`);
+    volver.classList.remove('oculto');
+  } else {
+    volver.classList.add('oculto');
+  }
+  barra.classList.remove('oculto');
+}
+
+$('#btnNuevaConc').addEventListener('click', () => {
+  $('#cargaCard').classList.remove('oculto');
+  $('#barraDetalle').classList.add('oculto');
+  $('#cargaCard').scrollIntoView(SCROLL);
+});
+
 // Al entrar: primero un ?job compartido por link; si no, el último trabajo propio
 (async function retomarUltimoJob() {
   const compartido = new URLSearchParams(location.search).get('job');
   if (compartido) {
-    try { await cargarResultado(compartido); return; }
+    try { await cargarResultado(compartido); modoDetalle(); return; }
     catch (e) {
       $('#avisos').innerHTML = `<div class="aviso error">No se encontró la
         conciliación del link (${esc(e.message)}). Puede haberse borrado del servidor.</div>`;
@@ -1210,7 +1245,7 @@ function mostrarResultados() {
       de la conciliación anterior de esta cuenta (figuran como
       "(pendiente de días anteriores)"). Lo que cruce hoy se concilia solo;
       lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
-      ` <a href="${conMarca(`/?job=${esc(datos.arrastre.desde_job)}`)}" target="_blank"
+      ` <a href="${conMarca(`${BASE}?job=${esc(datos.arrastre.desde_job)}`)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
   if (r.confirmados_desde_o)
     notas += `<div class="aviso info"><b>${r.confirmados_desde_o}</b> movimientos
@@ -1239,7 +1274,7 @@ function mostrarResultados() {
   if (ia.estado === 'sin_credenciales')
     avisos += `<div class="aviso info"><b>La IA no corrió</b>: el servidor no tiene cargada la clave.
       Este resultado es la conciliación determinística completa. Quien administra el servidor
-      puede revisar qué ve en <a href="/api/diagnostico" target="_blank">/api/diagnostico</a>.</div>`;
+      puede revisar qué ve en <a href="${BASE}api/diagnostico" target="_blank">/api/diagnostico</a>.</div>`;
   else if (ia.estado === 'simulada')
     notas += `<div class="aviso info">Las sugerencias de IA de este resultado son
       SIMULADAS (parámetro ?simular en la URL): se generaron sin usar la API,

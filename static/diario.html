@@ -271,7 +271,7 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   <div class="zona-derecha">
     <button class="secundario oculto" id="btnResetDemo" title="Vuelve a dejar la demo como recién sembrada">Reiniciar demo</button>
     <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
-    <a class="volver" id="linkMensual" href="/">Conciliador mensual</a>
+    <a class="volver" id="linkMensual" href="./">Conciliador mensual</a>
   </div>
 </header>
 
@@ -570,7 +570,7 @@ fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
     const nombre = j.marca_nombre || MARCA;
     $('#chipMarca').textContent = nombre;
     $('#chipMarca').classList.remove('oculto');
-    $('#linkMensual').href = conMarca('/');
+    $('#linkMensual').href = conMarca(BASE);
     document.title = `Conciliación diaria — ${nombre}`;
     if (!j.cuentas.length)
       $('#subtitulo').innerHTML = `<span style="color:var(--rojo)">No hay cuentas de la marca "${esc(MARCA)}" — revisá el parámetro de la URL o cargala en el hub</span>`;
@@ -685,7 +685,7 @@ $('#btnFbsTraer').addEventListener('click', async () => {
     staging = json;
     msj.style.color = 'var(--verde, #4ade80)';
     msj.innerHTML = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.
-      <a href="/api/diario/fbs-sql/excel/${esc(json.staging_id)}" style="color:var(--azul); margin-left:6px;"
+      <a href="${BASE}api/diario/fbs-sql/excel/${esc(json.staging_id)}" style="color:var(--azul); margin-left:6px;"
          title="Excel con el mismo formato de los reportes Consulta del Mayor que antes se subían">Descargar Excel</a>`;
     pintarIdent();
   } catch (err) {
@@ -898,7 +898,7 @@ function pintarTablero() {
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
       <td class="num">${r.mayor_sin_banco ?? ''}</td>
-      <td>${f.job_id ? `<a href="${conMarca(`/?job=${esc(f.job_id)}`)}" target="_blank"
+      <td>${f.job_id ? `<a href="${conMarca(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank"
         style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
     </tr>`;
   }).join('');
