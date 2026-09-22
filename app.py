@@ -1372,12 +1372,28 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 def api_diario_historial(marca: str = ""):
     """La memoria diaria: todas las conciliaciones diarias guardadas, de la
     más reciente a la más vieja, con su resumen. Los tableros nunca se borran
-    y los pendientes encadenan cada día con el siguiente. Con ?marca= se
-    listan solo las corridas de esa marca (las viejas sin marca guardada se
-    clasifican por las cuentas que contienen)."""
-    ids_marca = ({c["id"] for c in
-                  cuentas_mod.filtrar_marca(cuentas_mod.cargar(), marca)}
-                 if marca else None)
+    y los pendientes encadenan cada día con el siguiente.
+
+    Con ?marca= se listan solo las corridas de esa marca. El filtro no depende
+    de cómo estén hoy las marcas y las cuentas en el hub: la marca se compara
+    tolerando renombres (misma_marca) y las cuentas por número, no por el id
+    completo (que cambia si renombran el banco). Una corrida que no es de
+    ninguna marca conocida se muestra igual, para no perderla de vista."""
+    todas = cuentas_mod.cargar() if marca else []
+    nums_marca = {cuentas_mod.numero_cuenta(c["id"])
+                  for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
+    nums_otras = ({cuentas_mod.numero_cuenta(c["id"]) for c in todas} - {""}) - nums_marca
+    marcas_hoy = cuentas_mod.marcas_con_cuentas(todas)
+
+    def _de_esta_marca(g: dict, cuentas: list) -> bool:
+        nums = {cuentas_mod.numero_cuenta(c.get("cuenta_id")) for c in cuentas} - {""}
+        if cuentas_mod.misma_marca(g.get("marca"), marca) or (nums & nums_marca):
+            return True
+        if nums & nums_otras:                       # sus cuentas son de otra marca
+            return False
+        # sin cuentas reconocibles: se esconde solo si dice ser de otra marca
+        # que hoy existe; si no, es huérfana y se muestra
+        return not any(cuentas_mod.misma_marca(g.get("marca"), m) for m in marcas_hoy)
     grupos = []
     for nombre in os.listdir(DATOS_DIR):
         if not (nombre.startswith("grupo_") and nombre.endswith(".json")):
@@ -1389,11 +1405,8 @@ def api_diario_historial(marca: str = ""):
         except (json.JSONDecodeError, OSError):
             continue
         cuentas = g.get("cuentas", [])
-        if ids_marca is not None:
-            propia = (cuentas_mod.slug(g.get("marca") or "") == cuentas_mod.slug(marca)
-                      or any(c.get("cuenta_id") in ids_marca for c in cuentas))
-            if not propia:
-                continue
+        if marca and not _de_esta_marca(g, cuentas):
+            continue
         ok = [c for c in cuentas if c.get("estado") == "ok"]
         r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
         expl = [c["resumen"]["porcentaje_explicado"] for c in ok
@@ -1403,9 +1416,8 @@ def api_diario_historial(marca: str = ""):
             "desde": min(fechas_mov) if fechas_mov else None,
             "hasta": max(fechas_mov) if fechas_mov else None,
             "grupo_id": g.get("grupo_id"), "marca": g.get("marca"),
-            "bancos": sorted({cuentas_mod.BANCOS.get(
-                (c.get("cuenta_id") or "").split("-")[0], "")
-                for c in cuentas if c.get("cuenta_id")} - {""}),
+            "bancos": sorted({cuentas_mod.banco_de(c.get("cuenta_id"))
+                              for c in cuentas if c.get("cuenta_id")} - {""}),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
             "cuentas": len(cuentas), "conciliadas": len(ok),
             "incompletas": len(cuentas) - len(ok),

@@ -67,11 +67,24 @@ def _digits(s: str) -> str:
     return re.sub(r'\D', '', s or '')
 
 
+# El mismo banco se escribe distinto en el hub según quién lo cargue ("BBVA",
+# "BBVA/Francés", "Banco Francés"). Como el id de cuenta se deriva del banco,
+# sin esto un renombre cambia el id y deja huérfanas las corridas guardadas.
+_ALIAS_BANCO = {
+    "bbva": "frances", "bbvafrances": "frances", "bancofrances": "frances",
+    "bbvabancofrances": "frances", "bbvaargentina": "frances",
+    "santanderrio": "santander", "bancosantander": "santander", "santanderargentina": "santander",
+    "bancogalicia": "galicia", "galiciamas": "galicia",
+    "bancomacro": "macro", "bancociudad": "ciudad", "ciudaddebuenosaires": "ciudad",
+}
+
+
 def _banco_key(nombre: str) -> str:
-    """'Francés' / 'Frances' -> 'frances' (el key interno histórico)."""
+    """'Francés' / 'Frances' / 'BBVA' -> 'frances' (el key interno histórico)."""
     plano = unicodedata.normalize("NFD", nombre or "")
     plano = "".join(ch for ch in plano if not unicodedata.combining(ch))
-    return plano.strip().lower()
+    clave = plano.strip().lower()
+    return _ALIAS_BANCO.get(re.sub(r'[^a-z0-9]', '', clave), clave)
 
 
 def _database_url() -> str | None:
@@ -156,10 +169,14 @@ def cargar(ruta: str = RUTA_DEFAULT) -> list[dict]:
     # los mapeos FBS aprendidos se conservan de la copia local, por id.
     # Copias: los llamadores mutan las filas y el cache debe quedar intacto.
     por_id = {c["id"]: c for c in locales}
+    # respaldo por número + moneda: si en el hub renombran el banco, el id
+    # cambia pero la cuenta es la misma y los mapeos FBS no se pierden
+    por_num = {(numero_cuenta(c["id"]), (c.get("moneda") or "").lower()): c for c in locales}
     merged = []
     for c in base:
         c = dict(c)
-        prev = por_id.get(c["id"])
+        prev = por_id.get(c["id"]) or por_num.get(
+            (numero_cuenta(c["id"]), (c.get("moneda") or "").lower()))
         if prev:
             for k in ("fbs_e", "fbs_o", "fbs_nombre"):
                 c[k] = prev.get(k)
@@ -171,6 +188,20 @@ def guardar(cuentas: list[dict], ruta: str = RUTA_DEFAULT):
     os.makedirs(os.path.dirname(ruta), exist_ok=True)
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(cuentas, f, ensure_ascii=False, indent=1)
+
+
+def numero_cuenta(cuenta_id: str) -> str:
+    """El número dentro del id ('frances-01090135621-ars' -> '1090135621'),
+    sin ceros a la izquierda. Es la parte que NO cambia cuando en el hub
+    renombran el banco o la marca: por eso el historial compara por acá."""
+    m = re.search(r'-(\d+)-', str(cuenta_id or ""))
+    return m.group(1).lstrip("0") if m else ""
+
+
+def banco_de(cuenta_id: str) -> str:
+    """Nombre del banco a partir del id, tolerando alias ('bbva' = 'frances')."""
+    clave = str(cuenta_id or "").split("-")[0]
+    return BANCOS.get(_ALIAS_BANCO.get(re.sub(r'[^a-z0-9]', '', clave.lower()), clave), "")
 
 
 def slug(s: str) -> str:
@@ -185,6 +216,20 @@ def _palabras(s: str) -> set:
     plano = unicodedata.normalize("NFD", s or "")
     plano = "".join(ch for ch in plano if not unicodedata.combining(ch))
     return {p for p in re.split(r'[^a-z0-9]+', plano.lower()) if p}
+
+
+def misma_marca(a: str, b: str) -> bool:
+    """¿Dos nombres de marca son el mismo? Tolera abreviaturas y renombres que
+    solo cambian el orden ('Renault - Lumiere' contra 'Lumiere - Renault'),
+    igual que filtrar_marca. Sin esto, renombrar una marca en el hub escondía
+    las conciliaciones ya guardadas con el nombre viejo."""
+    sa, sb = slug(a), slug(b)
+    if not sa or not sb:
+        return False
+    if sa == sb or sa in sb or sb in sa:
+        return True
+    pa, pb = _palabras(a), _palabras(b)
+    return bool(pa and pb) and (pa <= pb or pb <= pa)
 
 
 def filtrar_marca(cuentas: list[dict], marca: str) -> list[dict]:
