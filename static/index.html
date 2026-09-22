@@ -398,6 +398,11 @@
 </head>
 <body>
 <script>
+// Servida en la raíz (/diario) o detrás del proxy del hub (/app/<id>/diario):
+// toda llamada cuelga de la CARPETA de la página, nunca de la raíz del dominio.
+// Una ruta absoluta ('/api/...') detrás del proxy apunta al hub y no a la app,
+// y la pantalla queda sin cuentas, sin FBS y sin historial.
+const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
   (function () {
     var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
@@ -763,15 +768,15 @@ function avisar(msg, tipo = 'error') {
   cont.appendChild(d);
   if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
 }
-fetch('/api/demo/estado').then(r => r.json()).then(j => {
+fetch(`${BASE}api/demo/estado`).then(r => r.json()).then(j => {
   if (!j.demo) return;
   $('#demoBanner').classList.remove('oculto');
   if (!MARCA) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
   document.title = 'Conciliador bancario — demo';
-  fetch('/api/demo/kit').then(r => r.json()).then(k => {
+  fetch(`${BASE}api/demo/kit`).then(r => r.json()).then(k => {
     if (!k.archivos || !k.archivos.length) return;
     $('#kitLinks').innerHTML = k.archivos.map(f =>
-      `<a href="/static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
+      `<a href="${BASE}static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
     $('#kitDemo').classList.remove('oculto');
   }).catch(() => {});
 }).catch(() => {});
@@ -785,7 +790,7 @@ const conMarca = (url) => MARCA
   : url;
 if (MARCA) {
   $('#linkDiario').href = conMarca('/diario');
-  fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
+  fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
     const nombre = j.marca_nombre || MARCA;
     $('#chipMarca').textContent = nombre;
     $('#chipMarca').classList.remove('oculto');
@@ -864,7 +869,7 @@ function pintarListas() {
 }
 
 // FBS directo para el mayor mensual: cuentas configuradas en el hub (por marca)
-fetch(conMarca('/api/fbs-sql')).then(r => r.json()).then(j => {
+fetch(conMarca(`${BASE}api/fbs-sql`)).then(r => r.json()).then(j => {
   if (j.modo !== 'hub' || !j.cuentas.length) return;
   const hoy = new Date().toISOString().slice(0, 10);
   $('#fbsDesdeM').value = hoy.slice(0, 8) + '01';   // el mes en curso por defecto
@@ -912,7 +917,7 @@ $('#btnConciliar').addEventListener('click', async () => {
   mostrarOverlay();
   $('#ovFase').textContent = 'Subiendo archivos';
   try {
-    const resp = await fetch('/api/conciliar', { method: 'POST', body: fd });
+    const resp = await fetch(`${BASE}api/conciliar`, { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     localStorage.setItem('ultimo_job', json.job_id);
@@ -951,7 +956,7 @@ function seguirProgreso(jobId) {
   mostrarOverlay();
   const consultar = async () => {
     try {
-      const r = await fetch(`/api/progreso/${jobId}`);
+      const r = await fetch(`${BASE}api/progreso/${jobId}`);
       const p = await r.json();
       if (!r.ok) throw new Error(p.error || 'Job no encontrado');
       if (p.estado === 'error') { errorOverlay(p.mensaje); return; }
@@ -989,7 +994,7 @@ function errorOverlay(msg) {
 }
 
 async function cargarResultado(jobId) {
-  const r = await fetch(`/api/resultado/${jobId}`);
+  const r = await fetch(`${BASE}api/resultado/${jobId}`);
   const json = await r.json();
   if (!r.ok) throw new Error(json.error || 'Error al cargar el resultado');
   datos = json;
@@ -1016,7 +1021,7 @@ async function cargarResultado(jobId) {
   const j = localStorage.getItem('ultimo_job');
   if (!j) return;
   try {
-    const r = await fetch(`/api/progreso/${j}`);
+    const r = await fetch(`${BASE}api/progreso/${j}`);
     if (!r.ok) return;
     const p = await r.json();
     if (p.estado === 'procesando') {
@@ -1033,7 +1038,7 @@ async function cargarResultado(jobId) {
 // cruces anulados (vetos): se listan en la solapa de excluidos y se pueden revertir
 let vetos = [];
 async function cargarVetos() {
-  try { vetos = (await (await fetch('/api/vetos')).json()).vetos || []; } catch {}
+  try { vetos = (await (await fetch(`${BASE}api/vetos`)).json()).vetos || []; } catch {}
 }
 cargarVetos();
 const METODOS = `
@@ -1107,7 +1112,7 @@ function htmlVetos() {
 }
 window.permitirCruce = async id => {
   try {
-    const resp = await fetch(`/api/vetos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/vetos/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     vetos = json.vetos || [];
@@ -1312,7 +1317,7 @@ function activarTab(id) {
 
 window.confirmarMatch = async (bancoId, valor) => {
   try {
-    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/confirmar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ banco_id: bancoId, confirmado: valor }),
     });
@@ -1326,7 +1331,7 @@ window.confirmarMatch = async (bancoId, valor) => {
 /* marca de control "ya lo cargué en el FBS": pinta la fila, no la mueve */
 window.marcarCargado = async (bancoId, cargado) => {
   try {
-    const resp = await fetch(`/api/cargado/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/cargado/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ banco_id: bancoId, cargado }),
     });
@@ -1378,7 +1383,7 @@ $('#trGuardar').addEventListener('click', async () => {
   const motivo = $('#trMotivo').value.trim();
   if (!motivo) { $('#trError').textContent = 'Contanos por qué va ahí — queda registrado.'; return; }
   try {
-    const resp = await fetch(`/api/reclasificar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/reclasificar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ banco_id: transferId, destino, motivo,
                              aprender_concepto: $('#trAprender').checked }),
@@ -1400,7 +1405,7 @@ window.anularCruce = async bancoId => {
   const lista = tabActiva;
   if (!(await confirmar({ titulo: '¿Anular este cruce?', texto: 'El movimiento del extracto vuelve a "Banco sin asiento" y el asiento del mayor a su lista de pendientes. El sistema no va a volver a proponer este par; si te arrepentís, lo revertís desde la solapa "Excluidos y cruces anulados".', ok: 'Anular cruce' }))) return;
   try {
-    const resp = await fetch(`/api/anular/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/anular/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ banco_id: bancoId, lista }),
     });
@@ -1414,7 +1419,7 @@ window.anularCruce = async bancoId => {
 
 window.confirmarTodos = async valor => {
   try {
-    const resp = await fetch(`/api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/confirmar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ todos: valor }),
     });
@@ -1591,7 +1596,7 @@ window.verAnalisis = async id => {
   $('#anEstado').textContent = '';
   abrirModal('modalAnalisis');
   try {
-    const resp = await fetch(`/api/analizar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/analizar/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id_mayor: id, simular: MODO_SIMULACION }),
     });
@@ -1626,7 +1631,7 @@ function mostrarAnalisis(an) {
 
 async function enviarVeredicto(ok, correccion) {
   try {
-    const resp = await fetch(`/api/analizar/${datos.job_id}/veredicto`, {
+    const resp = await fetch(`${BASE}api/analizar/${datos.job_id}/veredicto`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id_mayor: anId, ok, correccion }),
     });
@@ -1649,7 +1654,7 @@ $('#modalAnalisis').addEventListener('click', e => {
 $('#buscador').addEventListener('input', pintarTabla);
 $('#btnExportar').addEventListener('click', () => {
   // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
-  if (datos) window.location = `api/exportar/${datos.job_id}`;
+  if (datos) window.location = `${BASE}api/exportar/${datos.job_id}`;
 });
 $('#btnCompartir').addEventListener('click', async () => {
   if (!datos) return;
@@ -1853,7 +1858,7 @@ document.addEventListener('click', e => {
 $('#btnExcluir').addEventListener('click', async () => {
   if (!(await confirmar({ titulo: `Excluir ${selMayor.size} asiento(s) del mayor`, texto: 'Salen de esta conciliación. Quedan referenciados en la solapa "Contraasientos y excluidos" y se pueden restaurar desde ahí.', ok: 'Excluir del mayor', peligro: true }))) return;
   try {
-    const resp = await fetch(`/api/excluir/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/excluir/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids_mayor: [...selMayor], nota: $('#notaManual').value }),
     });
@@ -1868,7 +1873,7 @@ $('#btnExcluir').addEventListener('click', async () => {
 
 window.deshacerExclusion = async id => {
   try {
-    const resp = await fetch(`/api/excluir/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/excluir/${datos.job_id}/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;
@@ -1880,7 +1885,7 @@ window.deshacerExclusion = async id => {
 window.marcarGasto = async desc => {
   if (!(await confirmar({ titulo: '¿Clasificar como gasto bancario?', texto: `"${desc}"\n\nSe aplica ahora a los movimientos que contengan este concepto y queda registrado para todas las conciliaciones futuras. Los números del texto se ignoran.`, ok: 'Sí, es gasto bancario' }))) return;
   try {
-    const resp = await fetch('/api/gastos', {
+    const resp = await fetch(`${BASE}api/gastos`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ termino: desc, job_id: datos ? datos.job_id : null }),
     });
@@ -1902,7 +1907,7 @@ $('#btnLimpiarSel').addEventListener('click', () => {
 
 async function aplicarManual(cuerpo, volverA) {
   try {
-    const resp = await fetch(`/api/manual/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/manual/${datos.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cuerpo),
     });
@@ -1950,7 +1955,7 @@ function pintarEquiv() {
 
 async function cargarEquiv() {
   try {
-    const r = await fetch('/api/equivalencias');
+    const r = await fetch(`${BASE}api/equivalencias`);
     equivalencias = (await r.json()).equivalencias || [];
     pintarEquiv();
   } catch {}
@@ -1971,7 +1976,7 @@ async function agregarEquiv() {
   const extracto = $('#eqExtracto').value.trim(), sistema = $('#eqSistema').value.trim();
   $('#eqError').textContent = '';
   try {
-    const resp = await fetch('/api/equivalencias', {
+    const resp = await fetch(`${BASE}api/equivalencias`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ extracto, sistema }),
     });
@@ -1989,7 +1994,7 @@ $('#eqAgregar').addEventListener('click', agregarEquiv);
 
 window.eliminarEquiv = async id => {
   try {
-    const resp = await fetch(`/api/equivalencias/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/equivalencias/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     equivalencias = json.equivalencias;
@@ -2020,7 +2025,7 @@ function pintarGastos() {
 
 window.eliminarExcepcion = async id => {
   try {
-    const r = await fetch(`/api/gastos/excepciones/${id}`, { method: 'DELETE' });
+    const r = await fetch(`${BASE}api/gastos/excepciones/${id}`, { method: 'DELETE' });
     gastosExc = (await r.json()).excepciones || [];
     pintarGastos();
   } catch {}
@@ -2028,7 +2033,7 @@ window.eliminarExcepcion = async id => {
 
 async function cargarGastos() {
   try {
-    const r = await fetch('/api/gastos');
+    const r = await fetch(`${BASE}api/gastos`);
     const j = await r.json();
     gastosConf = j.gastos || [];
     gastosExc = j.excepciones || [];
@@ -2050,7 +2055,7 @@ $('#modalGastos').addEventListener('click', e => {
 async function agregarGasto() {
   $('#gasError').textContent = '';
   try {
-    const resp = await fetch('/api/gastos', {
+    const resp = await fetch(`${BASE}api/gastos`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ termino: $('#gasTermino').value,
                              job_id: datos ? datos.job_id : null }),
@@ -2068,7 +2073,7 @@ $('#gasTermino').addEventListener('keydown', e => { if (e.key === 'Enter') agreg
 
 window.eliminarGasto = async id => {
   try {
-    const resp = await fetch(`/api/gastos/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/gastos/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     gastosConf = json.gastos;
@@ -2078,7 +2083,7 @@ window.eliminarGasto = async id => {
 
 window.deshacerManual = async id => {
   try {
-    const resp = await fetch(`/api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     datos = json;

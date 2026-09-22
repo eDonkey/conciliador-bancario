@@ -249,6 +249,11 @@
 </head>
 <body>
 <script>
+// Servida en la raíz (/diario) o detrás del proxy del hub (/app/<id>/diario):
+// toda llamada cuelga de la CARPETA de la página, nunca de la raíz del dominio.
+// Una ruta absoluta ('/api/...') detrás del proxy apunta al hub y no a la app,
+// y la pantalla queda sin cuentas, sin FBS y sin historial.
+const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
   (function () {
     var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
@@ -526,7 +531,7 @@ let archivos = [], staging = null, cuentas = [], grupo = null, DEMO = false;
 
 // modo demo (ROD-6/07): banner, kit de extractos descargables, y el mayor
 // sembrado se agrega solo (no hace falta soltar también el archivo FBS)
-fetch('/api/demo/estado').then(r => r.json()).then(j => {
+fetch(`${BASE}api/demo/estado`).then(r => r.json()).then(j => {
   DEMO = !!j.demo;
   if (!DEMO) return;
   $('#demoBanner').classList.remove('oculto');
@@ -540,14 +545,14 @@ fetch('/api/demo/estado').then(r => r.json()).then(j => {
     if (!(await confirmar({ titulo: '¿Reiniciar la demo?', texto: 'Se pierde lo que se haya conciliado en esta sesión y la demo vuelve a quedar como recién sembrada.', ok: 'Reiniciar demo', peligro: true }))) return;
     btnReset.disabled = true;
     try {
-      await fetch('/api/demo/reset', { method: 'POST' });
+      await fetch(`${BASE}api/demo/reset`, { method: 'POST' });
       location.href = location.pathname;
     } catch { btnReset.disabled = false; }
   });
-  fetch('/api/demo/kit').then(r => r.json()).then(k => {
+  fetch(`${BASE}api/demo/kit`).then(r => r.json()).then(k => {
     if (!k.archivos || !k.archivos.length) return;
     $('#kitLinks').innerHTML = k.archivos.map(f =>
-      `<a href="/static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
+      `<a href="${BASE}static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
     $('#kitDemo').classList.remove('oculto');
   }).catch(() => {});
 }).catch(() => {});
@@ -559,7 +564,7 @@ const conMarca = (url) => MARCA
   ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
   : url;
 
-fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
+fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
   cuentas = j.cuentas;
   if (MARCA) {
     const nombre = j.marca_nombre || MARCA;
@@ -604,7 +609,7 @@ $('#btnIdentificar').addEventListener('click', async () => {
     if (MARCA) qs.set('marca', MARCA);
     if (staging) qs.set('staging', staging.staging_id);
     if (typeof DEMO !== 'undefined' && DEMO) qs.set('demo', '1');
-    const resp = await fetch('/api/diario/identificar' + (qs.toString() ? '?' + qs : ''),
+    const resp = await fetch(`${BASE}api/diario/identificar` + (qs.toString() ? '?' + qs : ''),
                              { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
@@ -625,7 +630,7 @@ $('#fbsHasta').value = hoyIso;
 
 async function refrescarFbsSql() {
   try {
-    const j = await (await fetch(conMarca('/api/fbs-sql'))).json();
+    const j = await (await fetch(conMarca(`${BASE}api/fbs-sql`))).json();
     if (j.modo === 'hub') {
       // la conexión vive en el hub: acá no hay nada que configurar
       $('#btnFbsConf').style.display = 'none';
@@ -669,7 +674,7 @@ $('#btnFbsTraer').addEventListener('click', async () => {
   msj.innerHTML = '<span class="spinner"></span>Consultando el FBS…';
   $('#btnFbsTraer').disabled = true;
   try {
-    const resp = await fetch('/api/diario/fbs-sql', {
+    const resp = await fetch(`${BASE}api/diario/fbs-sql`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ desde: $('#fbsDesde').value, hasta: $('#fbsHasta').value,
                              staging_id: staging?.staging_id, marca: MARCA,
@@ -713,7 +718,7 @@ async function guardarConfFbs() {
     query: $('#fbsQuery').value,
   };
   if ($('#fbsClave').value) cuerpo.clave = $('#fbsClave').value;
-  const resp = await fetch('/api/fbs-sql', {
+  const resp = await fetch(`${BASE}api/fbs-sql`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cuerpo),
   });
@@ -736,7 +741,7 @@ $('#btnFbsProbar').addEventListener('click', async () => {
   m.innerHTML = '<span class="spinner"></span>Guardando y probando…';
   try {
     await guardarConfFbs();
-    const r = await (await fetch('/api/fbs-sql/probar', { method: 'POST' })).json();
+    const r = await (await fetch(`${BASE}api/fbs-sql/probar`, { method: 'POST' })).json();
     m.style.color = r.ok ? 'var(--verde, #4ade80)' : 'var(--rojo)';
     m.textContent = r.ok ? `Conexión OK (driver ${r.driver || '?'}).` : r.error;
     refrescarFbsSql();
@@ -793,7 +798,7 @@ $('#btnConciliar').addEventListener('click', async () => {
   $('#btnConciliar').disabled = true;
   mostrarOverlay(nCuentas);
   try {
-    const resp = await fetch(`/api/diario/conciliar/${staging.staging_id}`, {
+    const resp = await fetch(`${BASE}api/diario/conciliar/${staging.staging_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ asignaciones }),
     });
@@ -917,7 +922,7 @@ function pintarTablero() {
 
 $('#btnExcelTablero').addEventListener('click', () => {
   // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
-  if (grupo) location.href = `api/diario/${grupo.grupo_id}/excel`;
+  if (grupo) location.href = `${BASE}api/diario/${grupo.grupo_id}/excel`;
 });
 
 $('#btnCopiarTablero').addEventListener('click', async () => {
@@ -933,7 +938,7 @@ $('#btnBorrarMemoria').addEventListener('click', async () => {
   const b = $('#btnBorrarMemoria');
   b.disabled = true;
   try {
-    const r = await (await fetch('/api/diario/memoria', { method: 'DELETE' })).json();
+    const r = await (await fetch(`${BASE}api/diario/memoria`, { method: 'DELETE' })).json();
     b.textContent = `Memoria borrada (${r.asientos_olvidados} asientos, ${r.movs_olvidados} movs)`;
   } catch {
     b.textContent = 'No se pudo borrar';
@@ -943,7 +948,7 @@ $('#btnBorrarMemoria').addEventListener('click', async () => {
 
 async function cargarHistorial() {
   try {
-    const resp = await fetch(conMarca('/api/diario'));
+    const resp = await fetch(conMarca(`${BASE}api/diario`));
     const json = await resp.json();
     if (!resp.ok) return;
     $('#histCard').classList.remove('oculto');   // siempre visible (ahí vive
@@ -996,7 +1001,7 @@ window.eliminarGrupo = async (id, fecha) => {
     ok: 'Eliminar corrida', peligro: true });
   if (!ok) return;
   try {
-    const resp = await fetch(`/api/diario/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/diario/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     if (grupo && grupo.grupo_id === id) { location.href = location.pathname; return; }
@@ -1009,7 +1014,7 @@ window.eliminarGrupo = async (id, fecha) => {
   const g = new URLSearchParams(location.search).get('grupo');
   if (!g) return;
   try {
-    const resp = await fetch(`/api/diario/${g}`);
+    const resp = await fetch(`${BASE}api/diario/${g}`);
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'no encontrado');
     grupo = json;
