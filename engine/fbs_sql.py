@@ -31,6 +31,7 @@ import re
 import socket
 from datetime import date, datetime
 
+from engine import telemetria
 from parsers.mayor_xlsx import AsientoMayor
 
 _DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
@@ -290,6 +291,20 @@ def _query_para_log(query: str, params: dict) -> str:
 
 
 def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
+    """_consultar_driver medido para el monitoreo: cada consulta al FBS queda
+    como un tramo (servidor, base, driver, filas, demora y el error si falla)."""
+    with telemetria.tramo("FBS consulta", tipo="cliente", **{
+            "db.system.name": "mssql",
+            "server.address": str(conf.get("servidor") or ""),
+            "db.namespace": str(conf.get("base") or ""),
+            "fbs.conexion": conf.get("nombre")}) as tramo:
+        filas = _consultar_driver(conf, query, params)
+        tramo.set_attribute("fbs.filas", len(filas))
+        tramo.set_attribute("fbs.driver", _DRIVER_USADO.get("nombre") or "")
+        return filas
+
+
+def _consultar_driver(conf: dict, query: str, params: dict) -> list[dict]:
     """Ejecuta la consulta con el mejor driver disponible: ODBC nativo de
     Windows primero, FreeTDS (pymssql) como respaldo. FBS_SQL_DRIVER
     (pyodbc|pymssql) fuerza uno solo."""

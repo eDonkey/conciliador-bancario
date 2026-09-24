@@ -35,9 +35,12 @@ from engine import equivalencias as eq_mod
 from engine import gastos_conf
 from engine import cuentas as cuentas_mod
 from engine import analisis as analisis_mod
+from engine import telemetria
 from parsers import diarios
 
 app = FastAPI(title="Conciliador bancario")
+# monitoreo (New Relic): el polling de progreso no se traza, es ruido
+telemetria.iniciar(app, "conciliador", puerto=8765, excluir=[r"/api/progreso/"])
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
@@ -220,11 +223,22 @@ async def api_conciliar(
     PROGRESO[job_id] = {"estado": "procesando", "fase": "Preparando el análisis",
                         "porcentaje": 2, "eta_seg": round(est_base),
                         "inicio": time.time()}
-    threading.Thread(target=_procesar_job,
+    threading.Thread(target=_procesar_job_medido,
                      args=(job_id, archivos, data_mayor, usar_ia, est_base,
                            marca, fbs_mayor),
                      daemon=True).start()
     return {"job_id": job_id, "estado": "procesando"}
+
+
+def _procesar_job_medido(job_id, archivos, data_mayor, usar_ia, est_base,
+                         marca="", fbs_mayor=None):
+    """_procesar_job como un tramo del monitoreo: duración y errores de cada
+    conciliación mensual (corre en un hilo, fuera de cualquier request)."""
+    with telemetria.tramo("conciliacion mensual", job=job_id, marca=marca or None,
+                          extractos=len(archivos),
+                          mayor="fbs" if fbs_mayor else "excel"):
+        _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca,
+                      fbs_mayor)
 
 
 def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
@@ -354,6 +368,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                     ia_estado = "ok"
                 except Exception as exc:  # noqa: BLE001 — mostrar el error
                     ia_estado = f"error: {exc}"
+                    telemetria.registrar_error(exc, origen="ia", job=job_id)
 
         prog("Preparando los resultados", 96, eta=4)
         salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
@@ -387,6 +402,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                             "fase": "Conciliación terminada", "inicio": inicio}
     except Exception as exc:  # noqa: BLE001 — que el error llegue a la UI
         PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
+        telemetria.registrar_error(exc, origen="job", job=job_id, marca=marca or None)
 
 
 @app.get("/api/diagnostico")
@@ -414,6 +430,8 @@ def api_diagnostico():
         # gasto real de la app en la API (tokens y USD estimados por llamada):
         # si la factura no coincide con esto, el consumo vino de otro lado
         "ia_uso": ia_log.resumen(),
+        # monitoreo (New Relic): si está activo, con qué grupo y qué versión
+        "monitor": telemetria.estado(),
         # repr() revela caracteres invisibles en el nombre (espacios al final)
         "variables_con_nombre_parecido": sorted(
             repr(k) for k in os.environ
