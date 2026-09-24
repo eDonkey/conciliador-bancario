@@ -6,7 +6,8 @@ con el GRUPO y el SERVICIO en cada dato, así un mismo tablero y las mismas
 alertas sirven para todos los grupos donde se instalen las apps.
 
 FUENTE ÚNICA: monitor/python/telemetria.py. Cada app tiene una copia idéntica
-en engine/telemetria.py que se actualiza con `python monitor/sincronizar.py`.
+en engine/telemetria.py (app/telemetria.py en la API de planes de ahorro) que
+se actualiza con `python monitor/sincronizar.py`.
 No editar la copia de una app: se pisa en la próxima sincronización.
 
 Uso (app.py, apenas se crea la app):
@@ -410,7 +411,8 @@ def _configurar(app, base, cabeceras, excluir, carpeta_datos, atributos):
     except ValueError:
         muestreo = 1.0
     trazas = TracerProvider(resource=recurso, sampler=ParentBased(TraceIdRatioBased(muestreo)))
-    trazas.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=base + "/v1/traces", **comun)))
+    trazas.add_span_processor(_sin_consultas_sueltas(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint=base + "/v1/traces", **comun))))
     trace.set_tracer_provider(trazas)
     _tracer = trace.get_tracer("monitor")
 
@@ -463,6 +465,36 @@ class _Espaciado(logging.Filter):
             return False
         self._visto[clave] = ahora
         return True
+
+
+def _sin_consultas_sueltas(interno):
+    """Envuelve el procesador de trazas: las consultas a la base que no cuelgan
+    de ninguna request ni tramo (arranque, migraciones, tareas periódicas) no se
+    mandan. Serían miles de trazas de una sola consulta, sin contexto."""
+    from opentelemetry.sdk.trace import SpanProcessor
+    alcances_bd = ("opentelemetry.instrumentation.psycopg", "opentelemetry.instrumentation.dbapi")
+
+    class _SinConsultasSueltas(SpanProcessor):
+        def on_start(self, span, parent_context=None):
+            interno.on_start(span, parent_context=parent_context)
+
+        def _on_ending(self, span):
+            if hasattr(interno, "_on_ending"):
+                interno._on_ending(span)
+
+        def on_end(self, span):
+            alcance = getattr(getattr(span, "instrumentation_scope", None), "name", "") or ""
+            if span.parent is None and alcance.startswith(alcances_bd):
+                return
+            interno.on_end(span)
+
+        def shutdown(self):
+            interno.shutdown()
+
+        def force_flush(self, timeout_millis=30000):
+            return interno.force_flush(timeout_millis)
+
+    return _SinConsultasSueltas()
 
 
 def _conectar_logging(proveedor):
@@ -547,13 +579,18 @@ def _instrumentar(app, excluir, host_destino):
             server_request_hook=_marca_de_la_request,
         )
         instrumentado.append("fastapi")
-    # Clientes que haya en la app: HTTP saliente (IA, planillas, APIs) y el
-    # Postgres del hub. Sin la librería o sin su instrumentación, se saltea.
+    # Clientes que haya en la app: HTTP saliente (IA, planillas, APIs) y
+    # Postgres. Sin la librería o sin su instrumentación, se saltea.
+    requests_opciones = {"request_hook": _sin_query_saliente}
+    if host_destino:
+        requests_opciones["excluded_urls"] = re.escape(host_destino)
     for libreria, modulo, clase, opciones in (
-        ("httpx", "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor", {}),
-        ("requests", "opentelemetry.instrumentation.requests", "RequestsInstrumentor",
-         {"excluded_urls": re.escape(host_destino)} if host_destino else {}),
+        ("httpx", "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor",
+         {"request_hook": _sin_query_saliente, "async_request_hook": _sin_query_saliente_async}),
+        ("requests", "opentelemetry.instrumentation.requests", "RequestsInstrumentor", requests_opciones),
         ("psycopg2", "opentelemetry.instrumentation.psycopg2", "Psycopg2Instrumentor",
+         {"enable_commenter": False}),
+        ("psycopg", "opentelemetry.instrumentation.psycopg", "PsycopgInstrumentor",
          {"enable_commenter": False}),
     ):
         if importlib.util.find_spec(libreria) is None:
@@ -566,6 +603,23 @@ def _instrumentar(app, excluir, host_destino):
         except Exception as exc:  # noqa: BLE001
             print(f"[monitor] no se pudo instrumentar {libreria}: {exc!r}", file=sys.stderr)
     _estado["instrumentado"] = instrumentado
+
+
+def _sin_query_saliente(span, request):
+    """Las llamadas HTTP salientes se registran sin la query: ahí suelen viajar
+    tokens y sesiones (SGA, por ejemplo, pone el token de sesión en la URL)."""
+    try:
+        if span is None or not span.is_recording():
+            return
+        url = str(getattr(request, "url", "") or "")
+        if "?" in url:
+            span.set_attribute("url.full", url.split("?", 1)[0])
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _sin_query_saliente_async(span, request):
+    _sin_query_saliente(span, request)
 
 
 # parámetros de la URL cuyo valor nunca sale del servidor (tokens, claves)
@@ -655,25 +709,49 @@ def estado() -> dict:
 
 
 @contextmanager
-def tramo(nombre: str, *, tipo: str = "interno", ignorar=(), **atributos):
+def tramo(nombre: str, *, tipo: str = "interno", ignorar=(), sin_detalle: bool = False, **atributos):
     """Mide un bloque como un tramo de la traza actual (o una traza nueva).
     Si el bloque lanza una excepción, queda registrada y se relanza.
     tipo: "interno" | "cliente" (llamada a otro sistema: FBS, IA, APIs).
-    ignorar: excepciones esperadas que no cuentan como error del tramo."""
+    ignorar: excepciones esperadas que no cuentan como error del tramo.
+    sin_detalle: no trazar lo de adentro (consultas, HTTP): para procesos que
+    hacen miles de operaciones y solo interesan enteros (duración, error)."""
     if not _estado["activo"] or _tracer is None:
         yield _TRAMO_NULO
         return
+    from contextlib import nullcontext
     from opentelemetry.trace import SpanKind, Status, StatusCode
+    silencio = nullcontext()
+    if sin_detalle:
+        try:
+            from opentelemetry.instrumentation.utils import suppress_instrumentation
+            silencio = suppress_instrumentation()
+        except ImportError:
+            pass
     kind = SpanKind.CLIENT if tipo == "cliente" else SpanKind.INTERNAL
     with _tracer.start_as_current_span(nombre, kind=kind, attributes=_limpiar(atributos),
                                        record_exception=False, set_status_on_exception=False) as span:
-        try:
-            yield span
-        except Exception as exc:
-            if not isinstance(exc, tuple(ignorar)):
-                span.record_exception(exc)
-                span.set_status(Status(StatusCode.ERROR, _recortar(f"{type(exc).__name__}: {exc}", 300)))
-            raise
+        with silencio:
+            try:
+                yield span
+            except Exception as exc:
+                if not isinstance(exc, tuple(ignorar)):
+                    span.record_exception(exc)
+                    span.set_status(Status(StatusCode.ERROR, _recortar(f"{type(exc).__name__}: {exc}", 300)))
+                raise
+
+
+def anotar(**atributos):
+    """Suma atributos al tramo en curso (la request o el tramo abierto)."""
+    if not _estado["activo"]:
+        return
+    try:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        if span.is_recording():
+            span.set_attributes(_limpiar(atributos))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def registrar_error(exc: BaseException = None, mensaje: str = None, *, log: bool = True, **contexto):
