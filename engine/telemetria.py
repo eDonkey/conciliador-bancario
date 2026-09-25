@@ -6,8 +6,9 @@ con el GRUPO y el SERVICIO en cada dato, así un mismo tablero y las mismas
 alertas sirven para todos los grupos donde se instalen las apps.
 
 FUENTE ÚNICA: monitor/python/telemetria.py. Cada app tiene una copia idéntica
-en engine/telemetria.py (app/telemetria.py en la API de planes de ahorro) que
-se actualiza con `python monitor/sincronizar.py`.
+en engine/telemetria.py (app/telemetria.py en la API de planes de ahorro,
+src/sga_mcp/telemetria.py en su MCP) que se actualiza con
+`python monitor/sincronizar.py`.
 No editar la copia de una app: se pisa en la próxima sincronización.
 
 Uso (app.py, apenas se crea la app):
@@ -622,31 +623,35 @@ async def _sin_query_saliente_async(span, request):
     _sin_query_saliente(span, request)
 
 
-# parámetros de la URL cuyo valor nunca sale del servidor (tokens, claves)
-_SENSIBLES = re.compile(r"reset|token|key|clave|pass|pwd|secret|sig|code|auth|credential|sesion|session", re.I)
+# Parámetros de la query cuyo valor se guarda: marca, fechas, paginado. El
+# resto viaja como "…": en la query de una búsqueda van nombres, documentos
+# o dominios, y a veces tokens (ej. ?q=<titular>&documento=<dni> en la API de
+# planes de ahorro).
+_VISIBLES = {"marca", "desde", "hasta", "periodo", "fecha", "mes", "anio", "vista", "job", "tipo",
+             "completo", "refrescar", "page", "size", "limit", "orden", "formato", "lista"}
 
 
-def _redactar_query(consulta: str) -> str:
+def _query_segura(consulta: str) -> str:
     partes = []
     for par in consulta.split("&"):
         clave, igual, _ = par.partition("=")
-        partes.append(f"{clave}=REDACTADO" if igual and _SENSIBLES.search(unquote(clave)) else par)
+        partes.append(par if not igual or unquote(clave).lower() in _VISIBLES else f"{clave}=…")
     return "&".join(partes)
 
 
 def _marca_de_la_request(span, scope):
     """Las apps reciben la marca del hub en ?marca=: queda en la traza para
-    poder filtrar errores y demoras por marca. De paso se tapa el valor de
-    los parámetros sensibles de la query."""
+    poder filtrar errores y demoras por marca. De paso, de la query solo
+    quedan los valores de los parámetros inofensivos (ver _VISIBLES)."""
     try:
         if span is None or not span.is_recording():
             return
         consulta = (scope.get("query_string") or b"").decode("latin-1")
         if not consulta:
             return
-        limpia = _redactar_query(consulta)
-        if limpia != consulta:
-            span.set_attribute("url.query", limpia)
+        segura = _query_segura(consulta)
+        if segura != consulta:
+            span.set_attribute("url.query", segura)
         m = re.search(r"(?:^|&)marca=([^&]*)", consulta)
         if m and m.group(1):
             span.set_attribute("marca", _recortar(unquote(m.group(1).replace("+", " ")), 120))
@@ -689,6 +694,28 @@ def _cerrar():
 
 
 # --------------------------------------------------------------- API pública
+def envolver_asgi(app, excluir=()):
+    """Para apps ASGI que no son FastAPI (Starlette pelado, el servidor MCP):
+    devuelve la app envuelta con el middleware de OpenTelemetry, que mide cada
+    request igual que en las apps FastAPI. Sin telemetría, devuelve la misma."""
+    if not _estado["activo"]:
+        return app
+    try:
+        from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
+    except ImportError:
+        return app
+
+    def nombre(scope):
+        # rutas fijas en estas apps (/mcp, /salud): el path es la ruta
+        ruta = scope.get("path") or "/"
+        return f"{scope.get('method', 'HTTP')} {ruta}", {"http.route": ruta}
+
+    _estado.setdefault("instrumentado", []).append("asgi")
+    return OpenTelemetryMiddleware(app, excluded_urls=",".join([*_EXCLUIR_SIEMPRE, *excluir]),
+                                   default_span_details=nombre, server_request_hook=_marca_de_la_request,
+                                   exclude_spans=["receive", "send"])
+
+
 def activa() -> bool:
     return bool(_estado["activo"])
 
