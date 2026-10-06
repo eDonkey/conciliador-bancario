@@ -615,7 +615,7 @@ def traer(desde: str, hasta: str, marca: str = "",
           solo_cuentas: list[str] | None = None) -> list[dict]:
     """Corre la query del FBS para el rango [desde, hasta] (ISO) y devuelve
     una lista de 'archivos virtuales' con la misma forma que devuelve
-    parsers.diarios.identificar() para un reporte FBS: uno por cuenta
+    parsers.daily_files.identify() para un reporte FBS: uno por cuenta
     contable y hoja. Lanza ValueError con mensaje claro si algo falla.
 
     Modo hub (preferido): si en el hub hay cuentas con conexión FBS e IDs de

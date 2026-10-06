@@ -39,7 +39,7 @@ from engine import telemetria
 from engine import acceso
 from engine import presupuesto_ia
 from engine import seguridad
-from parsers import diarios
+from parsers import daily_files
 
 # sin /docs ni /openapi.json: el mapa de la API no se publica
 app = FastAPI(title="Conciliador bancario",
@@ -300,7 +300,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                 finally:
                     os.unlink(ruta)
                 continue
-            info = diarios.identificar(nombre, data)
+            info = daily_files.identify(nombre, data)
             if info.get("tipo") == "fbs":
                 PROGRESO[job_id] = {"estado": "error", "mensaje":
                     f'"{nombre}" es un reporte del FBS (Consulta del Mayor): '
@@ -697,7 +697,7 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
                                         stag.get("marca") or marca)
     for up in archivos:
         data = await up.read()
-        info = diarios.identificar(up.filename, data)
+        info = daily_files.identify(up.filename, data)
         _agregar_a_staging(stag, up.filename, info, cuentas)
     return {"staging_id": staging_id, "archivos": stag["resumen"],
             "marca": stag.get("marca")}
