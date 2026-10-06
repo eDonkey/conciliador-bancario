@@ -29,7 +29,7 @@ from parsers.ledger_xlsx import parse_ledger
 from engine.matcher import reconcile
 from engine import ai_assist
 from engine import fbs_sql
-from engine import ia_log
+from engine import ai_usage
 from engine import rules as rules_mod
 from engine import equivalences
 from engine import fee_terms
@@ -461,7 +461,7 @@ def api_diagnostico():
         "fbs_hub": fbs_sql.diagnostico(),
         # gasto real de la app en la API (tokens y USD estimados por llamada):
         # si la factura no coincide con esto, el consumo vino de otro lado
-        "ia_uso": ia_log.resumen(),
+        "ia_uso": ai_usage.summary(),
         # monitoreo (New Relic): si está activo, con qué grupo y qué versión
         "monitor": telemetria.estado(),
     }
