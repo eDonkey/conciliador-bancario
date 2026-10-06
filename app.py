@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from parsers.santander_pdf import parse_statement
 from parsers.ledger_xlsx import parse_ledger
-from engine.matcher import conciliar
+from engine.matcher import reconcile
 from engine import ai_assist
 from engine import fbs_sql
 from engine import ia_log
@@ -363,11 +363,11 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         equivalencias = equivalences.load()
         terminos_gasto = fee_terms.load()
         _forzar_gastos_movs(movs)
-        resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
-                              mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias,
-                              terminos_gasto=terminos_gasto,
-                              excepciones_gasto=fee_terms.load_exceptions())
+        resultado = reconcile(movs, mayor_parsed["E"]["asientos"],
+                              mayor_parsed["O"]["asientos"], learned_rules=reglas,
+                              equivalence_pairs=equivalencias,
+                              user_fee_terms=terminos_gasto,
+                              fee_exceptions=fee_terms.load_exceptions())
 
         # --- IA (real o simulada) sobre los residuales --------------------
         ia_sugerencias, ia_estado = [], "desactivada"
@@ -1166,7 +1166,7 @@ def _procesar_confirmaciones(prev, g):
     # (p. ej. una pata de una transferencia interna) y los consumían para
     # siempre vía la memoria de conciliados.
     def _claves(aso_ref, aso_com):
-        rm = matcher_mod._clave_rm(aso_com or "")
+        rm = matcher_mod._rm_key(aso_com or "")
         ref = (aso_ref or "").strip().upper()
         return {c for c in (rm, ref) if c}
 
@@ -1378,9 +1378,9 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                             "resumen": {"movimientos_banco": len(movs)}})
             continue
         _forzar_gastos_movs(movs)
-        resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias, terminos_gasto=terminos_gasto,
-                              excepciones_gasto=fee_terms.load_exceptions())
+        resultado = reconcile(movs, g["e"], g["o"], learned_rules=reglas,
+                              equivalence_pairs=equivalencias, user_fee_terms=terminos_gasto,
+                              fee_exceptions=fee_terms.load_exceptions())
         # período cubierto por los extractos de HOY (sin contar los arrastrados,
         # que traen fechas de días anteriores)
         fechas = [m.date for m in movs if m.date and m.id.startswith("B#")]
