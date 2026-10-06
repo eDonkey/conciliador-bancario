@@ -1,0 +1,86 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Standard CodeRabbit config from caliper-lab/platform-standards.
+# CodeRabbit reviews; CI + a person decide. Add repo-specific path_instructions at the end.
+
+language: en-US  # switch to es-ES if the team prefers reviews in Spanish
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  collapse_walkthrough: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!**/node_modules/**"
+    - "!**/package-lock.json"
+    - "!**/*.lock"
+    - "!**/__pycache__/**"
+    - "!**/.next/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!datos/**"
+    - "!**/*.min.js"
+    - "!.standards/**"
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Review against .standards/STANDARDS.md and AGENTS.md. Prioritize, in order:
+        1. Security: secrets in code, auth that fails open, missing permission or tenant
+           checks, plaintext passwords, SQL built with strings, missing input validation,
+           unsafe cookies, sensitive data in logs or error responses.
+        2. Correctness bugs and data loss.
+        3. Missing tests for bug fixes and for new protected or tenant-scoped routes.
+        4. Language: new identifiers, comments, logs and commit messages must be English
+           (use the glossary in AGENTS.md for domain terms); user-facing text must be
+           rioplatense Spanish. Flag half-translated functions and renames of DB columns,
+           API fields or env vars without a migration. In rename-only PRs, flag any
+           behavior change.
+        Skip pure style nits that the linters already cover.
+    - path: "**/{api,routes,routers,endpoints}/**"
+      instructions: |
+        Every route: authenticated unless explicitly public, permission checked on the
+        server, tenant taken from the session (never the request), input validated by a
+        schema, consistent error shape, correct status codes.
+    - path: "**/{migrations,alembic,prisma}/**"
+      instructions: |
+        Migrations must be reversible, run on an empty DB, index tenant/date/FK columns,
+        use timestamptz and numeric for money, and not drop or rename without a backfill plan.
+    - path: "**/*.{sql,py,ts}"
+      instructions: |
+        Production sources (FBS, SGA, Sheets, Colppy) are read-only unless AGENTS.md says
+        otherwise. Flag any write, any string-built SQL and any query without a timeout.
+    - path: "**/Dockerfile"
+      instructions: Pinned base image, non-root user, no secrets in build args or layers.
+    - path: ".github/workflows/**"
+      instructions: |
+        Least-privilege permissions, no secrets echoed, no pull_request_target with checkout
+        of the PR head, actions pinned to a version.
+  tools:
+    gitleaks:
+      enabled: true
+    ruff:
+      enabled: true
+    eslint:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "AGENTS.md"
+      - ".standards/STANDARDS.md"
+  jira:
+    usage: auto
+    project_keys:
+      - EA
