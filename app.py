@@ -31,7 +31,7 @@ from engine import ai_assist
 from engine import fbs_sql
 from engine import ia_log
 from engine import reglas as reglas_mod
-from engine import equivalencias as eq_mod
+from engine import equivalences
 from engine import gastos_conf
 from engine import cuentas as cuentas_mod
 from engine import analisis as analisis_mod
@@ -360,7 +360,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         # --- conciliar ----------------------------------------------------
         prog("Cruzando el extracto contra el mayor", 46)
         reglas = reglas_mod.cargar()
-        equivalencias = eq_mod.cargar()
+        equivalencias = equivalences.load()
         terminos_gasto = gastos_conf.cargar()
         _forzar_gastos_movs(movs)
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
@@ -605,12 +605,12 @@ def api_migracion_importar(cuerpo: dict = Body(...)):
 @app.get("/api/equivalencias")
 def api_equivalencias():
     """Diccionario de equivalencias de términos extracto ↔ sistema."""
-    return {"equivalencias": eq_mod.cargar()}
+    return {"equivalencias": equivalences.load()}
 
 
 @app.post("/api/equivalencias")
 def api_equivalencias_agregar(cuerpo: dict = Body(...)):
-    pares, error = eq_mod.agregar(cuerpo.get("extracto"), cuerpo.get("sistema"))
+    pares, error = equivalences.add(cuerpo.get("extracto"), cuerpo.get("sistema"))
     if error:
         return JSONResponse(status_code=422, content={"error": error})
     return {"equivalencias": pares}
@@ -618,7 +618,7 @@ def api_equivalencias_agregar(cuerpo: dict = Body(...)):
 
 @app.delete("/api/equivalencias/{eq_id}")
 def api_equivalencias_eliminar(eq_id: str):
-    return {"equivalencias": eq_mod.eliminar(eq_id)}
+    return {"equivalencias": equivalences.remove(eq_id)}
 
 
 @app.get("/api/cuentas")
@@ -1303,7 +1303,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                 por_id = {c["id"]: c for c in cuentas}
 
     reglas = reglas_mod.cargar()
-    equivalencias = eq_mod.cargar()
+    equivalencias = equivalences.load()
     terminos_gasto = gastos_conf.cargar()
 
     arrastre = _cargar_arrastre()

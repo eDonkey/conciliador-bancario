@@ -419,7 +419,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
               equivalencias=None, terminos_gasto=None, excepciones_gasto=None):
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
     from engine import reglas as reglas_mod
-    from engine import equivalencias as eq_mod
+    from engine import equivalences
     from engine import gastos_conf
 
     pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
@@ -442,7 +442,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
             (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
     # 2c) diccionario de equivalencias de vocabulario (p. ej. haberes ≈ sueldos)
-    pares_eq, usados_b, usados_a = eq_mod.aplicar(
+    pares_eq, usados_b, usados_a = equivalences.apply(
         banco_sin_nada, e_sin_banco + o_pend_sin_banco, equivalencias or [])
     equivalencias_aplicadas = len({p["banco"].id for p in pares_eq})
     if pares_eq:

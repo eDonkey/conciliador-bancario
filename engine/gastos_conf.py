@@ -13,7 +13,7 @@ import re
 import uuid
 from datetime import date
 
-from engine.equivalencias import _norm
+from engine.equivalences import _normalize
 
 RUTA_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "datos", "gastos_usuario.json")
@@ -52,7 +52,7 @@ def agregar(texto: str, ruta: str = RUTA_DEFAULT) -> tuple[list[dict], str | Non
     if len(termino) < 4:
         return cargar(ruta), "El concepto necesita al menos 4 caracteres (sin contar números)"
     terminos = cargar(ruta)
-    if any(_norm(t["termino"]) == _norm(termino) for t in terminos):
+    if any(_normalize(t["termino"]) == _normalize(termino) for t in terminos):
         return terminos, "Ese concepto ya está registrado como gasto bancario"
     terminos.append({"id": uuid.uuid4().hex[:8], "termino": termino,
                      "creada": date.today().isoformat()})
@@ -72,7 +72,7 @@ def _comparable(texto: str) -> str:
     'dbcr sdb tasa gral' y el término aprendido de ese mismo movimiento lo
     matchea (antes se buscaba el término literal dentro de la descripción
     original, y el 25413 del medio o la barra de S/DB lo hacían imposible)."""
-    return _norm(limpiar_termino(texto))
+    return _normalize(limpiar_termino(texto))
 
 
 def es_gasto(descripcion: str, terminos: list[dict]) -> bool:
@@ -80,7 +80,7 @@ def es_gasto(descripcion: str, terminos: list[dict]) -> bool:
         return False
     base = " " + _comparable(descripcion) + " "
     for t in terminos:
-        term = _norm(t.get("termino") or "").strip()
+        term = _normalize(t.get("termino") or "").strip()
         # anclado a inicio de palabra; el final admite prefijo ('credit'
         # matchea 'creditos'), como el matching histórico
         if term and (" " + term) in base:
