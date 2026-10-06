@@ -163,7 +163,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
         return []
 
     _cargar_clave()
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(timeout=120, max_retries=2)   # tope por tanda
     sugerencias = []
     total_tandas = cantidad_tandas(movs_banco)
 

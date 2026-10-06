@@ -200,7 +200,8 @@ def _importe(v) -> float:
     return float(v)
 
 
-def cargar_conf() -> dict:
+def _conf_archivo() -> dict:
+    """La config guardada en datos/fbs_sql.json, sin los overrides del entorno."""
     conf = {"servidor": "", "puerto": 1433, "base": "", "usuario": "",
             "clave": "", "query": QUERY_EJEMPLO}
     if os.path.exists(RUTA_CONF):
@@ -209,6 +210,11 @@ def cargar_conf() -> dict:
                 conf.update(json.load(f))
         except (json.JSONDecodeError, OSError):
             pass
+    return conf
+
+
+def cargar_conf() -> dict:
+    conf = _conf_archivo()
     # el entorno pisa al archivo (deploys sin tocar datos/)
     conf["servidor"] = os.environ.get("FBS_SQL_SERVIDOR", conf["servidor"])
     conf["puerto"] = int(os.environ.get("FBS_SQL_PUERTO", conf["puerto"] or 1433))
@@ -306,14 +312,17 @@ def guardar_conf(datos: dict, permitir_destino: bool = True):
     if str(datos.get("query") or "").strip():
         _validar_solo_lectura(str(datos["query"]))
         _validar_bloques_unicos(str(datos["query"]))
-    conf = cargar_conf()
-    previo = (conf["servidor"], conf["puerto"], conf["base"], conf["usuario"])
+    actual = cargar_conf()
+    # lo que viene del entorno (FBS_SQL_*, clave incluida) no se copia al
+    # archivo: se guarda lo que ya estaba en el archivo más lo que cambió
+    conf = _conf_archivo()
+    previo = (actual["servidor"], actual["puerto"], actual["base"], actual["usuario"])
     if "query" in datos:
         conf["query"] = str(datos["query"] or "").strip()
-    nuevo = (str(datos.get("servidor", conf["servidor"]) or "").strip(),
-             int(datos.get("puerto") or conf["puerto"] or 1433),
-             str(datos.get("base", conf["base"]) or "").strip(),
-             str(datos.get("usuario", conf["usuario"]) or "").strip())
+    nuevo = (str(datos.get("servidor", actual["servidor"]) or "").strip(),
+             int(datos.get("puerto") or actual["puerto"] or 1433),
+             str(datos.get("base", actual["base"]) or "").strip(),
+             str(datos.get("usuario", actual["usuario"]) or "").strip())
     cambios_destino = nuevo != previo or bool(datos.get("clave"))
     if cambios_destino:
         if destino_bloqueado():
@@ -498,6 +507,10 @@ def _verificar_login_solo_lectura(conf: dict):
 def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
     """_consultar_driver medido para el monitoreo: cada consulta al FBS queda
     como un tramo (servidor, base, driver, filas, demora y el error si falla)."""
+    if simulado():
+        # la demo nunca llega a un SQL Server: el modo hub usa la simulación
+        # y la conexión manual no existe ahí
+        raise ValueError("En la demo no hay conexión a un FBS real.")
     validar_destino(conf.get("servidor"), conf.get("puerto"))
     _verificar_login_solo_lectura(conf)
     with telemetria.tramo("FBS consulta", tipo="cliente", **{

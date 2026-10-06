@@ -247,7 +247,7 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
                                      for c in correcciones[:5]], ensure_ascii=False))
 
         ai_assist._cargar_clave()
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(timeout=60, max_retries=2)
         r = client.messages.create(
             model=MODELO, max_tokens=400, system=SYSTEM,
             messages=[{"role": "user", "content": prompt}],
