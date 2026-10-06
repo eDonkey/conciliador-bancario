@@ -9,8 +9,8 @@
 Bank reconciliation for the Nave group ("Conciliaciones → Bancaria" in the hub): bank statements (Santander PDF,
 and the XLS/XLSX/CSV exports of Santander/Río, BBVA/Francés, Galicia, Macro and Ciudad) against the FES/FBS
 general ledger (accounts E and O), with deterministic matching, learned rules, an optional Claude assistant, a
-monthly mode (`/`) and a daily mode with carry-over between runs (`/diario`). Functional docs (Spanish):
-[README.md](README.md), demo: [README-DEMO.md](README-DEMO.md).
+monthly mode (`/`) and a daily mode with carry-over between runs (`/diario`). Functional docs:
+[README.md](README.md), demo: [README-DEMO.md](README-DEMO.md), UI design system: [DESIGN.md](DESIGN.md).
 
 - **Client / team:** nave
 - **Criticality:** high — every brand's bank movements and ledger, reads FBS with stored credentials
@@ -44,10 +44,10 @@ monthly mode (`/`) and a daily mode with carry-over between runs (`/diario`). Fu
 app.py                     FastAPI: every route, background monthly job, daily mode (staging, carry-over, memory),
                            manual matches, vetoes, reclassifications, Excel exports, data export/import
 engine/matcher.py          deterministic matching (E, then pending O), bank fees and the monthly debit note
-engine/reglas.py           rules learned from manual matches
-engine/equivalencias.py    statement ↔ ledger vocabulary pairs (e.g. haberes ≈ sueldos)
-engine/gastos_conf.py      user-defined bank-fee terms and exceptions
-engine/cuentas.py          group bank accounts (hub Postgres, local fallback, seed in config/) and their FBS mapping
+engine/rules.py            rules learned from manual matches
+engine/equivalences.py     statement ↔ ledger vocabulary pairs (e.g. haberes ≈ sueldos)
+engine/fee_terms.py        user-defined bank-fee terms and exceptions
+engine/accounts.py         group bank accounts (hub Postgres, local fallback, seed in config/) and their FBS mapping
 engine/fbs_sql.py          FBS (SQL Server) reads, READ-ONLY (validated single SELECT, rollback-only transaction,
                            login without write roles), allowed destinations
 engine/hub_cifrado.py      decrypts FBS passwords the hub stores encrypted (v1, AES-256-GCM with HUB_CLAVE)
@@ -56,10 +56,11 @@ engine/seguridad.py        password sessions, sign-in limits, client IP, Origin 
 engine/presupuesto_ia.py   daily AI token budget (warning at 80 %, 429 above it)
 engine/simulacion.py       demo only: simulated FBS ledger and bank statements in each bank's format
 engine/ai_assist.py        Claude match suggestions (monthly mode, opt-in per run)
-engine/analisis.py         Claude "why is this ledger entry pending" analysis, with a daily cap and a cache
-engine/ia_log.py           log of every Anthropic call (tokens, estimated USD)
+engine/analysis.py         Claude "why is this ledger entry pending" analysis, with a daily cap and a cache
+engine/ai_usage.py         log of every Anthropic call (tokens, estimated USD)
 engine/telemetria.py       OpenTelemetry → New Relic. COPY of the `monitor` repo: don't edit here
-parsers/                   Santander PDF, ledger Excel, and the daily multi-bank/FBS file parsers
+parsers/                   santander_pdf.py (statement PDF), ledger_xlsx.py (ledger Excel E/O), daily_files.py
+                           (daily multi-bank statements and FBS reports)
 static/                    index.html (monthly) and diario.html (daily), vanilla JS, no build step
 scripts/backup_datos.py    dated zip of datos/ with 30-day retention (without credentials by default)
 migrar_aprendizajes.py     copies the learned rules from one install to another through the export/import API
@@ -91,9 +92,9 @@ it is not an access boundary (runs, results and learned rules are shared across 
 
 ## Repo-specific rules
 
-- **Never write to FBS.** Only single `SELECT`/`WITH` statements go through `fbs_sql._consultar()`; keep the three
-  read-only layers. The validator `_validar_solo_lectura` covers the same cases as `contrato-mcp`'s (strings,
-  `[names]`, nested comments, lock hints): when one gets a fix, check the other.
+- **Never write to FBS.** Only single `SELECT`/`WITH` statements go through `fbs_sql._query()`; keep the three
+  read-only layers. The validator `_validate_read_only` (with `_without_literals`) covers the same cases as
+  `contrato-mcp`'s (strings, `[names]`, nested comments, lock hints): when one gets a fix, check the other.
 - **The hub tables are read-only here.** The app only writes files under `datos/`.
 - FBS passwords (hub `fbs_conexiones`, `datos/fbs_sql.json`, `FBS_SQL_CLAVE`) never go to the API, the UI or logs.
 - `/health` is answered by the access middleware (`engine/acceso.py`), before auth.
@@ -110,9 +111,9 @@ it is not an access boundary (runs, results and learned rules are shared across 
 | --- | --- | --- |
 | conciliación / conciliar | `reconciliation` / `reconcile` | |
 | extracto (bancario) | `statement` | |
-| movimiento (del banco) | `movement` | class `MovimientoBanco` |
+| movimiento (del banco) | `movement` | class `BankMovement` |
 | libro mayor / mayor | `ledger` | FES/FBS "Consulta del Mayor" |
-| asiento | `entry` | class `AsientoMayor` |
+| asiento | `entry` | class `LedgerEntry` |
 | cuenta E / cuenta O | `E` / `O` | confirmed vs. operative/transitory account; `hoja` = `sheet` |
 | debe / haber | `debit` / `credit` (ledger side) | JSON keys `debe`/`haber` stay |
 | débito / crédito | bank `debit` / `credit` | JSON keys `debito`/`credito` stay |
@@ -134,9 +135,24 @@ it is not an access boundary (runs, results and learned rules are shared across 
 **Public names that stay in Spanish** (the UI, stored data or other installs depend on them): routes and their
 query/path/form parameters, every JSON key of requests, responses and stored files, `datos/` file names, env vars,
 Excel sheet names and headers, the prompts sent to Claude, telemetry span names/attributes and the public API of
-`engine/telemetria.py`, element ids and CSS classes, `iniciar*.bat`, and every user-facing text.
+`engine/telemetria.py` (module name included), element ids and CSS classes, `localStorage` keys, the JS functions
+called from inline `onclick`/`onchange` handlers (the `window.*` ones in `static/*.html`, plus `activarTab` and
+`cargarResultado`), `iniciar*.bat`, `migrar_aprendizajes.py` and `scripts/backup_datos.*` (named in install
+scripts and docs), and every user-facing text.
 
-**Language migration:** not started. Rename-only commits, one module at a time (STANDARDS §6).
+**Modules kept in Spanish** (added by the team in PR #3 and still evolving there; translate them in their own
+rename-only PR when they settle): `engine/acceso.py`, `engine/seguridad.py`, `engine/presupuesto_ia.py`,
+`engine/hub_cifrado.py`, `engine/simulacion.py`, `scripts/backup_datos.py` and their tests
+(`tests/test_seguridad.py`, `test_firma_hub.py`, `test_hub_cifrado.py`, `test_fbs_ia.py`). English code calls
+their Spanish API as is.
+
+**Language migration:** done (October 2026, branch `refactor/conciliador-bancario-english`, rebuilt on PR #3 the
+same way): rename-only commits,
+one module at a time (STANDARDS §6), each checked by a contract guard that drives every route through a
+`TestClient` with faked FBS/hub/Anthropic and a frozen clock and compares responses, files written and outbound
+calls with the pre-migration baseline, plus a scope-aware AST check (Python) and an acorn AST check (inline JS)
+that only names changed. The guard lives in `platform-standards` (`examples/conciliador_bancario`). New code:
+English, following the glossary.
 
 ## Runbook
 
