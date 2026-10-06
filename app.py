@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from parsers.santander_pdf import parse_extracto
+from parsers.santander_pdf import parse_statement
 from parsers.mayor_xlsx import parse_mayor
 from engine.matcher import conciliar
 from engine import ai_assist
@@ -296,7 +296,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                     tmp.write(data)
                     ruta = tmp.name
                 try:
-                    parseados.append(parse_extracto(ruta, nombre))
+                    parseados.append(parse_statement(ruta, nombre))
                 finally:
                     os.unlink(ruta)
                 continue
@@ -836,11 +836,11 @@ def _fecha_iso(s):
 
 
 def _reconstruir_mov(d, seq):
-    from parsers.santander_pdf import MovimientoBanco
+    from parsers.santander_pdf import BankMovement
     archivo = d.get("archivo") or ""
     if not archivo.startswith("(pendiente"):
         archivo = f"(pendiente de días anteriores) {archivo}"
-    return MovimientoBanco(
+    return BankMovement(
         id=f"P#{seq}", date=_fecha_iso(d.get("fecha")),
         voucher=d.get("comprobante"), description=d.get("descripcion") or "",
         detail=d.get("detalle") or "", debit=d.get("debito") or 0.0,

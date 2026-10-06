@@ -19,7 +19,7 @@ from datetime import date, datetime, timedelta
 
 import xlrd
 
-from parsers.santander_pdf import MovimientoBanco
+from parsers.santander_pdf import BankMovement
 from parsers.mayor_xlsx import AsientoMayor
 
 BASE_EXCEL = date(1899, 12, 30)
@@ -57,7 +57,7 @@ def _fecha(s):
 
 def _mov(seq, archivo, fecha, descripcion, importe, saldo=0.0,
          comprobante=None, detalle=""):
-    return MovimientoBanco(
+    return BankMovement(
         id=f"B#{seq}", date=fecha, voucher=comprobante,
         description=descripcion.strip(), detail=(detalle or '').strip(),
         debit=round(-importe, 2) if importe < 0 else 0.0,

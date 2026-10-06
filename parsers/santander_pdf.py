@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Parser de extractos de cuenta corriente de Banco Santander Argentina (PDF).
+"""Parser of Banco Santander Argentina current account statements (PDF).
 
-Extrae los movimientos de la tabla "Movimientos" usando las posiciones de las
-palabras en la página. El débito/crédito se determina por la diferencia de
-saldos (delta), que es infalible; el monto impreso se usa solo para validar.
+Extracts the movements of the "Movimientos" table from the positions of the
+words on the page. Debit/credit comes from the balance difference (delta),
+which can't be misread; the printed amount is only used to validate it.
 """
 import re
 from dataclasses import dataclass
@@ -17,7 +17,7 @@ STOP_RE = re.compile(r'^Saldo total \$')
 
 
 @dataclass
-class MovimientoBanco:
+class BankMovement:
     id: str
     date: date | None
     voucher: str | None
@@ -28,7 +28,7 @@ class MovimientoBanco:
     balance: float
     file: str
     page: int
-    warning: bool = False  # el monto impreso no coincide con el delta de saldo
+    warning: bool = False  # the printed amount doesn't match the balance delta
 
     @property
     def amount(self) -> float:
@@ -68,7 +68,7 @@ def _parse_date(s: str) -> date | None:
 
 
 def _cluster_lines(words, tol=2.0):
-    """Agrupa palabras en líneas visuales por coordenada vertical."""
+    """Groups words into visual lines by vertical coordinate."""
     if not words:
         return []
     ws = sorted(words, key=lambda w: (w['top'], w['x0']))
@@ -84,13 +84,13 @@ def _cluster_lines(words, tol=2.0):
     return lines
 
 
-def parse_extracto(path: str, nombre_archivo: str | None = None) -> dict:
-    """Parsea un extracto PDF. Devuelve dict con metadatos y movimientos."""
-    nombre = nombre_archivo or str(path)
-    movimientos: list[MovimientoBanco] = []
-    meta = {"archivo": nombre, "titular": None, "cuenta": None,
+def parse_statement(path: str, file_name: str | None = None) -> dict:
+    """Parses a PDF statement. Returns a dict with the metadata and the movements."""
+    name = file_name or str(path)
+    movements: list[BankMovement] = []
+    meta = {"archivo": name, "titular": None, "cuenta": None,
             "desde": None, "hasta": None, "saldo_inicial": None, "saldo_final": None}
-    raw_rows = []  # (fecha, comp, desc_words, amounts<=500, saldo, pagina, line_idx)
+    raw_rows = []  # (date, voucher, description, amounts<=500, balance, detail, page)
     stop = False
 
     with pdfplumber.open(path) as pdf:
@@ -119,28 +119,28 @@ def parse_extracto(path: str, nombre_archivo: str | None = None) -> dict:
                 if STOP_RE.match(t) or 'Detalle impositivo' in t:
                     stop = True
                     break
-                saldo_words = [w for w in lw if w['x0'] > 500 and AMOUNT_RE.match(w['text'])]
-                if not saldo_words:
+                balance_words = [w for w in lw if w['x0'] > 500 and AMOUNT_RE.match(w['text'])]
+                if not balance_words:
                     continue
-                saldo = _parse_amount(saldo_words[-1]['text'])
+                balance = _parse_amount(balance_words[-1]['text'])
                 amounts = [_parse_amount(w['text']) for w in lw
                            if AMOUNT_RE.match(w['text']) and w['x0'] <= 500]
-                fecha = None
+                day = None
                 for cand in (lw,
                              lines[i + 1] if i + 1 < len(lines) else [],
                              lines[i - 1] if i > 0 else []):
                     for w in cand:
                         if w['x0'] < 60 and DATE_RE.match(w['text']):
-                            fecha = _parse_date(w['text'])
+                            day = _parse_date(w['text'])
                             break
-                    if fecha:
+                    if day:
                         break
-                comp = next((w['text'] for w in lw if 60 <= w['x0'] <= 110), None)
+                voucher = next((w['text'] for w in lw if 60 <= w['x0'] <= 110), None)
                 desc = ' '.join(w['text'] for w in lw
                                 if 110 <= w['x0'] < 345 and not AMOUNT_RE.match(w['text'])
                                 and w['text'] != '$')
-                # detalle: líneas siguientes sin montos que empiezan en la columna descripción
-                detalle_parts = []
+                # detail: following lines without amounts that start in the description column
+                detail_parts = []
                 j = i + 1
                 while j < len(lines):
                     nl = lines[j]
@@ -148,35 +148,35 @@ def parse_extracto(path: str, nombre_archivo: str | None = None) -> dict:
                         break
                     if any(AMOUNT_RE.match(w['text']) for w in nl if w['x0'] > 340):
                         break
-                    detalle_parts.append(' '.join(w['text'] for w in nl))
+                    detail_parts.append(' '.join(w['text'] for w in nl))
                     j += 1
-                raw_rows.append((fecha, comp, desc, amounts, saldo,
-                                 ' '.join(detalle_parts), pageno))
+                raw_rows.append((day, voucher, desc, amounts, balance,
+                                 ' '.join(detail_parts), pageno))
 
-    # débito/crédito por delta de saldo
+    # debit/credit from the balance delta
     prev = None
     seq = 0
-    for fecha, comp, desc, amounts, saldo, detalle, pageno in raw_rows:
+    for day, voucher, desc, amounts, balance, detail, pageno in raw_rows:
         if 'Saldo Inicial' in desc or 'Saldo inicial' in desc:
-            prev = saldo
-            meta["saldo_inicial"] = saldo
+            prev = balance
+            meta["saldo_inicial"] = balance
             continue
         if prev is None:
-            prev = saldo
+            prev = balance
             continue
-        delta = round(saldo - prev, 2)
-        debito = round(-delta, 2) if delta < 0 else 0.0
-        credito = round(delta, 2) if delta > 0 else 0.0
-        advertencia = not any(abs(a - abs(delta)) < 0.01 for a in amounts) if amounts else True
+        delta = round(balance - prev, 2)
+        debit = round(-delta, 2) if delta < 0 else 0.0
+        credit = round(delta, 2) if delta > 0 else 0.0
+        warning = not any(abs(a - abs(delta)) < 0.01 for a in amounts) if amounts else True
         seq += 1
-        movimientos.append(MovimientoBanco(
-            id=f"{nombre}#{seq}",
-            date=fecha, voucher=comp, description=desc, detail=detalle,
-            debit=debito, credit=credito, balance=saldo,
-            file=nombre, page=pageno, warning=advertencia,
+        movements.append(BankMovement(
+            id=f"{name}#{seq}",
+            date=day, voucher=voucher, description=desc, detail=detail,
+            debit=debit, credit=credit, balance=balance,
+            file=name, page=pageno, warning=warning,
         ))
-        prev = saldo
+        prev = balance
 
-    meta["saldo_final"] = movimientos[-1].balance if movimientos else meta["saldo_inicial"]
-    meta["movimientos"] = movimientos
+    meta["saldo_final"] = movements[-1].balance if movements else meta["saldo_inicial"]
+    meta["movimientos"] = movements
     return meta
