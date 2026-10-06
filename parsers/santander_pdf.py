@@ -6,7 +6,7 @@ palabras en la página. El débito/crédito se determina por la diferencia de
 saldos (delta), que es infalible; el monto impreso se usa solo para validar.
 """
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 
 import pdfplumber

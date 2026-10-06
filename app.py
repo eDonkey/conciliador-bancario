@@ -151,8 +151,11 @@ def _recalcular_resumen(datos):
             info = cargados.get(_clave_mov_dict(m))
             m["cargado_fbs"] = info["fecha"] if info else None
     r = datos["resumen"]
-    imp_b = lambda x: x["credito"] or x["debito"]
-    imp_m = lambda x: x["debe"] or x["haber"]
+    def imp_b(x):
+        return x["credito"] or x["debito"]
+
+    def imp_m(x):
+        return x["debe"] or x["haber"]
     for lista in LISTAS_BANCO:
         r[lista] = {"cantidad": len(datos[lista]),
                     "importe": round(sum(imp_b(x) for x in datos[lista]), 2)}
@@ -1488,7 +1491,8 @@ def api_diario_historial(marca: str = ""):
         if marca and not _de_esta_marca(g, cuentas):
             continue
         ok = [c for c in cuentas if c.get("estado") == "ok"]
-        r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
+        def r(c, k):
+            return (c.get("resumen") or {}).get(k) or 0
         expl = [c["resumen"]["porcentaje_explicado"] for c in ok
                 if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
         fechas_mov = [c.get(k) for c in cuentas for k in ("desde", "hasta") if c.get(k)]
@@ -2002,8 +2006,8 @@ def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
         return JSONResponse(status_code=422, content={
             "error": "Contanos por qué va en esa clasificación, así queda registrado"})
     banco_id = cuerpo.get("banco_id")
-    origen = next((l for l in ("banco_sin_contabilizar", "gastos_bancarios")
-                   if any(m["id"] == banco_id for m in datos.get(l, []))), None)
+    origen = next((lista for lista in ("banco_sin_contabilizar", "gastos_bancarios")
+                   if any(m["id"] == banco_id for m in datos.get(lista, []))), None)
     if not origen:
         return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
     mov = next(m for m in datos[origen] if m["id"] == banco_id)
@@ -2192,9 +2196,10 @@ def _generar_excel(datos):
 
     cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
                   "Archivo", "Cargado en FBS"]
-    fila_banco = lambda b: (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
-                            b["debito"] or "", b["credito"] or "", b["archivo"],
-                            b.get("cargado_fbs") or "")
+    def fila_banco(b):
+        return (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
+                b["debito"] or "", b["credito"] or "", b["archivo"],
+                b.get("cargado_fbs") or "")
     habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
     resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
     # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
@@ -2204,8 +2209,9 @@ def _generar_excel(datos):
          [fila_banco(b) for b in datos["gastos_bancarios"]])
 
     cols_mayor = ["Hoja", "Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"]
-    fila_mayor = lambda a: (a["hoja"], a["asiento"], a["fecha"], a["referencia"],
-                            a["comentario"], a["debe"] or "", a["haber"] or "")
+    def fila_mayor(a):
+        return (a["hoja"], a["asiento"], a["fecha"], a["referencia"],
+                a["comentario"], a["debe"] or "", a["haber"] or "")
     hoja("Mayor E sin banco", cols_mayor, [fila_mayor(a) for a in datos["e_sin_banco"]])
     hoja("O pendientes sin banco", cols_mayor,
          [fila_mayor(a) for a in datos["o_pendientes_sin_banco"]])

@@ -20,10 +20,8 @@ permissions:
 jobs:
   ci:
     uses: caliper-lab/platform-standards/.github/workflows/python-ci.yml@v1
-    # with:
-    #   postgres: true
-    #   migrate-command: alembic upgrade head
-    #   lint-blocking: true      # tier 2
+    with:
+      lint-blocking: true      # tier 2: `ruff check .` is clean
 
   security:
     uses: caliper-lab/platform-standards/.github/workflows/security.yml@v1

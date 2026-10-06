@@ -283,7 +283,7 @@ def validar_destino(servidor: str, puerto) -> None:
     try:
         puerto = int(puerto or 1433)
     except (TypeError, ValueError):
-        raise ValueError("El puerto del FBS no es un número.")
+        raise ValueError("El puerto del FBS no es un número.") from None
     if not 1 <= puerto <= 65535 or puerto in _PUERTOS_PROHIBIDOS:
         raise ValueError(f"El puerto {puerto} no es aceptable para una conexión SQL Server.")
     try:
@@ -293,7 +293,7 @@ def validar_destino(servidor: str, puerto) -> None:
             ips = sorted({ipaddress.ip_address(i[4][0])
                           for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
         except OSError:
-            raise ValueError(f'El servidor "{host}" del FBS no resuelve.')
+            raise ValueError(f'El servidor "{host}" del FBS no resuelve.') from None
     for ip in ips:
         if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
             raise ValueError(f"El servidor del FBS apunta a una dirección no permitida ({ip}).")
@@ -446,7 +446,7 @@ def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
         cur = con.cursor()
         cur.execute(q, *[params[n] for n in nombres]) if nombres else cur.execute(q)
         cols = [c[0] for c in cur.description]
-        filas = [dict(zip(cols, f)) for f in cur.fetchall()]
+        filas = [dict(zip(cols, f, strict=False)) for f in cur.fetchall()]
     finally:
         try:
             con.rollback()      # solo lectura
@@ -541,7 +541,7 @@ def _consultar_driver(conf: dict, query: str, params: dict) -> list[dict]:
             return filas
         except ImportError as exc:
             if elegido == "pyodbc":
-                raise ValueError(f"pyodbc no disponible: {exc}")
+                raise ValueError(f"pyodbc no disponible: {exc}") from exc
             errores.append(f"[odbc] {exc}")
         except Exception as exc:  # noqa: BLE001
             if elegido == "pyodbc":
@@ -644,7 +644,7 @@ def traer(desde: str, hasta: str, marca: str = "",
     try:
         filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"La consulta al FBS falló: {exc}")
+        raise ValueError(f"La consulta al FBS falló: {exc}") from exc
     _log_filas(filas)
     return _infos_desde_filas(filas)
 
@@ -804,7 +804,7 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
             except ValueError:
                 raise ValueError(
                     f'El ID de la cuenta {hoja} de {c["etiqueta"]} configurado '
-                    f'en el hub no es numérico: "{plan}".')
+                    f'en el hub no es numérico: "{plan}".') from None
             if (hoja, plan_n) in g["planes"]:
                 # dos cuentas del hub con el mismo ID de plan: un solo bloque,
                 # si no cada asiento vendría duplicado

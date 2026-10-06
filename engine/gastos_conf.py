@@ -13,7 +13,7 @@ import re
 import uuid
 from datetime import date
 
-from engine.equivalencias import contiene, _norm
+from engine.equivalencias import _norm
 
 RUTA_DEFAULT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "datos", "gastos_usuario.json")
