@@ -30,7 +30,7 @@ from engine.matcher import conciliar
 from engine import ai_assist
 from engine import fbs_sql
 from engine import ia_log
-from engine import reglas as reglas_mod
+from engine import rules as rules_mod
 from engine import equivalences
 from engine import fee_terms
 from engine import cuentas as cuentas_mod
@@ -359,7 +359,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
 
         # --- conciliar ----------------------------------------------------
         prog("Cruzando el extracto contra el mayor", 46)
-        reglas = reglas_mod.cargar()
+        reglas = rules_mod.load()
         equivalencias = equivalences.load()
         terminos_gasto = fee_terms.load()
         _forzar_gastos_movs(movs)
@@ -488,7 +488,7 @@ def api_analizar(job_id: str, cuerpo: dict = Body(...)):
 
     # si la firma ya tiene un veredicto del usuario, no se gasta IA: se
     # devuelve directamente lo aprendido (regla o corrección)
-    firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
+    firma = rules_mod.ledger_signature(asiento.get("referencia"), asiento.get("comentario"))
     previo = analisis_mod.buscar(firma, aprendidos)
     if previo and not cuerpo.get("rehacer"):
         cache[id_mayor] = {
@@ -538,7 +538,7 @@ def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
     asiento = next((x for lista in LISTAS_MAYOR for x in datos[lista]
                     if x["id"] == id_mayor), None)
     if asiento:
-        firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
+        firma = rules_mod.ledger_signature(asiento.get("referencia"), asiento.get("comentario"))
         analisis_mod.aprender(firma, entrada["texto"], ok, correccion)
         analisis_mod.anotar_residuales(datos)
     entrada["veredicto"] = "ok" if ok else "corregido"
@@ -1302,7 +1302,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                                                          fila.get("nombre_fbs"))
                 por_id = {c["id"]: c for c in cuentas}
 
-    reglas = reglas_mod.cargar()
+    reglas = rules_mod.load()
     equivalencias = equivalences.load()
     terminos_gasto = fee_terms.load()
 
@@ -1922,7 +1922,7 @@ def api_conciliar_manual(job_id: str, cuerpo: dict = Body(...)):
     datos["conciliados_manual"].append(match)
 
     # aprender la regla para futuras conciliaciones
-    regla = reglas_mod.aprender(match)
+    regla = rules_mod.learn(match)
     match["regla_aprendida"] = bool(regla)
 
     idx = cuerpo.get("sugerencia_idx")
@@ -2097,7 +2097,7 @@ def api_deshacer_manual(job_id: str, match_id: str):
 
     datos["conciliados_manual"] = [m for m in datos["conciliados_manual"]
                                    if m["match_id"] != match_id]
-    reglas_mod.olvidar(match)
+    rules_mod.forget(match)
     for x in match["banco"]:
         origen = x.pop("_origen", "banco_sin_contabilizar")
         datos[origen].append(x)

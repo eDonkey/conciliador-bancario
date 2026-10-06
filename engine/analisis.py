@@ -13,7 +13,7 @@ import json
 import os
 from datetime import date
 
-from engine import reglas as reglas_mod
+from engine import rules
 from engine import ai_assist
 from engine import presupuesto_ia
 
@@ -81,7 +81,7 @@ def anotar_residuales(datos: dict, ruta: str = RUTA_DEFAULT):
         return
     for lista in ("e_sin_banco", "o_pendientes_sin_banco"):
         for x in datos.get(lista, []):
-            firma = reglas_mod.firma_mayor(x.get("referencia"), x.get("comentario"))
+            firma = rules.ledger_signature(x.get("referencia"), x.get("comentario"))
             it = buscar(firma, items)
             if it:
                 x["analisis_previo"] = {

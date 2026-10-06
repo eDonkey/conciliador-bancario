@@ -418,7 +418,7 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
 def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
               equivalencias=None, terminos_gasto=None, excepciones_gasto=None):
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
-    from engine import reglas as reglas_mod
+    from engine import rules
     from engine import equivalences
     from engine import fee_terms
 
@@ -431,7 +431,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     matches_o, banco_sin_nada, o_pend_sin_banco = _match_pases(banco_sin_e, pendientes_o)
 
     # 2b) reglas aprendidas de conciliaciones manuales anteriores
-    pares_regla, usados_b, usados_a = reglas_mod.aplicar(
+    pares_regla, usados_b, usados_a = rules.apply(
         banco_sin_nada, e_sin_banco + o_pend_sin_banco, reglas_aprendidas or [])
     reglas_aplicadas = len(pares_regla)
     if pares_regla:
