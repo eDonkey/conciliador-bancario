@@ -420,7 +420,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     """Ejecuta la conciliación completa. Devuelve un dict serializable."""
     from engine import reglas as reglas_mod
     from engine import equivalences
-    from engine import gastos_conf
+    from engine import fee_terms
 
     pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
 
@@ -472,12 +472,12 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         if forzado is not None:
             # decisión manual sobre ESTE movimiento: pisa todo
             es_gasto = forzado
-        elif gastos_conf.es_gasto(m.description, excepciones_gasto):
+        elif fee_terms.is_fee(m.description, excepciones_gasto):
             # concepto aprendido como "nunca es gasto": pisa a los detectores
             es_gasto = False
         else:
             es_gasto = bool(GASTO_RE.search(m.description)
-                            or gastos_conf.es_gasto(m.description, terminos_gasto))
+                            or fee_terms.is_fee(m.description, terminos_gasto))
         (gastos_bancarios if es_gasto else sin_contabilizar).append(m)
 
     # 4) nota de débito mensual: agrupar gastos por período y cruzar contra

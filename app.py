@@ -32,7 +32,7 @@ from engine import fbs_sql
 from engine import ia_log
 from engine import reglas as reglas_mod
 from engine import equivalences
-from engine import gastos_conf
+from engine import fee_terms
 from engine import cuentas as cuentas_mod
 from engine import analisis as analisis_mod
 from engine import telemetria
@@ -361,13 +361,13 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         prog("Cruzando el extracto contra el mayor", 46)
         reglas = reglas_mod.cargar()
         equivalencias = equivalences.load()
-        terminos_gasto = gastos_conf.cargar()
+        terminos_gasto = fee_terms.load()
         _forzar_gastos_movs(movs)
         resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
                               mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias,
                               terminos_gasto=terminos_gasto,
-                              excepciones_gasto=gastos_conf.cargar_excepciones())
+                              excepciones_gasto=fee_terms.load_exceptions())
 
         # --- IA (real o simulada) sobre los residuales --------------------
         ia_sugerencias, ia_estado = [], "desactivada"
@@ -1304,7 +1304,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 
     reglas = reglas_mod.cargar()
     equivalencias = equivalences.load()
-    terminos_gasto = gastos_conf.cargar()
+    terminos_gasto = fee_terms.load()
 
     arrastre = _cargar_arrastre()
     memoria = _cargar_memoria()
@@ -1380,7 +1380,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         _forzar_gastos_movs(movs)
         resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
                               equivalencias=equivalencias, terminos_gasto=terminos_gasto,
-                              excepciones_gasto=gastos_conf.cargar_excepciones())
+                              excepciones_gasto=fee_terms.load_exceptions())
         # período cubierto por los extractos de HOY (sin contar los arrastrados,
         # que traen fechas de días anteriores)
         fechas = [m.date for m in movs if m.date and m.id.startswith("B#")]
@@ -1753,22 +1753,22 @@ def api_diario_eliminar(grupo_id: str):
 def api_gastos():
     """Conceptos definidos por el usuario que se clasifican como gasto
     bancario, y excepciones (conceptos que NUNCA lo son)."""
-    return {"gastos": gastos_conf.cargar(),
-            "excepciones": gastos_conf.cargar_excepciones()}
+    return {"gastos": fee_terms.load(),
+            "excepciones": fee_terms.load_exceptions()}
 
 
 @app.delete("/api/gastos/excepciones/{exc_id}")
 def api_gastos_excepcion_eliminar(exc_id: str):
     """(Declarada antes que /api/gastos/{term_id} para que 'excepciones' no
     se interprete como un id de término.)"""
-    return {"excepciones": gastos_conf.eliminar_excepcion(exc_id)}
+    return {"excepciones": fee_terms.remove_exception(exc_id)}
 
 
 @app.post("/api/gastos")
 def api_gastos_agregar(cuerpo: dict = Body(...)):
     """Agrega un concepto de gasto. Si viene job_id, además reclasifica en ese
     resultado los movimientos de 'banco sin contabilizar' que lo contengan."""
-    terminos, error = gastos_conf.agregar(cuerpo.get("termino"))
+    terminos, error = fee_terms.add(cuerpo.get("termino"))
     # un término ya registrado no es un error fatal: se re-aplica igual al job
     # (típico reintento del usuario cuando el primer clic no movió nada)
     if error and "ya está registrado" not in error:
@@ -1779,9 +1779,9 @@ def api_gastos_agregar(cuerpo: dict = Body(...)):
     if job_id:
         datos = _obtener(job_id)
     if datos:
-        termino = gastos_conf.limpiar_termino(cuerpo.get("termino"))
+        termino = fee_terms.clean_term(cuerpo.get("termino"))
         se_mueven = [x for x in datos["banco_sin_contabilizar"]
-                     if gastos_conf.es_gasto(x["descripcion"], [{"termino": termino}])]
+                     if fee_terms.is_fee(x["descripcion"], [{"termino": termino}])]
         if se_mueven:
             ids = {x["id"] for x in se_mueven}
             datos["banco_sin_contabilizar"] = [
@@ -1796,7 +1796,7 @@ def api_gastos_agregar(cuerpo: dict = Body(...)):
 
 @app.delete("/api/gastos/{term_id}")
 def api_gastos_eliminar(term_id: str):
-    return {"gastos": gastos_conf.eliminar(term_id)}
+    return {"gastos": fee_terms.remove(term_id)}
 
 
 @app.post("/api/excluir/{job_id}")
@@ -2032,13 +2032,13 @@ def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
     # parecidos en TODAS las corridas futuras (no solo este movimiento)
     excepcion_aprendida = None
     if cuerpo.get("aprender_concepto") and destino != "gastos_bancarios":
-        _, err = gastos_conf.agregar_excepcion(mov.get("descripcion"))
+        _, err = fee_terms.add_exception(mov.get("descripcion"))
         if err and "ya está registrado" not in err:
             return JSONResponse(status_code=422, content={"error": err})
-        excepcion_aprendida = gastos_conf.limpiar_termino(mov.get("descripcion"))
+        excepcion_aprendida = fee_terms.clean_term(mov.get("descripcion"))
         # mover ya mismo los demás gastos de este resultado que la contengan
         parecidos = [m for m in datos["gastos_bancarios"]
-                     if gastos_conf.es_gasto(m.get("descripcion"),
+                     if fee_terms.is_fee(m.get("descripcion"),
                                              [{"termino": excepcion_aprendida}])]
         if parecidos:
             ids = {m["id"] for m in parecidos}
