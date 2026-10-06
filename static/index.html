@@ -1721,7 +1721,7 @@ function paintTable() {
   thead.innerHTML = '<tr>' + cols.map(c => `<th scope="col">${c}</th>`).join('') + '</tr>';
   tbody.innerHTML = rows
     .filter(f => !filter || f.some(c =>
-      String(typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filter)))
+      String(c && typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filter)))
     .map(f => `<tr${f._clase ? ` class="${f._clase}"` : ''}>` + f.map(c => {
       if (c && typeof c === 'object') {
         if ('html' in c) return `<td>${c.html}</td>`;
