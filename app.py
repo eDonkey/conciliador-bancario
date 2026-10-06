@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from parsers.santander_pdf import parse_statement
-from parsers.mayor_xlsx import parse_mayor
+from parsers.ledger_xlsx import parse_ledger
 from engine.matcher import conciliar
 from engine import ai_assist
 from engine import fbs_sql
@@ -350,7 +350,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                 "asientos_o": len(mayor_parsed["O"]["asientos"])}
         else:
             prog("Leyendo el libro mayor", 38)
-            mayor_parsed = parse_mayor(data_mayor)
+            mayor_parsed = parse_ledger(data_mayor)
             if "E" not in mayor_parsed or "O" not in mayor_parsed:
                 PROGRESO[job_id] = {"estado": "error", "mensaje":
                     "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
@@ -849,8 +849,8 @@ def _reconstruir_mov(d, seq):
 
 
 def _reconstruir_asiento(d, seq):
-    from parsers.mayor_xlsx import AsientoMayor
-    return AsientoMayor(
+    from parsers.ledger_xlsx import LedgerEntry
+    return LedgerEntry(
         id=f"P{d.get('hoja', 'E')}#{seq}", sheet=d.get("hoja", "E"),
         number=d.get("asiento"), date=_fecha_iso(d.get("fecha")),
         reference=d.get("referencia") or "", comment=d.get("comentario") or "",

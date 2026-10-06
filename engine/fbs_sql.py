@@ -34,7 +34,7 @@ from datetime import date, datetime
 
 from engine import telemetria
 from engine.hub_cifrado import descifrar_fbs
-from parsers.mayor_xlsx import AsientoMayor
+from parsers.ledger_xlsx import LedgerEntry
 
 _DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
 RUTA_CONF = os.path.join(_DATOS, "fbs_sql.json")
@@ -675,7 +675,7 @@ def _infos_desde_filas(filas: list[dict],
         if f.get("nombre_fbs") and not g["nombre_fbs"]:
             g["nombre_fbs"] = str(f["nombre_fbs"]).strip()[:80]
         n = len(g["asientos"]) + 1
-        g["asientos"].append(AsientoMayor(
+        g["asientos"].append(LedgerEntry(
             id=f"{letra}#{n}", sheet=letra,
             number=str(f.get("asiento") or "").strip() or n,
             date=_fecha(f.get("fecha")),

@@ -20,7 +20,7 @@ from datetime import date, datetime, timedelta
 import xlrd
 
 from parsers.santander_pdf import BankMovement
-from parsers.mayor_xlsx import AsientoMayor
+from parsers.ledger_xlsx import LedgerEntry
 
 BASE_EXCEL = date(1899, 12, 30)
 FBS_HOJA_RE = re.compile(r'\((E|O)\)\s*\((\d+)\)')
@@ -262,7 +262,7 @@ def _parse_fbs(nombre, wb):
         if not isinstance(v[1], float) or str(v[0]).startswith('Saldo'):
             continue
         seq += 1
-        asientos.append(AsientoMayor(
+        asientos.append(LedgerEntry(
             id=f"{letra or 'E'}#{seq}", sheet=letra or 'E',
             number=int(v[0]) if isinstance(v[0], float) else str(v[0]),
             date=_fecha(v[1]), reference=str(v[2] or '').strip(),
@@ -308,7 +308,7 @@ def _parse_fbs_xlsx(nombre, wb):
             if fecha is None or str(f[0] or '').startswith('Saldo') or f[0] is None:
                 continue
             seq += 1
-            asientos.append(AsientoMayor(
+            asientos.append(LedgerEntry(
                 id=f"{letra}#{seq}", sheet=letra,
                 number=str(f[0]).strip(), date=fecha,
                 reference=str(f[2] or '').strip(),
