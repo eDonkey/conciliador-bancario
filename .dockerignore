@@ -13,3 +13,5 @@ datos
 *.md
 config/cuentas_semilla.json
 *.pem
+.pytest_cache
+.ruff_cache

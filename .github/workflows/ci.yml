@@ -21,7 +21,8 @@ jobs:
   ci:
     uses: caliper-lab/platform-standards/.github/workflows/python-ci.yml@v1
     with:
-      lint-blocking: true      # tier 2: `ruff check .` is clean
+      requirements: requirements-dev.txt   # includes requirements.txt + pytest/httpx/ruff
+      lint-blocking: true                  # tier 2: `ruff check .` is clean
 
   security:
     uses: caliper-lab/platform-standards/.github/workflows/security.yml@v1

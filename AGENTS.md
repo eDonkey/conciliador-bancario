@@ -30,7 +30,7 @@ monthly mode (`/`) and a daily mode with carry-over between runs (`/diario`). Fu
 | What | Command |
 | --- | --- |
 | Install | `pip install -r requirements-dev.txt` (pinned, hash-checked; production installs `requirements.txt`) |
-| Add / upgrade a dependency | edit `requirements.in` (or `requirements-dev.in`), then `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements.txt` and `uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt`; commit `.in` and `.txt` together |
+| Add / upgrade a dependency | edit `requirements.in` (or `requirements-dev.in`), then `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements.txt` and `uv pip compile requirements-dev.in --universal --python-version 3.12 --generate-hashes --no-header -o requirements-dev.txt` (same for `requirements-demo.in`, the demo-only `xlwt`); commit `.in` and `.txt` together |
 | Run locally | `python app.py` → http://127.0.0.1:8765 (`/` monthly, `/diario` daily). State goes to `datos/` |
 | Run the demo | `pip install -r requirements-demo.txt`, then `DEMO_MODE=true python app.py`: simulated FBS and generated statements for the hub's accounts (`engine/simulacion.py`) |
 | Tests | `python -m pytest -q` (runs a throwaway copy of the repo, never touches `datos/`) |
