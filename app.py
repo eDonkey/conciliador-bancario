@@ -799,10 +799,10 @@ def api_diario_fbs_excel(staging_id: str):
         ws.append([])
         ws.append(["Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"])
         for a in i["asientos"]:
-            ws.append([a.asiento,
-                       datetime(a.fecha.year, a.fecha.month, a.fecha.day)
-                       if a.fecha else None,
-                       a.referencia, a.comentario, a.debe, a.haber])
+            ws.append([a.number,
+                       datetime(a.date.year, a.date.month, a.date.day)
+                       if a.date else None,
+                       a.reference, a.comment, a.debit, a.credit])
     buf = io.BytesIO()
     wb.save(buf)
     nombre = f"FBS_directo_{date.today().isoformat()}.xlsx"
@@ -841,20 +841,20 @@ def _reconstruir_mov(d, seq):
     if not archivo.startswith("(pendiente"):
         archivo = f"(pendiente de días anteriores) {archivo}"
     return MovimientoBanco(
-        id=f"P#{seq}", fecha=_fecha_iso(d.get("fecha")),
-        comprobante=d.get("comprobante"), descripcion=d.get("descripcion") or "",
-        detalle=d.get("detalle") or "", debito=d.get("debito") or 0.0,
-        credito=d.get("credito") or 0.0, saldo=d.get("saldo") or 0.0,
-        archivo=archivo, pagina=0)
+        id=f"P#{seq}", date=_fecha_iso(d.get("fecha")),
+        voucher=d.get("comprobante"), description=d.get("descripcion") or "",
+        detail=d.get("detalle") or "", debit=d.get("debito") or 0.0,
+        credit=d.get("credito") or 0.0, balance=d.get("saldo") or 0.0,
+        file=archivo, page=0)
 
 
 def _reconstruir_asiento(d, seq):
     from parsers.mayor_xlsx import AsientoMayor
     return AsientoMayor(
-        id=f"P{d.get('hoja', 'E')}#{seq}", hoja=d.get("hoja", "E"),
-        asiento=d.get("asiento"), fecha=_fecha_iso(d.get("fecha")),
-        referencia=d.get("referencia") or "", comentario=d.get("comentario") or "",
-        debe=d.get("debe") or 0.0, haber=d.get("haber") or 0.0)
+        id=f"P{d.get('hoja', 'E')}#{seq}", sheet=d.get("hoja", "E"),
+        number=d.get("asiento"), date=_fecha_iso(d.get("fecha")),
+        reference=d.get("referencia") or "", comment=d.get("comentario") or "",
+        debit=d.get("debe") or 0.0, credit=d.get("haber") or 0.0)
 
 
 def _aplicar_arrastre(cid, movs, g, arrastre):
@@ -865,7 +865,7 @@ def _aplicar_arrastre(cid, movs, g, arrastre):
     if not prev:
         return 0, 0
     seq = 0
-    claves_m = {(m.fecha, m.descripcion, round(m.credito - m.debito, 2), m.comprobante)
+    claves_m = {(m.date, m.description, round(m.credit - m.debit, 2), m.voucher)
                 for m in movs}
     n_movs = 0
     for d in prev.get("banco_sin_contabilizar", []):
@@ -877,7 +877,7 @@ def _aplicar_arrastre(cid, movs, g, arrastre):
         seq += 1
         movs.append(_reconstruir_mov(d, seq))
         n_movs += 1
-    claves_a = {(a.hoja, str(a.asiento), a.fecha, round(a.debe, 2), round(a.haber, 2))
+    claves_a = {(a.sheet, str(a.number), a.date, round(a.debit, 2), round(a.credit, 2))
                 for a in g["e"] + g["o"]}
     n_asientos = 0
     for lista, dest in (("e_sin_banco", g["e"]), ("o_pendientes_sin_banco", g["o"])):
@@ -922,8 +922,8 @@ def _clave_mov_dict(d) -> str:
 
 
 def _clave_mov_obj(m) -> str:
-    return (f'{m.fecha.isoformat() if m.fecha else ""}|{m.descripcion}|'
-            f'{m.credito - m.debito:.2f}|{m.comprobante or ""}')
+    return (f'{m.date.isoformat() if m.date else ""}|{m.description}|'
+            f'{m.credit - m.debit:.2f}|{m.voucher or ""}')
 
 
 def _clave_asiento_dict(d) -> str:
@@ -932,8 +932,8 @@ def _clave_asiento_dict(d) -> str:
 
 
 def _clave_asiento_obj(a) -> str:
-    return (f'{a.hoja}|{a.asiento}|{a.fecha.isoformat() if a.fecha else ""}|'
-            f'{a.debe:.2f}|{a.haber:.2f}')
+    return (f'{a.sheet}|{a.number}|{a.date.isoformat() if a.date else ""}|'
+            f'{a.debit:.2f}|{a.credit:.2f}')
 
 
 # --- cruces vetados: pares banco<->asiento que el usuario marcó como "no
@@ -1107,9 +1107,9 @@ def _forzar_gastos_movs(movs):
     for m in movs:
         ov = overrides.get(_clave_mov_obj(m))
         if ov == "gastos_bancarios":
-            m._forzar_gasto = True
+            m._force_fee = True
         elif ov in ("banco_sin_contabilizar", "haberes_sin_contabilizar"):
-            m._forzar_gasto = False
+            m._force_fee = False
 
 
 def _cosechar_consumidos(prev: dict):
@@ -1181,9 +1181,9 @@ def _procesar_confirmaciones(prev, g):
         lado_original = "debe" if (aso.get("debe") or 0) else "haber"
         econf = next(
             (a for a in g["e"]
-             if a.id not in usados_e and a.lado == lado_original
-             and round(a.importe, 2) == importe
-             and _claves(a.referencia, a.comentario) & claves_o), None)
+             if a.id not in usados_e and a.side == lado_original
+             and round(a.amount, 2) == importe
+             and _claves(a.reference, a.comment) & claves_o), None)
         if econf is None:
             continue
         usados_e.add(econf.id)
@@ -1194,8 +1194,8 @@ def _procesar_confirmaciones(prev, g):
         })
         # la confirmación genera una contrapartida en O: cancelarla del pool
         for j, a in enumerate(g["o"]):
-            if (a.lado != lado_original and round(a.importe, 2) == importe
-                    and _claves(a.referencia, a.comentario) & claves_o):
+            if (a.side != lado_original and round(a.amount, 2) == importe
+                    and _claves(a.reference, a.comment) & claves_o):
                 del g["o"][j]
                 canceladas += 1
                 break
@@ -1224,11 +1224,11 @@ def _cobertura_mayor(movs, rango_mayor):
     Del lado de adelante se toleran 2 días: es normal que los últimos
     movimientos del banco todavía no tengan asiento cargado."""
     d1, d2 = rango_mayor
-    fb = [m.fecha for m in movs if m.fecha]
+    fb = [m.date for m in movs if m.date]
     if not d1 or not d2 or not fb:
         return None
-    antes = sum(1 for m in movs if m.fecha and m.fecha < d1)
-    despues = sum(1 for m in movs if m.fecha and (m.fecha - d2).days > 2)
+    antes = sum(1 for m in movs if m.date and m.date < d1)
+    despues = sum(1 for m in movs if m.date and (m.date - d2).days > 2)
     if not antes and not despues:
         return None
     return {"mayor_desde": d1.isoformat(), "mayor_hasta": d2.isoformat(),
@@ -1290,8 +1290,8 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             g["mayor_fechas"] += [date.fromisoformat(fila[k]) for k in ("desde", "hasta")
                                   if fila.get(k)]
             # un archivo FBS puede traer la hoja E, la O, o las dos juntas
-            g["e"].extend(a for a in info["asientos"] if a.hoja == "E")
-            g["o"].extend(a for a in info["asientos"] if a.hoja == "O")
+            g["e"].extend(a for a in info["asientos"] if a.sheet == "E")
+            g["o"].extend(a for a in info["asientos"] if a.sheet == "O")
             cods = info.get("codigos") or {}
             if por_id.get(cid):
                 for letra in set(info.get("hoja") or "E") & {"E", "O"}:
@@ -1334,7 +1334,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         # conciliados registró como ya consumido en corridas anteriores (y solo
         # tantas veces como se consumió).
         movs = []
-        for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
+        for m in sorted(g["movs"], key=lambda x: (x.date or date.min, x.id)):
             k = _clave_mov_obj(m)
             if usados_mem.get(k, 0) < mem["movs"].get(k, 0):
                 usados_mem[k] = usados_mem.get(k, 0) + 1
@@ -1383,7 +1383,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                               excepciones_gasto=gastos_conf.cargar_excepciones())
         # período cubierto por los extractos de HOY (sin contar los arrastrados,
         # que traen fechas de días anteriores)
-        fechas = [m.fecha for m in movs if m.fecha and m.id.startswith("B#")]
+        fechas = [m.date for m in movs if m.date and m.id.startswith("B#")]
         extractos_meta = [{"archivo": ", ".join(g["archivos"]),
                            "desde": min(fechas) if fechas else None,
                            "hasta": max(fechas) if fechas else None}]

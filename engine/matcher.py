@@ -89,10 +89,10 @@ def _categoria_gasto(descripcion: str) -> str:
 
 def _mes_de_asiento(a) -> str | None:
     """Mes (p.ej. 'ENE') al que corresponde un asiento de ND del mayor."""
-    m = MES_TXT_RE.search(f"{a.referencia} {a.comentario}")
+    m = MES_TXT_RE.search(f"{a.reference} {a.comment}")
     if m:
         return m.group(1)[:3].upper()
-    return MESES.get(a.fecha.month) if a.fecha else None
+    return MESES.get(a.date.month) if a.date else None
 
 
 def resumen_nota_debito(gastos, asientos_libres):
@@ -102,17 +102,17 @@ def resumen_nota_debito(gastos, asientos_libres):
     Devuelve (periodos, ids_asientos_usados)."""
     por_archivo = defaultdict(list)
     for g in gastos:
-        por_archivo[g.archivo].append(g)
+        por_archivo[g.file].append(g)
 
     # candidatos del mayor: ND (haber) y NC de impuestos (debe)
-    nds = [a for a in asientos_libres if a.haber and ND_RE.search(f"{a.referencia} {a.comentario}")]
-    ncs = [a for a in asientos_libres if a.debe and NC_RE.search(f"{a.referencia} {a.comentario}")]
+    nds = [a for a in asientos_libres if a.credit and ND_RE.search(f"{a.reference} {a.comment}")]
+    ncs = [a for a in asientos_libres if a.debit and NC_RE.search(f"{a.reference} {a.comment}")]
 
     periodos = []
     usados = set()
     for archivo in sorted(por_archivo):
         items = por_archivo[archivo]
-        fechas = [g.fecha for g in items if g.fecha]
+        fechas = [g.date for g in items if g.date]
         hasta = max(fechas) if fechas else None
         mes = MESES.get(hasta.month) if hasta else None
         etiqueta = f"{mes}/{hasta.strftime('%y')}" if hasta else archivo
@@ -120,12 +120,12 @@ def resumen_nota_debito(gastos, asientos_libres):
         cats = defaultdict(lambda: {"cantidad": 0, "importe": 0.0})
         conceptos = defaultdict(lambda: {"cantidad": 0, "importe": 0.0})
         for g in items:
-            neto = g.debito - g.credito
-            c = _categoria_gasto(g.descripcion)
+            neto = g.debit - g.credit
+            c = _categoria_gasto(g.description)
             cats[c]["cantidad"] += 1
             cats[c]["importe"] += neto
-            conceptos[g.descripcion.strip()]["cantidad"] += 1
-            conceptos[g.descripcion.strip()]["importe"] += neto
+            conceptos[g.description.strip()]["cantidad"] += 1
+            conceptos[g.description.strip()]["importe"] += neto
 
         filas_cat = []
         for nombre in ORDEN_CATEGORIAS:
@@ -146,9 +146,9 @@ def resumen_nota_debito(gastos, asientos_libres):
         asientos_periodo = [a for a in nds if _mes_de_asiento(a) == mes]
         # NCs del mes siguiente al período también corresponden (se liquidan después)
         asientos_nc = [a for a in ncs
-                       if a.fecha and hasta and 0 <= (a.fecha - hasta).days <= 40]
-        total_mayor = round(sum(a.haber for a in asientos_periodo)
-                            - sum(a.debe for a in asientos_nc), 2)
+                       if a.date and hasta and 0 <= (a.date - hasta).days <= 40]
+        total_mayor = round(sum(a.credit for a in asientos_periodo)
+                            - sum(a.debit for a in asientos_nc), 2)
         for a in asientos_periodo + asientos_nc:
             usados.add(a.id)
 
@@ -191,16 +191,16 @@ def match_tolerancia(banco_libres, asiento_libres):
 
     por_lado_a = {"credito": [], "debito": []}
     for a in asiento_libres:
-        lado_banco = 'credito' if a.lado == 'debe' else 'debito'
+        lado_banco = 'credito' if a.side == 'debe' else 'debito'
         por_lado_a[lado_banco].append(a)
     por_lado_b = {"credito": [], "debito": []}
     for m in banco_libres:
-        por_lado_b[m.lado].append(m)
+        por_lado_b[m.side].append(m)
     for d in (por_lado_a, por_lado_b):
         for lista in d.values():
-            lista.sort(key=lambda x: x.importe)
-    imps_a = {k: [a.importe for a in v] for k, v in por_lado_a.items()}
-    imps_b = {k: [m.importe for m in v] for k, v in por_lado_b.items()}
+            lista.sort(key=lambda x: x.amount)
+    imps_a = {k: [a.amount for a in v] for k, v in por_lado_a.items()}
+    imps_b = {k: [m.amount for m in v] for k, v in por_lado_b.items()}
 
     def cerca(f1, f2):
         return f1 and f2 and abs((f1 - f2).days) <= TOL_DIAS
@@ -211,22 +211,22 @@ def match_tolerancia(banco_libres, asiento_libres):
         i = bisect.bisect_left(imps, importe - tol)
         while i < len(lista) and imps[i] <= importe + tol:
             x = lista[i]
-            if abs(x.importe - importe) > 0.005 and cerca(fecha, x.fecha):
+            if abs(x.amount - importe) > 0.005 and cerca(fecha, x.date):
                 out.append(x)
             i += 1
         return out
 
     pares, usados_b, usados_a = [], set(), set()
     for m in banco_libres:
-        cands = candidatos(m.importe, m.fecha, por_lado_a[m.lado], imps_a[m.lado])
+        cands = candidatos(m.amount, m.date, por_lado_a[m.side], imps_a[m.side])
         if len(cands) != 1 or cands[0].id in usados_a:
             continue
         a = cands[0]
         # el asiento también debe tener a este movimiento como único candidato
-        reversos = candidatos(a.importe, a.fecha, por_lado_b[m.lado], imps_b[m.lado])
+        reversos = candidatos(a.amount, a.date, por_lado_b[m.side], imps_b[m.side])
         if len(reversos) != 1 or reversos[0].id != m.id:
             continue
-        dif = round(m.importe - a.importe, 2)
+        dif = round(m.amount - a.amount, 2)
         pares.append({"banco": m, "asiento": a,
                       "metodo": f"importe aproximado (dif $ {dif:+,.2f})"})
         usados_b.add(m.id)
@@ -255,8 +255,8 @@ def _afinidad(m, a) -> int:
     importe y fecha: el mayor del FBS casi nunca repite el texto del banco,
     así que exigirlo perdería cruces buenos, pero cuando dos candidatos empatan
     gana el que además comparte el nombre o el concepto."""
-    return len(_palabras(f"{m.descripcion} {m.detalle}")
-               & _palabras(f"{a.referencia} {a.comentario}"))
+    return len(_palabras(f"{m.description} {m.detail}")
+               & _palabras(f"{a.reference} {a.comment}"))
 
 
 def _numeros(texto: str) -> set[str]:
@@ -278,8 +278,8 @@ def netear_contraasientos(asientos):
     debe = defaultdict(list)
     haber = defaultdict(list)
     for a in asientos:
-        clave = (_clave_rm(a.comentario) or a.referencia.strip().upper(), round(a.importe, 2))
-        (debe if a.lado == 'debe' else haber)[clave].append(a)
+        clave = (_clave_rm(a.comment) or a.reference.strip().upper(), round(a.amount, 2))
+        (debe if a.side == 'debe' else haber)[clave].append(a)
 
     pares, cancelados = [], set()
     for clave, lista_d in debe.items():
@@ -302,8 +302,8 @@ def netear_cuenta_o(asientos_o):
     debe = defaultdict(list)
     haber = defaultdict(list)
     for a in asientos_o:
-        clave = (_clave_rm(a.comentario) or a.referencia.strip().upper(), round(a.importe, 2))
-        (debe if a.lado == 'debe' else haber)[clave].append(a)
+        clave = (_clave_rm(a.comment) or a.reference.strip().upper(), round(a.amount, 2))
+        (debe if a.side == 'debe' else haber)[clave].append(a)
 
     cancelados = set()
     for clave, lista_d in debe.items():
@@ -329,23 +329,23 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
     def indexar(asientos_):
         idx = defaultdict(list)
         for a in asientos_:
-            lado_banco = 'credito' if a.lado == 'debe' else 'debito'
-            idx[(lado_banco, round(a.importe, 2))].append(a)
+            lado_banco = 'credito' if a.side == 'debe' else 'debito'
+            idx[(lado_banco, round(a.amount, 2))].append(a)
         return idx
 
     # --- Pase 1: importe + número de referencia compartido -----------------
     idx = indexar(asiento_libres)
     usados_a, usados_b = set(), set()
     for m in banco_libres:
-        candidatos = idx.get((m.lado, round(m.importe, 2)), [])
-        texto_b = f"{m.comprobante or ''} {m.descripcion} {m.detalle}"
+        candidatos = idx.get((m.side, round(m.amount, 2)), [])
+        texto_b = f"{m.voucher or ''} {m.description} {m.detail}"
         nums_b = _numeros(texto_b)
         if not nums_b:
             continue
         for a in candidatos:
             if a.id in usados_a:
                 continue
-            nums_a = _numeros(f"{a.referencia} {a.comentario}")
+            nums_a = _numeros(f"{a.reference} {a.comment}")
             if nums_b & nums_a:
                 matches.append({"banco": m, "asiento": a, "metodo": "importe+referencia"})
                 usados_a.add(a.id)
@@ -358,13 +358,13 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
     idx = indexar(asiento_libres)
     idx_b = defaultdict(list)
     for m in banco_libres:
-        idx_b[(m.lado, round(m.importe, 2))].append(m)
+        idx_b[(m.side, round(m.amount, 2))].append(m)
     usados_a, usados_b = set(), set()
     for clave, lista_b in idx_b.items():
         lista_a = idx.get(clave, [])
         if len(lista_b) == 1 and len(lista_a) == 1:
             m, a = lista_b[0], lista_a[0]
-            if m.fecha and a.fecha and abs((m.fecha - a.fecha).days) > tolerancia_dias:
+            if m.date and a.date and abs((m.date - a.date).days) > tolerancia_dias:
                 continue
             matches.append({"banco": m, "asiento": a, "metodo": "importe único"})
             usados_b.add(m.id)
@@ -377,7 +377,7 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
     usados_a, usados_b = set(), set()
     por_clave = defaultdict(list)
     for m in banco_libres:
-        por_clave[(m.lado, round(m.importe, 2))].append(m)
+        por_clave[(m.side, round(m.amount, 2))].append(m)
     for clave, lista_b in por_clave.items():
         lista_a = [a for a in idx.get(clave, [])]
         if not lista_a:
@@ -387,8 +387,8 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
         pares = []
         for m in lista_b:
             for a in lista_a:
-                if m.fecha and a.fecha:
-                    d = abs((m.fecha - a.fecha).days)
+                if m.date and a.date:
+                    d = abs((m.date - a.date).days)
                 else:
                     d = 9999
                 af = _afinidad(m, a)
@@ -439,7 +439,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
         o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
         for p in pares_regla:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
     # 2c) diccionario de equivalencias de vocabulario (p. ej. haberes ≈ sueldos)
     pares_eq, usados_b, usados_a = eq_mod.aplicar(
@@ -450,7 +450,7 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
         o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
         for p in pares_eq:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
     # 2d) tolerancia estricta de importe (comisiones/redondeos), sin ambigüedad
     pares_tol, usados_b, usados_a = match_tolerancia(
@@ -461,23 +461,23 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
         o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
         for p in pares_tol:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
     # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario).
     # Un movimiento reclasificado a mano trae _forzar_gasto (True/False) y esa
     # decisión pisa a los detectores — así la ND mensual también sale bien.
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
-        forzado = getattr(m, "_forzar_gasto", None)
+        forzado = getattr(m, "_force_fee", None)
         if forzado is not None:
             # decisión manual sobre ESTE movimiento: pisa todo
             es_gasto = forzado
-        elif gastos_conf.es_gasto(m.descripcion, excepciones_gasto):
+        elif gastos_conf.es_gasto(m.description, excepciones_gasto):
             # concepto aprendido como "nunca es gasto": pisa a los detectores
             es_gasto = False
         else:
-            es_gasto = bool(GASTO_RE.search(m.descripcion)
-                            or gastos_conf.es_gasto(m.descripcion, terminos_gasto))
+            es_gasto = bool(GASTO_RE.search(m.description)
+                            or gastos_conf.es_gasto(m.description, terminos_gasto))
         (gastos_bancarios if es_gasto else sin_contabilizar).append(m)
 
     # 4) nota de débito mensual: agrupar gastos por período y cruzar contra
@@ -492,10 +492,10 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     e_sin_banco, contraasientos = netear_contraasientos(e_sin_banco)
 
     def tot(ms):
-        return round(sum(x.importe for x in ms), 2)
+        return round(sum(x.amount for x in ms), 2)
 
     def tot_a(as_):
-        return round(sum(x.importe for x in as_), 2)
+        return round(sum(x.amount for x in as_), 2)
 
     # % explicado: además de los conciliados, los gastos bancarios cuyo período
     # cruzó contra una nota de débito del mayor están justificados aunque no

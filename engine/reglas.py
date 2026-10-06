@@ -123,17 +123,17 @@ def aplicar(banco_libres, asiento_libres, reglas):
     pares = []
     usados_b, usados_a = set(), set()
 
-    fb = {m.id: firma_banco(m.descripcion) for m in banco_libres}
-    fa = {a.id: firma_mayor(a.referencia, a.comentario) for a in asiento_libres}
+    fb = {m.id: firma_banco(m.description) for m in banco_libres}
+    fa = {a.id: firma_mayor(a.reference, a.comment) for a in asiento_libres}
 
     # --- 1 a 1: mismo importe/lado + firma de la regla --------------------
     from collections import defaultdict
     idx = defaultdict(list)
     for a in asiento_libres:
-        lado_banco = 'credito' if a.lado == 'debe' else 'debito'
-        idx[(lado_banco, round(a.importe, 2))].append(a)
+        lado_banco = 'credito' if a.side == 'debe' else 'debito'
+        idx[(lado_banco, round(a.amount, 2))].append(a)
     for m in banco_libres:
-        for a in idx.get((m.lado, round(m.importe, 2)), []):
+        for a in idx.get((m.side, round(m.amount, 2)), []):
             if a.id in usados_a:
                 continue
             if (fb[m.id], fa[a.id]) in reglas_todas:
@@ -146,15 +146,15 @@ def aplicar(banco_libres, asiento_libres, reglas):
     grupos_b = defaultdict(list)
     for m in banco_libres:
         if m.id not in usados_b:
-            grupos_b[(fb[m.id], m.fecha)].append(m)
+            grupos_b[(fb[m.id], m.date)].append(m)
     for (firma_b, fecha), items in grupos_b.items():
         if len(items) < 2 or fecha is None:
             continue
-        neto = round(sum(x.credito - x.debito for x in items), 2)
+        neto = round(sum(x.credit - x.debit for x in items), 2)
         for a in asiento_libres:
             if a.id in usados_a or (firma_b, fa[a.id]) not in reglas_grupo:
                 continue
-            neto_a = round(a.debe - a.haber, 2)
+            neto_a = round(a.debit - a.credit, 2)
             if abs(neto - neto_a) < 0.01 and neto != 0:
                 for x in items:
                     pares.append({"banco": x, "asiento": a,
@@ -167,15 +167,15 @@ def aplicar(banco_libres, asiento_libres, reglas):
     grupos_a = defaultdict(list)
     for a in asiento_libres:
         if a.id not in usados_a:
-            grupos_a[(fa[a.id], a.fecha)].append(a)
+            grupos_a[(fa[a.id], a.date)].append(a)
     for (firma_a, fecha), items in grupos_a.items():
         if len(items) < 2 or fecha is None:
             continue
-        neto = round(sum(x.debe - x.haber for x in items), 2)
+        neto = round(sum(x.debit - x.credit for x in items), 2)
         for m in banco_libres:
             if m.id in usados_b or (fb[m.id], firma_a) not in reglas_grupo:
                 continue
-            neto_b = round(m.credito - m.debito, 2)
+            neto_b = round(m.credit - m.debit, 2)
             if abs(neto - neto_b) < 0.01 and neto != 0:
                 for x in items:
                     pares.append({"banco": m, "asiento": x,

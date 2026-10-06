@@ -92,11 +92,11 @@ def eliminar(eq_id: str, ruta: str = RUTA_DEFAULT) -> list[dict]:
 
 
 def _texto_banco(m) -> str:
-    return f"{m.comprobante or ''} {m.descripcion} {m.detalle}"
+    return f"{m.voucher or ''} {m.description} {m.detail}"
 
 
 def _texto_mayor(a) -> str:
-    return f"{a.referencia} {a.comentario}"
+    return f"{a.reference} {a.comment}"
 
 
 def aplicar(banco_libres, asiento_libres, pares):
@@ -127,11 +127,11 @@ def aplicar(banco_libres, asiento_libres, pares):
     # --- 1 a 1: mismo importe/lado + equivalencia --------------------------
     idx = defaultdict(list)
     for a in asiento_libres:
-        lado_banco = 'credito' if a.lado == 'debe' else 'debito'
-        idx[(lado_banco, round(a.importe, 2))].append(a)
+        lado_banco = 'credito' if a.side == 'debe' else 'debito'
+        idx[(lado_banco, round(a.amount, 2))].append(a)
     for m in banco_libres:
         for p in pares_b[m.id]:
-            candidato = next((a for a in idx.get((m.lado, round(m.importe, 2)), [])
+            candidato = next((a for a in idx.get((m.side, round(m.amount, 2)), [])
                               if a.id not in usados_a and p["id"] in pares_a[a.id]), None)
             if candidato is not None:
                 matches.append({"banco": m, "asiento": candidato, "metodo": etiqueta(p)})
@@ -146,10 +146,10 @@ def aplicar(banco_libres, asiento_libres, pares):
                                         ("mes", lambda f: (f.year, f.month))):
         grupos_b = defaultdict(list)
         for m in banco_libres:
-            if m.id in usados_b or m.fecha is None:
+            if m.id in usados_b or m.date is None:
                 continue
             for p in pares_b[m.id]:
-                grupos_b[(p["id"], clave_fecha(m.fecha))].append((p, m))
+                grupos_b[(p["id"], clave_fecha(m.date))].append((p, m))
         for (pid, _), items in grupos_b.items():
             if len(items) < 2:
                 continue
@@ -157,11 +157,11 @@ def aplicar(banco_libres, asiento_libres, pares):
             movs = [m for _, m in items]
             if any(m.id in usados_b for m in movs):
                 continue
-            neto = round(sum(x.credito - x.debito for x in movs), 2)
+            neto = round(sum(x.credit - x.debit for x in movs), 2)
             for a in asiento_libres:
                 if a.id in usados_a or pid not in pares_a[a.id]:
                     continue
-                neto_a = round(a.debe - a.haber, 2)
+                neto_a = round(a.debit - a.credit, 2)
                 if abs(neto - neto_a) < 0.01 and neto != 0:
                     for x in movs:
                         matches.append({"banco": x, "asiento": a,
@@ -176,18 +176,18 @@ def aplicar(banco_libres, asiento_libres, pares):
         if a.id in usados_a:
             continue
         for pid in pares_a[a.id]:
-            grupos_a[(pid, a.fecha)].append(a)
+            grupos_a[(pid, a.date)].append(a)
     for (pid, fecha), items in grupos_a.items():
         if len(items) < 2 or fecha is None:
             continue
         if any(a.id in usados_a for a in items):
             continue
         p = next(x for x in pares if x["id"] == pid)
-        neto = round(sum(x.debe - x.haber for x in items), 2)
+        neto = round(sum(x.debit - x.credit for x in items), 2)
         for m in banco_libres:
             if m.id in usados_b or not any(x["id"] == pid for x in pares_b[m.id]):
                 continue
-            neto_b = round(m.credito - m.debito, 2)
+            neto_b = round(m.credit - m.debit, 2)
             if abs(neto - neto_b) < 0.01 and neto != 0:
                 for x in items:
                     matches.append({"banco": m, "asiento": x, "metodo": etiqueta(p, grupo="día")})

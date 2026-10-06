@@ -58,11 +58,11 @@ def _fecha(s):
 def _mov(seq, archivo, fecha, descripcion, importe, saldo=0.0,
          comprobante=None, detalle=""):
     return MovimientoBanco(
-        id=f"B#{seq}", fecha=fecha, comprobante=comprobante,
-        descripcion=descripcion.strip(), detalle=(detalle or '').strip(),
-        debito=round(-importe, 2) if importe < 0 else 0.0,
-        credito=round(importe, 2) if importe > 0 else 0.0,
-        saldo=saldo, archivo=archivo, pagina=0)
+        id=f"B#{seq}", date=fecha, voucher=comprobante,
+        description=descripcion.strip(), detail=(detalle or '').strip(),
+        debit=round(-importe, 2) if importe < 0 else 0.0,
+        credit=round(importe, 2) if importe > 0 else 0.0,
+        balance=saldo, file=archivo, page=0)
 
 
 # --- Santander / Río: texto tabulado disfrazado de .xls ---------------------
@@ -263,12 +263,12 @@ def _parse_fbs(nombre, wb):
             continue
         seq += 1
         asientos.append(AsientoMayor(
-            id=f"{letra or 'E'}#{seq}", hoja=letra or 'E',
-            asiento=int(v[0]) if isinstance(v[0], float) else str(v[0]),
-            fecha=_fecha(v[1]), referencia=str(v[2] or '').strip(),
-            comentario=str(v[3] or '').strip(),
-            debe=round(float(v[4] or 0.0), 2),
-            haber=round(float(v[5] or 0.0), 2)))
+            id=f"{letra or 'E'}#{seq}", sheet=letra or 'E',
+            number=int(v[0]) if isinstance(v[0], float) else str(v[0]),
+            date=_fecha(v[1]), reference=str(v[2] or '').strip(),
+            comment=str(v[3] or '').strip(),
+            debit=round(float(v[4] or 0.0), 2),
+            credit=round(float(v[5] or 0.0), 2)))
     return {"tipo": "fbs", "hoja": letra, "codigo_fbs": codigo,
             "codigos": {letra or "E": codigo} if codigo else {},
             "nombre_fbs": (nom.group(1).strip() if nom else hoja.name[:60]),
@@ -309,12 +309,12 @@ def _parse_fbs_xlsx(nombre, wb):
                 continue
             seq += 1
             asientos.append(AsientoMayor(
-                id=f"{letra}#{seq}", hoja=letra,
-                asiento=str(f[0]).strip(), fecha=fecha,
-                referencia=str(f[2] or '').strip(),
-                comentario=str(f[3] or '').strip(),
-                debe=round(float(str(f[4] or 0).replace(',', '') or 0), 2),
-                haber=round(float(str(f[5] or 0).replace(',', '') or 0), 2)))
+                id=f"{letra}#{seq}", sheet=letra,
+                number=str(f[0]).strip(), date=fecha,
+                reference=str(f[2] or '').strip(),
+                comment=str(f[3] or '').strip(),
+                debit=round(float(str(f[4] or 0).replace(',', '') or 0), 2),
+                credit=round(float(str(f[5] or 0).replace(',', '') or 0), 2)))
     return {"tipo": "fbs", "hoja": ''.join(sorted(set(hojas))),
             "codigo_fbs": next(iter(codigos.values()), None), "codigos": codigos,
             "nombre_fbs": nombre_fbs, "asientos": asientos}
@@ -366,7 +366,7 @@ def identificar(nombre: str, data: bytes) -> dict:
         return {"tipo": "desconocido", "error": str(exc)}
 
     items = out.get("movimientos") or out.get("asientos") or []
-    fechas = [x.fecha for x in items if x.fecha]
+    fechas = [x.date for x in items if x.date]
     out.setdefault("desde", min(fechas) if fechas else None)
     out.setdefault("hasta", max(fechas) if fechas else None)
     out["cantidad"] = len(items)

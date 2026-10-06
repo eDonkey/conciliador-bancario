@@ -86,18 +86,18 @@ def disponible() -> bool:
 
 def _fila_banco(m):
     return {
-        "id": m.id, "fecha": m.fecha.isoformat() if m.fecha else None,
-        "lado": m.lado, "importe": m.importe,
-        "texto": f"{m.comprobante or ''} {m.descripcion} {m.detalle}".strip(),
+        "id": m.id, "fecha": m.date.isoformat() if m.date else None,
+        "lado": m.side, "importe": m.amount,
+        "texto": f"{m.voucher or ''} {m.description} {m.detail}".strip(),
     }
 
 
 def _fila_mayor(a):
     return {
-        "id": a.id, "hoja": a.hoja,
-        "fecha": a.fecha.isoformat() if a.fecha else None,
-        "lado": a.lado, "importe": a.importe,
-        "texto": f"{a.referencia} {a.comentario}".strip(),
+        "id": a.id, "hoja": a.sheet,
+        "fecha": a.date.isoformat() if a.date else None,
+        "lado": a.side, "importe": a.amount,
+        "texto": f"{a.reference} {a.comment}".strip(),
     }
 
 
@@ -137,9 +137,9 @@ def simular_sugerencias(movs_banco, asientos_mayor, progreso=None, glosario=None
         for a in asientos_mayor:
             if a.id in usados:
                 continue
-            lado_ok = (m.lado == "credito") == (a.lado == "debe")
+            lado_ok = (m.side == "credito") == (a.side == "debe")
             if lado_ok:
-                if candidato is None or abs(a.importe - m.importe) < abs(candidato.importe - m.importe):
+                if candidato is None or abs(a.amount - m.amount) < abs(candidato.amount - m.amount):
                     candidato = a
         if candidato is None:
             continue
@@ -149,7 +149,7 @@ def simular_sugerencias(movs_banco, asientos_mayor, progreso=None, glosario=None
             "ids_mayor": [candidato.id],
             "confianza": confianzas[i % 3],
             "motivo": f"SIMULACIÓN (sin IA): par de prueba por cercanía de importe "
-                      f"(${m.importe:,.2f} vs ${candidato.importe:,.2f}).",
+                      f"(${m.amount:,.2f} vs ${candidato.amount:,.2f}).",
         })
     return sugerencias
 

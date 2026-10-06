@@ -676,17 +676,17 @@ def _infos_desde_filas(filas: list[dict],
             g["nombre_fbs"] = str(f["nombre_fbs"]).strip()[:80]
         n = len(g["asientos"]) + 1
         g["asientos"].append(AsientoMayor(
-            id=f"{letra}#{n}", hoja=letra,
-            asiento=str(f.get("asiento") or "").strip() or n,
-            fecha=_fecha(f.get("fecha")),
-            referencia=str(f.get("referencia") or "").strip(),
-            comentario=str(f.get("comentario") or "").strip(),
-            debe=round(_importe(f.get("debe")), 2),
-            haber=round(_importe(f.get("haber")), 2)))
+            id=f"{letra}#{n}", sheet=letra,
+            number=str(f.get("asiento") or "").strip() or n,
+            date=_fecha(f.get("fecha")),
+            reference=str(f.get("referencia") or "").strip(),
+            comment=str(f.get("comentario") or "").strip(),
+            debit=round(_importe(f.get("debe")), 2),
+            credit=round(_importe(f.get("haber")), 2)))
 
     salida = []
     for (codigo, letra), g in sorted(grupos.items()):
-        fechas = [a.fecha for a in g["asientos"] if a.fecha]
+        fechas = [a.date for a in g["asientos"] if a.date]
         salida.append({
             "tipo": "fbs", "hoja": letra, "codigo_fbs": codigo,
             "codigos": {letra: codigo}, "nombre_fbs": g["nombre_fbs"],

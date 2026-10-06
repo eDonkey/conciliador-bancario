@@ -19,37 +19,37 @@ STOP_RE = re.compile(r'^Saldo total \$')
 @dataclass
 class MovimientoBanco:
     id: str
-    fecha: date | None
-    comprobante: str | None
-    descripcion: str
-    detalle: str
-    debito: float
-    credito: float
-    saldo: float
-    archivo: str
-    pagina: int
-    advertencia: bool = False  # el monto impreso no coincide con el delta de saldo
+    date: date | None
+    voucher: str | None
+    description: str
+    detail: str
+    debit: float
+    credit: float
+    balance: float
+    file: str
+    page: int
+    warning: bool = False  # el monto impreso no coincide con el delta de saldo
 
     @property
-    def importe(self) -> float:
-        return self.credito if self.credito else self.debito
+    def amount(self) -> float:
+        return self.credit if self.credit else self.debit
 
     @property
-    def lado(self) -> str:
-        return "credito" if self.credito else "debito"
+    def side(self) -> str:
+        return "credito" if self.credit else "debito"
 
     def to_dict(self):
         return {
             "id": self.id,
-            "fecha": self.fecha.isoformat() if self.fecha else None,
-            "comprobante": self.comprobante,
-            "descripcion": self.descripcion,
-            "detalle": self.detalle,
-            "debito": self.debito,
-            "credito": self.credito,
-            "saldo": self.saldo,
-            "archivo": self.archivo,
-            "advertencia": self.advertencia,
+            "fecha": self.date.isoformat() if self.date else None,
+            "comprobante": self.voucher,
+            "descripcion": self.description,
+            "detalle": self.detail,
+            "debito": self.debit,
+            "credito": self.credit,
+            "saldo": self.balance,
+            "archivo": self.file,
+            "advertencia": self.warning,
         }
 
 
@@ -171,12 +171,12 @@ def parse_extracto(path: str, nombre_archivo: str | None = None) -> dict:
         seq += 1
         movimientos.append(MovimientoBanco(
             id=f"{nombre}#{seq}",
-            fecha=fecha, comprobante=comp, descripcion=desc, detalle=detalle,
-            debito=debito, credito=credito, saldo=saldo,
-            archivo=nombre, pagina=pageno, advertencia=advertencia,
+            date=fecha, voucher=comp, description=desc, detail=detalle,
+            debit=debito, credit=credito, balance=saldo,
+            file=nombre, page=pageno, warning=advertencia,
         ))
         prev = saldo
 
-    meta["saldo_final"] = movimientos[-1].saldo if movimientos else meta["saldo_inicial"]
+    meta["saldo_final"] = movimientos[-1].balance if movimientos else meta["saldo_inicial"]
     meta["movimientos"] = movimientos
     return meta

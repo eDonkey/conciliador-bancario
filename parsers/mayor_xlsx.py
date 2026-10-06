@@ -16,32 +16,32 @@ import openpyxl
 @dataclass
 class AsientoMayor:
     id: str
-    hoja: str           # 'E' u 'O'
-    asiento: int | str
-    fecha: date | None
-    referencia: str
-    comentario: str
-    debe: float
-    haber: float
+    sheet: str           # 'E' u 'O'
+    number: int | str
+    date: date | None
+    reference: str
+    comment: str
+    debit: float
+    credit: float
 
     @property
-    def importe(self) -> float:
-        return self.debe if self.debe else self.haber
+    def amount(self) -> float:
+        return self.debit if self.debit else self.credit
 
     @property
-    def lado(self) -> str:
-        return "debe" if self.debe else "haber"
+    def side(self) -> str:
+        return "debe" if self.debit else "haber"
 
     def to_dict(self):
         return {
             "id": self.id,
-            "hoja": self.hoja,
-            "asiento": self.asiento,
-            "fecha": self.fecha.isoformat() if self.fecha else None,
-            "referencia": self.referencia,
-            "comentario": self.comentario,
-            "debe": self.debe,
-            "haber": self.haber,
+            "hoja": self.sheet,
+            "asiento": self.number,
+            "fecha": self.date.isoformat() if self.date else None,
+            "referencia": self.reference,
+            "comentario": self.comment,
+            "debe": self.debit,
+            "haber": self.credit,
         }
 
 
@@ -96,13 +96,13 @@ def parse_mayor(source) -> dict:
             seq += 1
             asientos.append(AsientoMayor(
                 id=f"{clave}#{seq}",
-                hoja=clave,
-                asiento=r[0],
-                fecha=r[1].date(),
-                referencia=str(r[2] or ''),
-                comentario=str(r[3] or ''),
-                debe=round(float(r[4] or 0.0), 2),
-                haber=round(float(r[5] or 0.0), 2),
+                sheet=clave,
+                number=r[0],
+                date=r[1].date(),
+                reference=str(r[2] or ''),
+                comment=str(r[3] or ''),
+                debit=round(float(r[4] or 0.0), 2),
+                credit=round(float(r[5] or 0.0), 2),
             ))
         resultado[clave] = {"nombre_hoja": nombre, "saldo_inicial": saldo_inicial,
                             "asientos": asientos}
