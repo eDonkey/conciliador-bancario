@@ -1,6 +1,6 @@
 ---
 name: Conciliador bancario
-description: Herramienta operativa de conciliación bancaria (extractos vs. mayor FBS), comparte identidad visual con el hub del grupo
+description: Day-to-day bank reconciliation tool (bank statements vs. the FBS ledger); shares its visual identity with the group hub
 colors:
   acento: "#38bdf8"
   acento-claro: "#0a6fb5"
@@ -120,76 +120,120 @@ components:
 
 ## Overview
 
-Interfaz de trabajo para contadores: subir extractos, traer el mayor E y O del FBS (o subirlo), revisar el cruce, resolver a mano lo que quedó pendiente y exportar. Modo **Operate**: escaneo rápido de tablas densas, importes alineados, estados diferenciados por color y por texto. La identidad es la del hub del grupo: fondo azul noche con una grilla tenue, paneles translúcidos, un solo acento celeste, tipografía Sora para títulos y cifras e Inter para todo lo demás. Tema claro conmutable con la misma estructura.
+A work interface for accountants: upload statements, pull ledger E and O from FBS (or upload it), review the
+matching, resolve by hand what was left pending and export. **Operate** mode: fast scanning of dense tables,
+aligned amounts, states told apart by color and by text. The identity is the group hub's: night-blue background
+with a faint grid, translucent panels, a single sky-blue accent, Sora for titles and figures and Inter for
+everything else. A switchable light theme with the same structure.
 
-Todos los tokens viven en el bloque `:root` de cada página y se redefinen en `body.claro`. Los dos archivos de `static/` deben mantener el mismo bloque de tokens; si se agrega uno, va en los dos.
+Every token lives in the `:root` block of each page and is redefined in `body.claro`. Both files in `static/` must
+keep the same token block; if one is added, it goes in both.
 
 ## Colors
 
-- **Un acento**: `--acento` para acciones primarias, foco, links, solapa activa y chips de "extracto". No se usa para texto de cuerpo.
-- **Semánticos**: `--verde` conciliado y diferencia cero, `--ambar` pendiente de confirmar y avisos de simulación, `--rojo` sin contabilizar, errores y acciones destructivas (`.peligro`), `--violeta` chips de "FBS mayor". Nunca solo color: siempre acompañado de texto o etiqueta.
-- **Neutros**: `--texto` para cuerpo, `--texto2` para secundario, etiquetas y cabeceras de tabla. `--panel` y `--panel-2` para superficies, `--campo` para inputs, `--hueco` para listas rebajadas, `--dialogo` para el cuerpo de diálogos y avisos flotantes, `--border` para todos los bordes.
-- **Transparencias derivadas** del acento o del semántico con `color-mix(in srgb, var(--token) N%, transparent)`. Nunca `rgba()` de un color de marca escrito a mano.
-- **Contraste**: todos los pares texto/fondo superan 4.5:1 en los dos temas. En tema claro los semánticos son versiones oscuras (`claro-*`), porque los del tema oscuro no llegan sobre blanco.
-- **Texto sobre acento** es oscuro en tema oscuro y blanco en tema claro (`--texto-sobre-acento`, `--texto-sobre-verde`). El tope de los degradados (`--acento-tope`, `--verde-tope`) aclara en oscuro y oscurece en claro para no perder contraste.
-- **Excepción**: la franja de demo (`.demo-banner`) usa ámbar y tinta fijos en los dos temas porque es una señal de peligro, no parte de la paleta.
+- **One accent**: `--acento` for primary actions, focus, links, the active tab and "extracto" chips. Not used for
+  body text.
+- **Semantic**: `--verde` reconciled and zero difference, `--ambar` pending confirmation and simulation notices,
+  `--rojo` unbooked, errors and destructive actions (`.peligro`), `--violeta` "FBS mayor" chips. Never color alone:
+  always paired with text or a label.
+- **Neutrals**: `--texto` for body, `--texto2` for secondary text, labels and table headers. `--panel` and
+  `--panel-2` for surfaces, `--campo` for inputs, `--hueco` for sunken lists, `--dialogo` for the body of dialogs
+  and toasts, `--border` for every border.
+- **Derived transparencies** of the accent or a semantic color with
+  `color-mix(in srgb, var(--token) N%, transparent)`. Never a hand-written `rgba()` of a brand color.
+- **Contrast**: every text/background pair is above 4.5:1 in both themes. In the light theme the semantic colors
+  are dark versions (`claro-*`), because the dark-theme ones don't reach it on white.
+- **Text on accent** is dark in the dark theme and white in the light theme (`--texto-sobre-acento`,
+  `--texto-sobre-verde`). The top of the gradients (`--acento-tope`, `--verde-tope`) lightens in dark and darkens
+  in light so contrast isn't lost.
+- **Exception**: the demo strip (`.demo-banner`) uses a fixed amber and ink in both themes because it is a warning
+  signal, not part of the palette.
 
 ## Typography
 
-Escala de seis pasos en tokens `--fs-*`. No se escriben tamaños en píxeles fuera de los tokens.
+Six-step scale in `--fs-*` tokens. No pixel sizes are written outside the tokens.
 
-| Token | Tamaño | Uso |
+| Token | Size | Use |
 |---|---|---|
-| `--fs-xs` | 11px | etiquetas en mayúsculas, chips, cabeceras de tabla, metadatos |
-| `--fs-sm` | 12px | tablas, ítems de listas, texto explicativo secundario |
-| `--fs-md` | 13px | cuerpo, botones secundarios, inputs |
-| `--fs-lg` | 14px | botón principal, títulos de zona de carga |
-| `--fs-xl` | 16px | h1, títulos de diálogos |
-| cifra de bloque | 34px | la cifra grande de "Extracto explicado" y "Falta resolver" |
+| `--fs-xs` | 11px | uppercase labels, chips, table headers, metadata |
+| `--fs-sm` | 12px | tables, list items, secondary explanatory text |
+| `--fs-md` | 13px | body, secondary buttons, inputs |
+| `--fs-lg` | 14px | primary button, upload zone titles |
+| `--fs-xl` | 16px | h1, dialog titles |
+| block figure | 34px | the big figure of "Extracto explicado" and "Falta resolver" |
 
-Sora 700/800 para h1, h3 de tarjetas y cifras. Inter 400/500/600 para el resto. Las etiquetas en mayúsculas llevan `letter-spacing: 0.08em`. Importes siempre con `font-variant-numeric: tabular-nums` y alineados a la derecha. Cuerpo con `line-height: 1.45`.
+Sora 700/800 for h1, card h3 and figures. Inter 400/500/600 for the rest. Uppercase labels get
+`letter-spacing: 0.08em`. Amounts always with `font-variant-numeric: tabular-nums` and right-aligned. Body with
+`line-height: 1.45`.
 
 ## Layout
 
-- `main` de 1200px máximo con 20px de margen lateral, 16px en celular.
-- Header pegajoso en escritorio, estático en celular (bajo 720px) para no comerse la pantalla; sus acciones viven en `.zona-derecha` y envuelven en dos columnas.
-- Grillas de dos columnas (`.grid-carga`, `.dual`) colapsan a una bajo 760px y 900px. KPIs con `auto-fit, minmax(150px, 1fr)`.
-- Tablas anchas viven dentro de `.contenedor-tabla` con scroll horizontal propio y cabecera pegajosa; la página nunca scrollea de costado.
-- Objetivos táctiles: 40px de alto mínimo en botones, 44px en la acción principal y en las solapas, y 44px en todo control con `pointer: coarse`.
+- `main` at most 1200px wide with a 20px side margin, 16px on phones.
+- Sticky header on desktop, static on phones (under 720px) so it doesn't eat the screen; its actions live in
+  `.zona-derecha` and wrap into two columns.
+- Two-column grids (`.grid-carga`, `.dual`) collapse to one under 760px and 900px. KPIs with
+  `auto-fit, minmax(150px, 1fr)`.
+- Wide tables live inside `.contenedor-tabla` with their own horizontal scroll and a sticky header; the page never
+  scrolls sideways.
+- Touch targets: at least 40px tall for buttons, 44px for the primary action and the tabs, and 44px for every
+  control under `pointer: coarse`.
 
 ## Elevation & Depth
 
-Profundidad por transparencia y borde, no por sombra. Paneles: `--panel` sobre el fondo con borde `--border`. Solo flotan el header (blur 14px), los diálogos (velo `--velo` con blur 8px y sombra `--sombra-modal`) y los avisos flotantes. Sin halos de color: el logo lleva un anillo del acento al 22%, los botones no llevan sombra.
+Depth through transparency and borders, not shadows. Panels: `--panel` over the background with a `--border`
+border. Only the header (14px blur), the dialogs (`--velo` veil with 8px blur and `--sombra-modal` shadow) and the
+toasts float. No colored halos: the logo has a ring of the accent at 22%, buttons have no shadow.
 
 ## Shapes
 
-Radios: 4px para la barra de progreso, 8px para inputs, chips rectangulares y botones de fila, 10px para botones y listas, 12px para zonas de carga, KPI y barras, 16px para tarjetas y paneles, 20px para diálogos, píldora para chips y contadores. Zonas de carga con borde punteado de 1px.
+Radii: 4px for the progress bar, 8px for inputs, rectangular chips and row buttons, 10px for buttons and lists,
+12px for upload zones, KPIs and bars, 16px for cards and panels, 20px for dialogs, pill for chips and counters.
+Upload zones with a 1px dashed border.
 
 ## Components
 
-- **Zona de carga** (`.zona` con `.zona-cta` adentro): el bloque título más texto es el `role="button"` con `tabindex="0"`; Enter o Espacio abren el selector. Los controles anidados (cuenta y fechas del FBS en el mensual) quedan fuera del rol. Estado `arrastrando` y hover con borde y fondo del acento.
-- **Botón principal** (`button.principal`): degradado vertical corto del acento, texto `--texto-sobre-acento`. Deshabilitado gris con `--texto2`.
-- **Botón secundario** (`button.secundario`, `a.secundario`, `a.volver`): fondo `--panel-2`, borde `--border`. Variantes `.btn-chico` (34px) y `.btn-fila` (32px) para barras y celdas. `.peligro` para acciones destructivas: rojo al 10% con texto rojo.
-- **Botón mini** (`button.mini`): verde, para confirmar dentro de un panel o diálogo.
-- **Diálogos** (`.modal` + `.modal-card`, `.eq-card` o `.tarjeta`): `role="dialog"`, `aria-modal`, `aria-labelledby` al título. Se abren con `abrirModal(id, foco)` y se cierran con `cerrarModal(id)`; Escape pulsa el botón marcado `data-cerrar`, Tab queda atrapado y el foco vuelve al disparador. El overlay de progreso es un diálogo sin cierre hasta que termina o falla.
-- **Confirmación** (`confirmar({ titulo, texto, ok, peligro })`): devuelve una promesa con `true` o `false`; foco inicial en Cancelar; con `peligro` el botón de acción es rojo. Reemplaza a `confirm()`.
-- **Avisos flotantes** (`avisar(msg, 'error' | 'info')`): se apilan abajo al centro, los errores tienen `role="alert"` y quedan hasta cerrarse, los de información desaparecen solos. Reemplazan a `alert()` y al `prompt()` del portapapeles.
-- **Solapas** (`nav.tabs`): `role="tablist"`, botones `role="tab"` con `aria-selected` y foco circular, flechas y Home/End cambian de solapa. Paneles `role="tabpanel"`.
-- **Resumen de resultado** (`.resumen` con tres `.bloque`): Extracto explicado, Falta resolver (protagonista, con borde rojo o verde según haya pendientes y el botón "Resolver a mano") y Esta corrida. Una sola cifra grande por bloque; el resto en lista nombre/valor. Las notas informativas de la corrida van plegadas en `details.notas-corrida`; solo errores y avisos de marca quedan visibles.
-- **Tablas**: `th scope="col"` en mayúsculas `--fs-xs`, filas de 12px con separador al 6%. Celdas numéricas `.num`.
-- **Chips** (`.chip`, `.metodo`, `.pill-an`, `.badge`): píldora con fondo del color al 12% y borde al 35–40%.
-- **Glosario** (`details.glosario`): explicación visible de columnas y estados debajo de cada tabla del diario, con chevron dibujado en CSS. El `title` de las cabeceras es un refuerzo, no la única fuente.
-- **Regiones vivas**: `#estado`, `#estadoCarga`, `#estadoConciliar`, `#fbsSqlMsj`, `#fbsConfMsj`, `#ovFase` con `role="status"`; errores con `role="alert"`.
+- **Upload zone** (`.zona` with `.zona-cta` inside): the title-plus-text block is the `role="button"` with
+  `tabindex="0"`; Enter or Space open the file picker. Nested controls (FBS account and dates in the monthly page)
+  stay outside the role. `arrastrando` state and hover with the accent's border and background.
+- **Primary button** (`button.principal`): short vertical gradient of the accent, `--texto-sobre-acento` text.
+  Disabled: gray with `--texto2`.
+- **Secondary button** (`button.secundario`, `a.secundario`, `a.volver`): `--panel-2` background, `--border`
+  border. Variants `.btn-chico` (34px) and `.btn-fila` (32px) for toolbars and cells. `.peligro` for destructive
+  actions: red at 10% with red text.
+- **Mini button** (`button.mini`): green, to confirm inside a panel or dialog.
+- **Dialogs** (`.modal` + `.modal-card`, `.eq-card` or `.tarjeta`): `role="dialog"`, `aria-modal`,
+  `aria-labelledby` pointing to the title. Opened with `openModal(id, focus)` and closed with `closeModal(id)`;
+  Escape presses the button marked `data-cerrar`, Tab is trapped and focus returns to the trigger. The progress
+  overlay is a dialog that can't be closed until it finishes or fails.
+- **Confirmation** (`askConfirm({ titulo, texto, ok, peligro })`): returns a promise with `true` or `false`;
+  initial focus on Cancelar; with `peligro` the action button is red. Replaces `confirm()`.
+- **Toasts** (`notify(msg, 'error' | 'info')`): stack at the bottom center; errors have `role="alert"` and stay
+  until closed, info toasts go away by themselves. They replace `alert()` and the clipboard `prompt()`.
+- **Tabs** (`nav.tabs`): `role="tablist"`, `role="tab"` buttons with `aria-selected` and roving focus; arrows and
+  Home/End switch tabs. Panels are `role="tabpanel"`.
+- **Result summary** (`.resumen` with three `.bloque`): Extracto explicado, Falta resolver (the protagonist, with a
+  red or green border depending on whether anything is pending, and the "Resolver a mano" button) and Esta corrida.
+  One big figure per block; the rest as a name/value list. The informative notes of the run are folded in
+  `details.notas-corrida`; only errors and brand warnings stay visible.
+- **Tables**: uppercase `th scope="col"` at `--fs-xs`, 12px rows with a 6% separator. Numeric cells `.num`.
+- **Chips** (`.chip`, `.metodo`, `.pill-an`, `.badge`): pill with the color at 12% as background and a 35–40%
+  border.
+- **Glossary** (`details.glosario`): a visible explanation of columns and states under each daily-mode table, with
+  a CSS-drawn chevron. The headers' `title` is a reinforcement, not the only source.
+- **Live regions**: `#estado`, `#estadoCarga`, `#estadoConciliar`, `#fbsSqlMsj`, `#fbsConfMsj`, `#ovFase` with
+  `role="status"`; errors with `role="alert"`.
 
 ## Do's and Don'ts
 
-- Usá los tokens; si un valor no existe, agregalo al `:root` de las dos páginas y a este archivo.
-- Todo texto que venga del servidor pasa por `esc()` antes de entrar a `innerHTML`.
-- Los mensajes de estado se escriben en las regiones vivas; los errores van por `avisar()`, no en gris de estado.
-- Los diálogos pasan por `abrirModal` y `cerrarModal`, nunca por `classList` a mano.
-- No uses `prompt()`, `confirm()` ni `alert()`: están `confirmar()` y `avisar()`.
-- No animes `width` ni `height`; la barra de progreso escala con `transform`.
-- No agregues tooltips como único lugar de una explicación: lo que importa va visible, el `title` es un refuerzo.
-- No introduzcas sombras de color, texto en degradado ni `backdrop-filter` en tarjetas estáticas.
-- El tema se decide antes del primer pintado con el script al inicio de `body`; no lo muevas al final.
-- Nada de glifos Unicode como íconos: el chevron del glosario se dibuja con bordes, los links de descarga dicen "Descargar".
+- Use the tokens; if a value doesn't exist, add it to the `:root` of both pages and to this file.
+- Every piece of text coming from the server goes through `esc()` before entering `innerHTML`; arguments of inline
+  `onclick="..."` handlers go through `jsArg()`.
+- Status messages are written to the live regions; errors go through `notify()`, not in status gray.
+- Dialogs go through `openModal` and `closeModal`, never through `classList` by hand.
+- Don't use `prompt()`, `confirm()` or `alert()`: there are `askConfirm()` and `notify()`.
+- Don't animate `width` or `height`; the progress bar scales with `transform`.
+- Don't add tooltips as the only place for an explanation: what matters is visible, the `title` is a
+  reinforcement.
+- Don't introduce colored shadows, gradient text or `backdrop-filter` on static cards.
+- The theme is decided before the first paint by the script at the start of `body`; don't move it to the end.
+- No Unicode glyphs as icons: the glossary chevron is drawn with borders, download links say "Descargar".
