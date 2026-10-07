@@ -28,6 +28,7 @@ conciliados, arrastre y marca funcionan idénticos.
 import json
 import os
 import re
+import ipaddress
 import socket
 from datetime import date, datetime
 
@@ -65,23 +66,72 @@ def simulado() -> bool:
 # ---- SOLO LECTURA (garantía dura): la app JAMÁS escribe en el FBS ----------
 # Capa 1: la query se valida antes de ejecutarse — una sola sentencia, que
 #   empiece en SELECT/WITH y sin ninguna palabra de escritura o ejecución.
+#   La validación recorre el texto con un lector que entiende literales,
+#   identificadores entre [] o "", y comentarios (-- y /* */ anidados) igual
+#   que SQL Server: así un '--' dentro de un literal no puede esconder una
+#   segunda sentencia.
 # Capa 2: todo corre dentro de una transacción SIN commit y con rollback
 #   explícito al final: aunque algo lograra colarse, se deshace.
-# Capa 3 (del lado del servidor, recomendada): el login que usa el
-#   conciliador debe ser db_datareader + db_denydatawriter.
+# Capa 3: el login que usa el conciliador NO puede tener permisos de
+#   escritura: antes de la primera consulta de cada conexión se verifica
+#   (sysadmin / db_owner / db_datawriter) y, si los tiene, se rechaza.
 _PROHIBIDAS = re.compile(
     r"\b(insert|update|delete|merge|drop|alter|create|truncate|exec|execute"
     r"|grant|revoke|deny|into|backup|restore|shutdown|dbcc|kill|use"
-    r"|sp_\w+|xp_\w+|openrowset|opendatasource|openquery"
-    r"|writetext|updatetext|bulk|disable|enable)\b", re.IGNORECASE)
+    r"|sp_\w+|xp_\w+|fn_\w+|openrowset|opendatasource|openquery|openxml"
+    r"|writetext|updatetext|readtext|bulk|disable|enable"
+    r"|declare|set|waitfor|raiserror|throw|print|begin|while|goto|return"
+    r"|commit|rollback|save|transaction|tran|cursor|reconfigure|checkpoint"
+    r"|go)\b", re.IGNORECASE)
+
+
+def _sin_literales(query: str) -> str:
+    """El texto de la query sin comentarios, literales ni identificadores
+    entrecomillados, leído como lo lee SQL Server. Lanza ValueError si queda
+    algo sin cerrar (no se adivina)."""
+    out, i, n = [], 0, len(query)
+    while i < n:
+        c = query[i]
+        if c == "-" and query.startswith("--", i):
+            j = query.find("\n", i)
+            i = n if j < 0 else j
+            out.append(" ")
+        elif c == "/" and query.startswith("/*", i):
+            prof, i = 1, i + 2
+            while i < n and prof:
+                if query.startswith("/*", i):
+                    prof, i = prof + 1, i + 2
+                elif query.startswith("*/", i):
+                    prof, i = prof - 1, i + 2
+                else:
+                    i += 1
+            if prof:
+                raise ValueError("Protección de solo lectura: comentario /* sin cerrar.")
+            out.append(" ")
+        elif c in ("'", '"', "["):
+            cierre = "]" if c == "[" else c
+            i += 1
+            while True:
+                if i >= n:
+                    raise ValueError("Protección de solo lectura: hay un texto o "
+                                     f"identificador sin cerrar ({c}).")
+                if query[i] == cierre:
+                    if i + 1 < n and query[i + 1] == cierre:   # '' ]] "" escapados
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                i += 1
+            out.append("''" if c == "'" else "x")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def _validar_solo_lectura(query: str):
     """Lanza ValueError si la query no es una consulta de solo lectura."""
-    limpio = re.sub(r"--[^\n]*", " ", query or "")
-    limpio = re.sub(r"/\*.*?\*/", " ", limpio, flags=re.S)
-    limpio = re.sub(r"'(?:[^']|'')*'", "''", limpio)   # literales fuera
-    cuerpo = limpio.strip().rstrip(";").strip()
+    cuerpo = _sin_literales(query or "").strip().rstrip(";").strip()
     if not cuerpo:
         raise ValueError("La query del FBS está vacía.")
     if ";" in cuerpo:
@@ -164,21 +214,127 @@ def cargar_conf() -> dict:
     return conf
 
 
-def guardar_conf(datos: dict):
+# ---- destino de la conexión: a qué servidor puede conectarse la app ---------
+# La conexión manual se puede editar desde la UI/API; sin controles, quien
+# lograra editarla podría apuntar el conciliador a un servidor propio y
+# recibir la clave guardada. Reglas:
+#  * el destino solo se puede cambiar desde la propia máquina o con
+#    FBS_SQL_EDITABLE=1 (decisión de despliegue), nunca anónimamente;
+#  * si FBS_SQL_SERVIDOR está en el entorno, el destino queda fijo;
+#  * cambiar de servidor/puerto/base/usuario sin mandar clave nueva borra la
+#    clave guardada (no se reenvía a un destino distinto del que se guardó);
+#  * el host debe tener forma de nombre/IP y resolver a una dirección
+#    privada (RFC 1918 o 100.64/10); cualquier otra (pública, loopback)
+#    exige estar en FBS_SQL_HOSTS_PERMITIDOS (lista separada por comas de
+#    nombres, IPs o CIDR). Link-local (169.254.x: metadatos de la nube),
+#    multicast y 0.0.0.0 nunca se aceptan.
+_HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
+_INSTANCIA_RE = re.compile(r"^[A-Za-z0-9_$#-]{1,64}$")
+_PUERTOS_PROHIBIDOS = {22, 23, 25, 53, 80, 110, 143, 443, 445, 3389}
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def destino_bloqueado() -> bool:
+    """True si el destino viene fijado por el entorno (no editable)."""
+    return bool(os.environ.get("FBS_SQL_SERVIDOR", "").strip())
+
+
+def _permitidos() -> list:
+    reglas = []
+    for item in os.environ.get("FBS_SQL_HOSTS_PERMITIDOS", "").split(","):
+        item = item.strip().lower()
+        if not item:
+            continue
+        try:
+            reglas.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            reglas.append(item)
+    return reglas
+
+
+def _en_lista(host: str, ips: list) -> bool:
+    for r in _permitidos():
+        if isinstance(r, str):
+            if r == host.lower():
+                return True
+        elif any(ip in r for ip in ips):
+            return True
+    return False
+
+
+def validar_destino(servidor: str, puerto) -> None:
+    """Lanza ValueError si el destino no es aceptable (ver arriba)."""
+    servidor = (servidor or "").strip()
+    host, _, instancia = servidor.partition("\\")
+    if not servidor or not _HOST_RE.match(host) or (
+            instancia and not _INSTANCIA_RE.match(instancia)):
+        raise ValueError("El servidor del FBS no es válido: usá un nombre de host "
+                         "o una IP (con \\instancia si corresponde).")
+    try:
+        puerto = int(puerto or 1433)
+    except (TypeError, ValueError):
+        raise ValueError("El puerto del FBS no es un número.")
+    if not 1 <= puerto <= 65535 or puerto in _PUERTOS_PROHIBIDOS:
+        raise ValueError(f"El puerto {puerto} no es aceptable para una conexión SQL Server.")
+    try:
+        ips = [ipaddress.ip_address(host)]
+    except ValueError:
+        try:
+            ips = sorted({ipaddress.ip_address(i[4][0])
+                          for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
+        except OSError:
+            raise ValueError(f'El servidor "{host}" del FBS no resuelve.')
+    for ip in ips:
+        if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
+            raise ValueError(f"El servidor del FBS apunta a una dirección no permitida ({ip}).")
+    if _en_lista(host, ips):
+        return
+    for ip in ips:
+        if ip.is_loopback or not (ip.is_private or ip in _CGNAT):
+            raise ValueError(
+                f"El servidor del FBS ({host} → {ip}) no es una dirección privada. "
+                "Si es correcto, agregalo a FBS_SQL_HOSTS_PERMITIDOS en el servidor.")
+
+
+def guardar_conf(datos: dict, permitir_destino: bool = True):
+    """Guarda la conexión manual. `permitir_destino=False` (quien llama no es
+    local ni tiene FBS_SQL_EDITABLE) deja pasar solo la query."""
     if str(datos.get("query") or "").strip():
         _validar_solo_lectura(str(datos["query"]))
         _validar_bloques_unicos(str(datos["query"]))
     conf = cargar_conf()
-    for k in ("servidor", "base", "usuario", "query"):
-        if k in datos:
-            conf[k] = str(datos[k] or "").strip()
-    if "puerto" in datos:
-        conf["puerto"] = int(datos["puerto"] or 1433)
-    if datos.get("clave"):          # write-only: vacío = conservar la actual
-        conf["clave"] = str(datos["clave"])
+    previo = (conf["servidor"], conf["puerto"], conf["base"], conf["usuario"])
+    if "query" in datos:
+        conf["query"] = str(datos["query"] or "").strip()
+    nuevo = (str(datos.get("servidor", conf["servidor"]) or "").strip(),
+             int(datos.get("puerto") or conf["puerto"] or 1433),
+             str(datos.get("base", conf["base"]) or "").strip(),
+             str(datos.get("usuario", conf["usuario"]) or "").strip())
+    cambios_destino = nuevo != previo or bool(datos.get("clave"))
+    if cambios_destino:
+        if destino_bloqueado():
+            raise PermissionError(
+                "El destino del FBS está fijado por el servidor (FBS_SQL_SERVIDOR) "
+                "y no se puede cambiar desde la interfaz.")
+        if not permitir_destino:
+            raise PermissionError(
+                "Cambiar el servidor del FBS no está habilitado desde acá: hacelo "
+                "en el propio servidor o activá FBS_SQL_EDITABLE=1.")
+        conf["servidor"], conf["puerto"], conf["base"], conf["usuario"] = nuevo
+        validar_destino(conf["servidor"], conf["puerto"])
+        if nuevo != previo:
+            conf["clave"] = ""          # no reenviar la clave vieja a otro destino
+        if datos.get("clave"):          # write-only: vacío = conservar la actual
+            conf["clave"] = str(datos["clave"])
     os.makedirs(_DATOS, exist_ok=True)
-    with open(RUTA_CONF, "w", encoding="utf-8") as f:
+    ruta_tmp = RUTA_CONF + ".tmp"
+    with open(ruta_tmp, "w", encoding="utf-8") as f:
         json.dump(conf, f, ensure_ascii=False, indent=1)
+    try:
+        os.chmod(ruta_tmp, 0o600)       # la clave no debe ser legible por otros
+    except OSError:
+        pass
+    os.replace(ruta_tmp, RUTA_CONF)
     return conf
 
 
@@ -264,6 +420,7 @@ def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
     srv = servidor if "\\" in servidor else f"{servidor},{conf['puerto']}"
     cadena = (f"DRIVER={{{driver}}};SERVER={srv};DATABASE={conf['base']};"
               f"UID={conf['usuario']};PWD={conf['clave']};")
+    cadena += "ApplicationIntent=ReadOnly;"
     if driver.startswith("ODBC Driver"):
         # el SQL Server del FBS usa certificado autofirmado
         cadena += "Encrypt=yes;TrustServerCertificate=yes;"
@@ -296,9 +453,49 @@ def _query_para_log(query: str, params: dict) -> str:
     return q
 
 
+_LOGINS_VERIFICADOS: set = set()
+_SQL_PRIVILEGIOS = (
+    "SELECT ISNULL(IS_SRVROLEMEMBER('sysadmin'), 0) AS sysadmin, "
+    "ISNULL(IS_MEMBER('db_owner'), 0) AS db_owner, "
+    "ISNULL(IS_MEMBER('db_datawriter'), 0) AS db_datawriter, "
+    "ISNULL(IS_MEMBER('db_ddladmin'), 0) AS db_ddladmin")
+
+
+def permite_login_con_escritura() -> bool:
+    return os.environ.get("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "").strip().lower() in (
+        "1", "true", "on", "si")
+
+
+def _verificar_login_solo_lectura(conf: dict):
+    """Capa 3 de la garantía de solo lectura: el login con el que se conecta
+    el conciliador no puede ser administrador ni poder escribir. Se chequea
+    una vez por (servidor, base, usuario) y se rechaza si tiene sysadmin,
+    db_owner, db_datawriter o db_ddladmin. FBS_SQL_PERMITIR_LOGIN_ESCRITURA=1
+    lo deja pasar (excepción consciente, mientras se crea un login de solo
+    lectura)."""
+    if simulado() or permite_login_con_escritura():
+        return
+    clave = (conf.get("servidor"), conf.get("puerto"), conf.get("base"),
+             conf.get("usuario"))
+    if clave in _LOGINS_VERIFICADOS:
+        return
+    filas = _consultar_driver(conf, _SQL_PRIVILEGIOS, {})
+    fila = {str(k).lower(): v for k, v in (filas[0] if filas else {}).items()}
+    con_permiso = [k for k in ("sysadmin", "db_owner", "db_datawriter", "db_ddladmin")
+                   if fila.get(k) == 1]
+    if con_permiso or not fila:
+        raise ValueError(
+            "Protección de solo lectura: el usuario del FBS tiene permisos de "
+            f"escritura o administración ({', '.join(con_permiso) or 'no se pudo verificar'}). "
+            "Creá un login con solo db_datareader y usalo acá.")
+    _LOGINS_VERIFICADOS.add(clave)
+
+
 def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
     """_consultar_driver medido para el monitoreo: cada consulta al FBS queda
     como un tramo (servidor, base, driver, filas, demora y el error si falla)."""
+    validar_destino(conf.get("servidor"), conf.get("puerto"))
+    _verificar_login_solo_lectura(conf)
     with telemetria.tramo("FBS consulta", tipo="cliente", **{
             "db.system.name": "mssql",
             "server.address": str(conf.get("servidor") or ""),

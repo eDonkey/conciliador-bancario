@@ -419,6 +419,23 @@
 // Una ruta absoluta ('/api/...') detrás del proxy apunta al hub y no a la app,
 // y la pantalla queda sin cuentas, sin FBS y sin historial.
 const BASE = location.pathname.replace(/\/[^/]*$/, '/');
+// Sesión: si el servidor responde 401 (sesión vencida), volver al login.
+(function () {
+  const original = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const r = await original(...args);
+    if (r.status === 401) location.href = BASE + 'login';
+    return r;
+  };
+  document.addEventListener('DOMContentLoaded', () => {
+    const b = document.getElementById('btnSalir');
+    if (b) b.addEventListener('click', async () => {
+      try { await original(BASE + 'api/logout', { method: 'POST' }); } catch (e) {}
+      location.href = BASE + 'login';
+    });
+  });
+})();
+
   // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
   (function () {
     var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
@@ -434,6 +451,7 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
     <p id="subtitulo">Extractos vs. libro mayor — Nave Motors</p>
   </div>
   <div class="zona-derecha">
+    <button class="secundario" id="btnSalir" title="Cerrar la sesión">Salir</button>
     <button class="secundario" id="btnTema" title="Alternar entre tema claro y oscuro">Modo claro</button>
     <a href="diario" class="secundario" id="linkDiario">Modo diario</a>
     <button class="secundario" id="btnEquiv">Equivalencias</button>

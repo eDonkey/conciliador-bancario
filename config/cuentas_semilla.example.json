@@ -1,0 +1,38 @@
+[
+ {
+  "empresa": "Empresa Ejemplo",
+  "banco": "santander",
+  "numero": "000-000000/0",
+  "moneda": "ARS"
+ },
+ {
+  "empresa": "Empresa Ejemplo",
+  "banco": "santander",
+  "numero": "000-000001/0",
+  "moneda": "USD"
+ },
+ {
+  "empresa": "Empresa Ejemplo",
+  "banco": "frances",
+  "numero": "0000-000000/0",
+  "moneda": "ARS"
+ },
+ {
+  "empresa": "Otra Empresa",
+  "banco": "galicia",
+  "numero": "0000000-0 000-0",
+  "moneda": "ARS"
+ },
+ {
+  "empresa": "Otra Empresa",
+  "banco": "macro",
+  "numero": "000000000000000",
+  "moneda": "ARS"
+ },
+ {
+  "empresa": "Otra Empresa",
+  "banco": "ciudad",
+  "numero": "000000000000000",
+  "moneda": "ARS"
+ }
+]

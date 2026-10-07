@@ -9,9 +9,12 @@ Requiere ANTHROPIC_API_KEY en el entorno (o sesión de `ant auth login`).
 import json
 import os
 
+from engine import presupuesto_ia
+
 # Sonnet 5 ($2/$10 por MTok, ~60% más barato que Opus) alcanza de sobra para
-# proponer emparejamientos; cada tanda cuesta ~$0,05-0,10.
-MODEL = "claude-sonnet-5"
+# proponer emparejamientos; cada tanda cuesta ~$0,05-0,10. El modelo se define
+# SOLO en la configuración del servidor (IA_MODELO), nunca desde el navegador.
+MODEL = presupuesto_ia.modelo_matching()
 MAX_BANCO = 80     # límites por llamada para no exceder contexto
 MAX_MAYOR = 400
 
@@ -167,6 +170,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
     for i in range(0, len(movs_banco), MAX_BANCO):
         if progreso:
             progreso(i // MAX_BANCO + 1, total_tandas)
+        presupuesto_ia.verificar()      # tope diario: PresupuestoExcedido
         lote_banco = movs_banco[i:i + MAX_BANCO]
         lote_mayor = asientos_mayor[:MAX_MAYOR]
         prompt = (
