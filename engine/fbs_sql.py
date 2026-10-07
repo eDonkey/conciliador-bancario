@@ -56,6 +56,12 @@ QUERY_EJEMPLO = (
 COLUMNAS = ("hoja", "codigo", "asiento", "fecha", "referencia",
             "comentario", "debe", "haber")
 
+
+def simulado() -> bool:
+    """Ambiente de demo (DEMO_MODE): no hay SQL Server, el mayor sale de
+    engine/simulacion.py — la misma simulación que genera los extractos."""
+    return os.environ.get("DEMO_MODE", "").strip().lower() in ("1", "true", "on", "si")
+
 # ---- SOLO LECTURA (garantía dura): la app JAMÁS escribe en el FBS ----------
 # Capa 1: la query se valida antes de ejecutarse — una sola sentencia, que
 #   empiece en SELECT/WITH y sin ninguna palabra de escritura o ejecución.
@@ -352,6 +358,10 @@ def probar() -> dict:
             if c["conexion_id"] in vistas:
                 continue
             vistas.add(c["conexion_id"])
+            if simulado():
+                detalle.append({"nombre": c["conexion_nombre"], "ok": True,
+                                "driver": "simulado (demo)"})
+                continue
             try:
                 _consultar(c["conexion"], "SELECT 1 AS uno", {})
                 detalle.append({"nombre": c["conexion_nombre"], "ok": True,
@@ -361,7 +371,7 @@ def probar() -> dict:
                                 "error": str(exc)})
         return {"ok": all(d["ok"] for d in detalle), "modo": "hub",
                 "conexiones": detalle,
-                "driver": _DRIVER_USADO["nombre"],
+                "driver": "simulado (demo)" if simulado() else _DRIVER_USADO["nombre"],
                 "error": " | ".join(f'{d["nombre"]}: {d["error"]}'
                                     for d in detalle if not d["ok"]) or None}
     conf = cargar_conf()
@@ -492,14 +502,15 @@ def cuentas_fbs() -> list[dict]:
         try:
             cur = con.cursor()
             cur.execute(
-                "SELECT c.banco, c.numero, c.moneda, c.fbs_plan_e, c.fbs_plan_o, "
+                "SELECT c.id, c.banco, c.numero, c.moneda, c.fbs_plan_e, c.fbs_plan_o, "
                 "       f.id, f.nombre, f.servidor, f.puerto, f.base, f.usuario, f.clave, "
                 "       COALESCE(m.nombre, '') "
                 "  FROM cuentas_bancarias c "
                 "  JOIN fbs_conexiones f ON f.id = c.fbs_conexion_id "
                 "  LEFT JOIN marcas m ON m.id = c.marca_id "
                 " WHERE c.activa = true "
-                "   AND (COALESCE(c.fbs_plan_e, '') <> '' OR COALESCE(c.fbs_plan_o, '') <> '')")
+                "   AND (COALESCE(c.fbs_plan_e, '') <> '' OR COALESCE(c.fbs_plan_o, '') <> '') "
+                " ORDER BY c.id")
             filas = cur.fetchall()
         finally:
             con.close()
@@ -509,10 +520,12 @@ def cuentas_fbs() -> list[dict]:
         return []
     _HUB_ESTADO["error"] = None
     salida = []
-    for banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave, marca in filas:
+    for db_id, banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave, marca in filas:
         salida.append({
             "cuenta_id": (f"{cuentas_mod._banco_key(banco)}-"
                           f"{cuentas_mod._digits(numero)}-{(moneda or '').lower()}"),
+            "db_id": db_id, "banco": cuentas_mod._banco_key(banco), "numero": numero,
+            "moneda": (moneda or "").upper(),
             "empresa": marca,
             "etiqueta": (f"{marca} — " if marca else "") + f"{banco} {numero} ({moneda})",
             "plan_e": str(pe or "").strip(), "plan_o": str(po or "").strip(),
@@ -538,6 +551,7 @@ def diagnostico() -> dict:
         "conexiones": sorted({x["conexion_nombre"] for x in cfgs}),
         "error_lectura_hub": _HUB_ESTADO["error"],
         "modo": "hub" if cfgs else "manual",
+        "simulado": simulado(),
     }
 
 
@@ -591,6 +605,18 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
     # en cualquier idioma/configuración regional
     params = {"desde": desde.replace("-", ""), "hasta": hasta.replace("-", "")}
     salida, errores = [], []
+    if simulado():
+        # demo: no hay SQL Server; las filas de DetMov salen de la simulación,
+        # la misma que arma los extractos (engine/simulacion.py)
+        from engine import simulacion
+        d1, d2 = date.fromisoformat(desde), date.fromisoformat(hasta)
+        cuentas = simulacion.con_roles(cfgs, cuentas_fbs())
+        for conexion_id, g in por_conexion.items():
+            filas = [f for c in cuentas if c["conexion_id"] == conexion_id
+                     for f in simulacion.filas_detmov(c, d1, d2)]
+            print(f"[fbs] (demo) {g['nombre']}: {len(filas)} fila(s) simuladas", flush=True)
+            salida.extend(_infos_desde_filas(filas, g["cuenta_por_codigo"]))
+        return salida
     for g in por_conexion.values():
         if not g["planes"]:
             continue

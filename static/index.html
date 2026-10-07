@@ -394,7 +394,22 @@
     font-weight: 700; font-size: var(--fs-sm); letter-spacing: 0.12em; text-transform: uppercase;
     color: #1a1006; background: repeating-linear-gradient(135deg, #fbbf24, #fbbf24 14px, #f59e0b 14px, #f59e0b 28px);
   }
-  .kit-demo a { display:inline-block; margin: 4px 10px 4px 0; color: var(--acento); font-size: var(--fs-sm); }
+  .kit-demo {
+    display: flex; gap: 10px 14px; align-items: flex-end; flex-wrap: wrap;
+    margin-bottom: 14px; padding: 14px 16px; border-radius: 12px; font-size: var(--fs-sm); color: var(--texto2);
+    border: 1px solid color-mix(in srgb, #fbbf24 45%, transparent);
+    background: color-mix(in srgb, #fbbf24 7%, transparent);
+  }
+  .kit-demo.oculto { display: none; }
+  .kit-demo label { display: flex; flex-direction: column; gap: 4px; }
+  .kit-demo select { max-width: 340px; }
+  .kit-demo a.secundario {
+    font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border: 1px solid var(--border);
+    padding: 8px 16px; border-radius: 10px; font-size: var(--fs-md); text-decoration: none;
+    display: inline-flex; align-items: center; transition: background .2s, border-color .2s;
+  }
+  .kit-demo a.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
+  #demoMsj { flex-basis: 100%; }
 </style>
 </head>
 <body>
@@ -444,10 +459,19 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   </div>
   <div id="avisoCobertura" class="aviso alerta oculto" style="margin: 0 0 16px;"></div>
   <section class="tarjeta" id="cargaCard">
-    <div id="kitDemo" class="kit-demo oculto" style="margin-bottom:14px;font-size:var(--fs-sm);color:var(--texto2);">
-      <b style="color:var(--texto)">Kit de demo:</b> descargá el extracto y el libro mayor de ejemplo y
-      soltalos en las dos zonas de abajo.
-      <div id="kitLinks" style="margin-top:6px;"></div>
+    <div id="kitDemo" class="kit-demo oculto">
+      <div style="flex:1; min-width:240px;">
+        <b style="color:var(--texto)">Extracto de la demo</b><br>
+        El FBS de esta demo está simulado. Generá el extracto de una cuenta para el período: el libro
+        mayor se trae del FBS con la misma cuenta y las mismas fechas.
+      </div>
+      <label>Cuenta
+        <select id="demoCuenta" aria-label="Cuenta del extracto"></select></label>
+      <label>Período
+        <select id="demoPeriodo" aria-label="Período del extracto"></select></label>
+      <button class="principal" type="button" id="btnDemoCargar">Cargar extracto y mayor</button>
+      <a class="secundario" id="lnkDemoDescargar" href="#" download>Descargar</a>
+      <span id="demoMsj" role="status" aria-live="polite"></span>
     </div>
     <div class="grid-carga">
       <div class="zona" id="zonaPdf">
@@ -777,18 +801,73 @@ function avisar(msg, tipo = 'error') {
   cont.appendChild(d);
   if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
 }
+// modo demo: el FBS está simulado y el extracto sale de la misma simulación
+// (engine/simulacion.py): se genera el de una cuenta y el mayor se trae del
+// FBS con esa misma cuenta y fechas
 fetch(`${BASE}api/demo/estado`).then(r => r.json()).then(j => {
   if (!j.demo) return;
+  $('#demoBanner').textContent = 'DEMO — datos ficticios · FBS simulado';
   $('#demoBanner').classList.remove('oculto');
   if (!MARCA) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
   document.title = 'Conciliador bancario — demo';
-  fetch(`${BASE}api/demo/kit`).then(r => r.json()).then(k => {
-    if (!k.archivos || !k.archivos.length) return;
-    $('#kitLinks').innerHTML = k.archivos.map(f =>
-      `<a href="${BASE}static/kit-demo/${encodeURIComponent(f)}" download>Descargar ${esc(f)}</a>`).join('');
-    $('#kitDemo').classList.remove('oculto');
-  }).catch(() => {});
+  generadorDemo(j.hoy);
 }).catch(() => {});
+
+const MESES_DEMO = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+                    'septiembre', 'octubre', 'noviembre', 'diciembre'];
+async function generadorDemo(hoy) {
+  let j;
+  try { j = await (await fetch(conMarca(`${BASE}api/demo/cuentas`))).json(); } catch { return; }
+  if (!j.cuentas || !j.cuentas.length) return;
+  const [a, m] = [Number(hoy.slice(0, 4)), Number(hoy.slice(5, 7))];
+  const iso = (y, mm, d) => `${y}-${String(mm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const ant = m === 1 ? [a - 1, 12] : [a, m - 1];
+  const finAnt = new Date(ant[0], ant[1], 0).getDate();
+  const periodos = [
+    { id: 'anterior', txt: `Mes anterior (${MESES_DEMO[ant[1] - 1]} ${ant[0]})`,
+      desde: iso(ant[0], ant[1], 1), hasta: iso(ant[0], ant[1], finAnt) },
+    { id: 'curso', txt: `Mes en curso (1 al ${Number(hoy.slice(8, 10))} de ${MESES_DEMO[m - 1]})`,
+      desde: iso(a, m, 1), hasta: hoy },
+  ];
+  $('#demoPeriodo').innerHTML = periodos.map(p => `<option value="${p.id}">${esc(p.txt)}</option>`).join('');
+  const orden = [...j.cuentas].sort((x, y) => (x.rol === 'principal' ? 0 : 1) - (y.rol === 'principal' ? 0 : 1));
+  $('#demoCuenta').innerHTML = orden.map(c =>
+    `<option value="${esc(c.cuenta_id)}">${esc(c.etiqueta)} · ${esc(c.formato)}</option>`).join('');
+  const elegido = () => periodos.find(p => p.id === $('#demoPeriodo').value) || periodos[0];
+  const url = () => conMarca(`${BASE}api/demo/extracto?cuenta=${encodeURIComponent($('#demoCuenta').value)}` +
+    `&desde=${elegido().desde}&hasta=${elegido().hasta}`);
+  const pintarLink = () => { $('#lnkDemoDescargar').href = url(); };
+  ['#demoCuenta', '#demoPeriodo'].forEach(s => $(s).addEventListener('change', pintarLink));
+  pintarLink();
+  $('#btnDemoCargar').addEventListener('click', async () => {
+    const msj = $('#demoMsj'), p = elegido();
+    msj.style.color = 'var(--texto2)';
+    msj.innerHTML = '<span class="spinner"></span>Generando el extracto…';
+    $('#btnDemoCargar').disabled = true;
+    try {
+      const r = await fetch(url());
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo generar el extracto');
+      const nombre = (r.headers.get('Content-Disposition') || '').split('filename="')[1]?.replace(/"$/, '') || 'extracto';
+      archivosPdf = [new File([await r.blob()], nombre)];
+      archivoXls = null;
+      // el mayor: la misma cuenta y las mismas fechas, del FBS
+      const sel = document.getElementById('fbsCtaMensual');
+      if (sel && [...sel.options].some(o => o.value === $('#demoCuenta').value)) {
+        sel.value = $('#demoCuenta').value;
+        $('#fbsDesdeM').value = p.desde;
+        $('#fbsHastaM').value = p.hasta;
+      }
+      pintarListas();
+      msj.style.color = 'var(--verde, #4ade80)';
+      msj.textContent = `Extracto de ${r.headers.get('X-Movimientos')} movimientos y mayor del FBS listos: tocá «Conciliar».`;
+    } catch (e) {
+      msj.style.color = 'var(--rojo)';
+      msj.textContent = e.message;
+    }
+    $('#btnDemoCargar').disabled = false;
+  });
+  $('#kitDemo').classList.remove('oculto');
+}
 let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
 
 // ?marca=X etiqueta la conciliación con esa marca y mantiene los links dentro
