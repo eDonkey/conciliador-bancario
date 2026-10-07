@@ -16,8 +16,8 @@ así que se puede fusionar a las ramas de cada instalación después.
   `/health`. Contraseña en `APP_PASSWORD` y cookie de sesión firmada
   (HMAC-SHA256, `HttpOnly`, `SameSite=Lax`, `Secure` si el pedido llegó por https).
   Mismo criterio que compensador (`APP_PASSWORD`), pero con pantalla de login y
-  sesión con vencimiento en vez de Basic. El hub todavía no firma sus encabezados
-  de identidad (hallazgo 11), por eso no se acepta identidad del hub.
+  sesión con vencimiento en vez de Basic. Para el acceso por el hub ver
+  "Identidad firmada del hub" más abajo.
 - Sin `APP_PASSWORD` la app NO se abre: responde 503 a todo acceso remoto. Solo
   atiende a quien llega por loopback sin pasar por un proxy (si el pedido trae
   `X-Forwarded-*`, `CF-Connecting-IP`, `X-Orbit-*`, etc., no cuenta como local, así
@@ -82,6 +82,25 @@ se usa `CF-Connecting-IP` solo si el socket es loopback; si no, la IP del socket
 Se autodetecta Railway por sus variables; `PROXY_MODE=railway|cloudflare|none` lo
 fuerza. Se usa para el límite de intentos de login.
 
+### Identidad firmada del hub (hallazgo 11)
+El hub firma los encabezados `X-Orbit-*` con el contrato de `hub/docs/FIRMA_ORBIT.md`
+(`X-Orbit-Timestamp` + `X-Orbit-Firma` `v1=`, HMAC-SHA256 sobre método, ruta con query y
+todos los `X-Orbit-*`; el mismo módulo que gerencia, ventas, adm-ventas, adm-planes y
+parte-diario). `engine/seguridad.identidad_hub()` lo verifica y `engine/acceso.py` lo usa
+antes del chequeo de `APP_PASSWORD`:
+
+- Pedido con `X-Orbit: 1`, firma válida (clave configurada, método y ruta de ese pedido,
+  60 s) y un `X-Orbit-Usuario`: queda autenticado sin pedir contraseña, aunque `APP_PASSWORD`
+  no esté configurada (el hub antes recibía 503). Sigue valiendo el control de `Origin` en
+  los métodos que modifican. El usuario y los permisos quedan en `request.state.hub`.
+- Sin clave de firma, o con firma ausente/mala/vencida/de otra ruta, o sin usuario: esas
+  cabeceras no valen nada y solo funciona el login propio (contraseña + cookie), igual que
+  antes. Acceso directo (puerto de la app, sin hub) no cambia.
+- Clave: `HUB_FIRMA_CLAVE` (alias `ORBIT_FIRMA_CLAVE`) o, si no está, la derivada de
+  `HUB_CLAVE` (la misma del hub); `HUB_CLAVE_ANTERIOR` se acepta mientras se rota.
+- Requiere que el hub envíe la identidad a esta herramienta (rama `auditoria-seguridad`
+  del hub: las herramientas sin conexión ahora reciben `X-Orbit` firmado).
+
 ### Presupuesto diario de tokens de IA
 `engine/presupuesto_ia.py`: tope diario de tokens (entrada+salida, contados con el
 uso real de cada respuesta) en `IA_TOKENS_DIA` (por defecto 2.000.000; 0 apaga la IA).
@@ -101,11 +120,12 @@ carpeta `datos/`, retención de 30 días, sin credenciales por defecto
 y sincronizar `C:\backups` fuera de la máquina (pendiente del hallazgo 1).
 
 ### Tests
-`tests/` (66 tests, `python -m pytest tests`): login, sesión vencida/adulterada, límite de
+`tests/` (81 tests, `python -m pytest tests`): login, sesión vencida/adulterada, límite de
 intentos con `X-Forwarded-For` falso, rechazo remoto sin clave, CSRF, IP del cliente,
 validador de solo lectura (incluido el bypass del `--`), destinos FBS, chequeo de
-privilegios, presupuesto con aviso 80 % y 429, modelo solo por servidor y semilla de
-cuentas. El repo no tenía tests antes.
+privilegios, presupuesto con aviso 80 % y 429, modelo solo por servidor, semilla de
+cuentas e identidad firmada del hub (`tests/test_firma_hub.py`: vector fijo del contrato, firma
+mala/vencida/de otra ruta, sin clave, rotación, CSRF, login propio intacto). El repo no tenía tests antes.
 
 ## Variables a configurar ANTES de desplegar
 
@@ -118,6 +138,7 @@ cuentas. El repo no tenía tests antes.
 | `FBS_SQL_EDITABLE=1` | Solo si se edita la conexión manual desde la web | Por defecto solo se edita desde la propia máquina. En modo hub no hace falta. |
 | `IA_TOKENS_DIA`, `IA_AVISO_PORCENTAJE` | Opcionales | Tope (def. 2.000.000) y umbral de aviso (def. 80). Falta decidir el número, ver pendientes. |
 | `IA_MODELO`, `IA_MODELO_ANALISIS` | Opcionales | Modelos (def. `claude-sonnet-5` / `claude-haiku-4-5`). |
+| `HUB_FIRMA_CLAVE` (alias `ORBIT_FIRMA_CLAVE`) o `HUB_CLAVE` / `HUB_CLAVE_ANTERIOR` | Para entrar por el hub sin contraseña | La misma clave del hub. Si el hub ya tiene `HUB_CLAVE`, alcanza con poner la misma `HUB_CLAVE` acá (se deriva la clave de firma). Sin ninguna, el hub no puede autenticarse y rige `APP_PASSWORD`. `ORBIT_FIRMA_TOLERANCIA` (60 s) opcional. |
 | `PROXY_MODE` | Opcional | `railway`, `cloudflare` o `none` si la autodetección no alcanza. |
 | `SESION_HORAS`, `SESION_MAX_DIAS`, `ORIGENES_PERMITIDOS` | Opcionales | Vida de la sesión y orígenes extra aceptados en POST. |
 | `CUENTAS_SEMILLA_RUTA` | Opcional | Ruta del JSON de cuentas de respaldo (si no, `config/cuentas_semilla.json`). |
@@ -142,9 +163,10 @@ local de cuentas, y servir siempre por https (la cookie se marca `Secure` solo s
 5. **Cuánto gastar por día**: 2.000.000 de tokens es un valor provisional. El aviso
    del 80 % hoy solo queda en el log y en `/api/diagnostico`; falta definir quién lo
    recibe y conectarlo a una alerta (New Relic).
-6. **Identidad del hub**: cuando Orbit firme sus encabezados (hallazgo 11) se puede
-   aceptar identidad del hub en vez de la contraseña compartida. La contraseña única
-   sigue siendo la deuda del hallazgo 3 (usuarios reales, "quién hizo qué").
+6. **Identidad del hub**: hecho el lado de la app (ver "Identidad firmada del hub"). Falta
+   desplegar el hub con la firma y la clave en las dos puntas. La contraseña única sigue
+   siendo la deuda del hallazgo 3 para el acceso directo; por el hub ya llega el usuario
+   (queda en `request.state.hub`, todavía no se registra "quién hizo qué" en `datos/`).
 7. **Datos del lado del servidor**: sin plazo de conservación (hallazgo 2, `datos/`
    crece para siempre) y sin migraciones/versionado de los JSON. Falta la política.
 8. **Qué rama corre cada instalación**: cada instalación debería tener su rama con la

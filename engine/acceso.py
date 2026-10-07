@@ -72,6 +72,20 @@ def instalar(app: FastAPI):
         if path == "/health":
             return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
+        # Identidad del hub: el hub (Orbit) ya autenticó al usuario y firma sus cabeceras
+        # X-Orbit-* (hub/docs/FIRMA_ORBIT.md). Con firma válida y un usuario no hace falta
+        # la contraseña; sin firma válida (o sin clave de firma) esas cabeceras no cuentan y
+        # sigue el login propio. Va antes del chequeo de APP_PASSWORD: el hub puede abrir la
+        # app aunque la contraseña no esté configurada.
+        hub = seg.identidad_hub(request)
+        if hub:
+            request.state.hub = hub
+            if request.method not in _METODOS_SEGUROS and not seg.origen_valido(request):
+                return JSONResponse(status_code=403, content={"error": "Origen no permitido."})
+            if path == "/login" and request.method == "GET":
+                return RedirectResponse("./", status_code=303, headers={"Cache-Control": "no-store"})
+            return await call_next(request)
+
         if not seg.clave_app():
             # Sin contraseña no se abre: solo la propia máquina, directo.
             if seg.es_local(request):

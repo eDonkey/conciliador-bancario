@@ -13,19 +13,26 @@ Criterio (el mismo del compensador y del resto del grupo):
 * La cookie va firmada con HMAC-SHA256. La clave sale de SESSION_SECRET o,
   si falta, se deriva de APP_PASSWORD (cambiar la contraseña invalida todas
   las sesiones).
+* Identidad del hub: el hub (Orbit) manda quién es el usuario en cabeceras
+  X-Orbit-* y las FIRMA con HMAC-SHA256 (hub/docs/FIRMA_ORBIT.md, v1). Un
+  pedido con firma válida y un usuario queda autenticado sin APP_PASSWORD
+  (identidad_hub). Sin clave de firma configurada o sin firma válida, esas
+  cabeceras no valen nada y solo queda el login propio (contraseña).
 * La IP del cliente NUNCA se toma de X-Forwarded-For a ciegas: ver
   ip_cliente().
 """
 import base64
+import binascii
 import hashlib
 import hmac
 import ipaddress
 import json
 import os
+import re
 import secrets
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 COOKIE = "conciliador_sesion"
 _LOGIN_PUBLICOS = ("/login", "/health", "/favicon.ico")
@@ -253,3 +260,111 @@ def es_https(request) -> bool:
 
 def es_publica(path: str) -> bool:
     return path in _LOGIN_PUBLICOS
+
+
+# ---- identidad firmada del hub ---------------------------------------------
+# Contrato de hub/docs/FIRMA_ORBIT.md (el mismo de gerencia, ventas, adm-ventas,
+# adm-planes, parte-diario y automotive-api):
+#   X-Orbit-Timestamp: segundos Unix (UTC)
+#   X-Orbit-Firma:     "v1=" + hex( HMAC-SHA256(clave, canónico) )
+#   canónico = "v1\n" + ts + "\n" + MÉTODO + "\n" + ruta con query tal como la recibe la app
+#              + "\n" + una línea "nombre:valor\n" por cada cabecera X-Orbit / X-Orbit-*
+#              (nombre en minúsculas, valor tal como viaja, ordenadas por nombre) menos
+#              Timestamp y Firma
+#   clave    = HUB_FIRMA_CLAVE | ORBIT_FIRMA_CLAVE | HMAC-SHA256(base64-decode(HUB_CLAVE), "orbit-firma-v1")
+#              (HUB_CLAVE_ANTERIOR también se acepta: rotación)
+#   tolerancia = 60 s (ORBIT_FIRMA_TOLERANCIA); comparación en tiempo constante
+
+_PREFIJO_ORBIT = "x-orbit"
+_FIRMA, _TS = "x-orbit-firma", "x-orbit-timestamp"
+TOLERANCIA_FIRMA = 60
+
+
+def _derivar(hub_clave: str) -> bytes | None:
+    try:
+        return hmac.new(base64.b64decode(hub_clave, validate=True), b"orbit-firma-v1", hashlib.sha256).digest()
+    except (binascii.Error, ValueError):
+        return None
+
+
+def claves_de_firma() -> list[bytes]:
+    """Las claves con las que se acepta la firma del hub (la actual y, al rotar, la anterior); [] si no hay."""
+    e = os.environ
+    propia = (e.get("HUB_FIRMA_CLAVE") or e.get("ORBIT_FIRMA_CLAVE") or "").strip()
+    if propia:
+        return [propia.encode("utf-8")]
+    out = []
+    for var in ("HUB_CLAVE", "HUB_CLAVE_ANTERIOR"):
+        v = (e.get(var) or "").strip()
+        k = _derivar(v) if v else None
+        if k:
+            out.append(k)
+    return out
+
+
+def _es_orbit(nombre: str) -> bool:
+    return nombre == _PREFIJO_ORBIT or nombre.startswith(_PREFIJO_ORBIT + "-")
+
+
+def _canonico(cabeceras, ts: str, metodo: str, ruta: str) -> bytes:
+    pares = sorted((k.lower(), str(v)) for k, v in cabeceras.items()
+                   if _es_orbit(k.lower()) and k.lower() not in (_FIRMA, _TS))
+    lineas = "".join(f"{k}:{v}\n" for k, v in pares)
+    return f"v1\n{ts}\n{metodo.upper()}\n{ruta}\n{lineas}".encode("utf-8")
+
+
+def firmar(cabeceras: dict, metodo: str, ruta: str, clave: bytes | None = None, ahora: float | None = None) -> dict:
+    """Las cabeceras X-Orbit-Timestamp y X-Orbit-Firma para ese pedido. Es lo que
+    hace el hub; está acá para las pruebas y como referencia."""
+    if clave is None:
+        claves = claves_de_firma()
+        if not claves:
+            raise ValueError("No hay clave de firma (HUB_FIRMA_CLAVE, ORBIT_FIRMA_CLAVE o HUB_CLAVE).")
+        clave = claves[0]
+    ts = str(int(ahora if ahora is not None else time.time()))
+    mac = hmac.new(clave, _canonico(cabeceras, ts, metodo, ruta), hashlib.sha256).hexdigest()
+    return {_TS: ts, _FIRMA: "v1=" + mac}
+
+
+def firma_valida(cabeceras, metodo: str, ruta: str, ahora: float | None = None) -> bool:
+    """True solo si hay clave configurada Y las cabeceras traen una firma válida y reciente para
+    ESTE método y ESTA ruta. Sin clave no hay nada que verificar: False (la identidad no vale)."""
+    claves = claves_de_firma()
+    if not claves:
+        return False
+    bajas = {k.lower(): v for k, v in cabeceras.items()}
+    ts, firma = str(bajas.get(_TS, "")), str(bajas.get(_FIRMA, ""))
+    if not re.fullmatch(r"[0-9]{9,12}", ts) or not firma.startswith("v1="):
+        return False
+    try:
+        tolerancia = int(os.environ.get("ORBIT_FIRMA_TOLERANCIA") or TOLERANCIA_FIRMA)
+    except ValueError:
+        tolerancia = TOLERANCIA_FIRMA
+    if abs((ahora if ahora is not None else time.time()) - int(ts)) > tolerancia:
+        return False
+    canonico = _canonico(cabeceras, ts, metodo, ruta)
+    return any(hmac.compare_digest(hmac.new(k, canonico, hashlib.sha256).hexdigest(), firma[3:]) for k in claves)
+
+
+def ruta_de(request) -> str:
+    """La ruta con query tal como la recibió la app (lo que firma el hub)."""
+    raw = request.scope.get("raw_path")
+    path = raw.decode("latin-1") if raw else request.url.path
+    qs = (request.scope.get("query_string") or b"").decode("latin-1")
+    return path + ("?" + qs if qs else "")
+
+
+def identidad_hub(request, ahora: float | None = None) -> dict | None:
+    """{'usuario': 'jperez (Juan Pérez)', 'permisos': [...]} si el pedido viene del hub: X-Orbit: 1,
+    firma válida (clave configurada, método y ruta de ESTE pedido, 60 s) y un X-Orbit-Usuario.
+    None en cualquier otro caso (entonces solo vale el login propio)."""
+    h = request.headers
+    if h.get(_PREFIJO_ORBIT) != "1":
+        return None
+    if not firma_valida(h, request.method, ruta_de(request), ahora):
+        return None
+    usuario = "".join(c for c in unquote(h.get("x-orbit-usuario", "")[:400]) if c.isprintable()).strip()[:120]
+    if not usuario:
+        return None
+    permisos = [p.strip() for p in (h.get("x-orbit-permisos") or "").split(",") if p.strip()]
+    return {"usuario": usuario, "permisos": permisos}
