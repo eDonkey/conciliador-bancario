@@ -33,6 +33,8 @@ def registrar(modulo: str, modelo: str, usage) -> None:
         ent = getattr(usage, "input_tokens", 0) or 0
         sal = getattr(usage, "output_tokens", 0) or 0
         p_in, p_out = PRECIOS.get(modelo, (5.0, 25.0))   # peor caso si es otro
+        from engine import presupuesto_ia
+        presupuesto_ia.registrar(ent, sal)
         entradas = _leer()
         entradas.append({
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),

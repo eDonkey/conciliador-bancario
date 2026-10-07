@@ -24,40 +24,27 @@ RUTA_DEFAULT = os.path.join(BASE_DIR, "datos", "cuentas_nave.json")
 RUTA_ENV = os.path.join(BASE_DIR, ".env")   # dev local, gitignoreado
 CACHE_TTL = 60   # segundos; también evita martillar la base si está caída
 
-# (empresa, banco, numero, moneda) — tabla pasada por el cliente; la cuenta
-# BBVA 109-013562/1 de Lumiere no figuraba pero llegó extracto real de ella.
-SEMILLA = [
-    ("Le Mans", "santander", "043-016675/9", "USD"),
-    ("Le Mans", "santander", "043-029406/7", "USD"),
-    ("Le Mans", "santander", "043-036647/0", "ARS"),
-    ("Le Mans", "santander", "250-755185/3", "ARS"),
-    ("Le Mans", "santander", "250-755185/3", "USD"),
-    ("Le Mans", "santander", "742-000483/5", "ARS"),
-    ("Le Mans", "santander", "742-018737/2", "ARS"),
-    ("Le Mans", "santander", "742-018752/5", "USD"),
-    ("Lumiere", "santander", "250-755160/0", "ARS"),
-    ("Lumiere", "santander", "250-755160/0", "USD"),
-    ("Lumiere", "santander", "742-001061/2", "ARS"),
-    ("Lumiere", "santander", "742-001087/2", "USD"),
-    ("Gac - Kyoto", "santander", "043-037781/8", "ARS"),
-    ("Gac - Kyoto", "santander", "043-037782/5", "USD"),
-    ("Le Mans", "frances", "0109-010968/2", "ARS"),
-    ("Le Mans", "frances", "0109-035581/8", "ARS"),
-    ("Le Mans", "frances", "0109-037668/4", "ARS"),
-    ("LEAP", "frances", "0109-064858/9", "ARS"),
-    ("Le Mans", "frances", "0109-402090/5", "USD"),
-    ("LEAP", "frances", "0109-402118/2", "USD"),
-    ("Lumiere", "frances", "0109-013562/1", "ARS"),
-    ("Le Mans", "galicia", "0000601-5 228-1", "ARS"),
-    ("LEAP", "galicia", "0000266-2 702-7", "ARS"),
-    ("Le Mans", "galicia", "0000830-1 228-1", "ARS"),
-    ("Lumiere", "macro", "351909419853038", "ARS"),
-    ("Lumiere", "macro", "230209557660631", "USD"),
-    ("Le Mans", "macro", "351909419852998", "ARS"),
-    ("Le Mans", "macro", "230209558049538", "USD"),
-    ("Lumiere", "ciudad", "307300050211430", "ARS"),
-    ("Le Mans", "ciudad", "307300050211454", "ARS"),
-]
+# Semilla de cuentas (empresa, banco, numero, moneda): FUERA del código. La
+# fuente central es el Postgres del hub; esto es solo el respaldo cuando la
+# base no responde. Se lee de CUENTAS_SEMILLA_RUTA o de
+# config/cuentas_semilla.json (ignorado por git: tiene números reales). El
+# formato está en config/cuentas_semilla.example.json. Sin archivo, la semilla
+# queda vacía y la app depende del hub.
+RUTA_SEMILLA = os.environ.get("CUENTAS_SEMILLA_RUTA") or os.path.join(
+    BASE_DIR, "config", "cuentas_semilla.json")
+
+
+def _leer_semilla() -> list[tuple]:
+    try:
+        with open(RUTA_SEMILLA, encoding="utf-8") as f:
+            filas = json.load(f)
+        return [(c["empresa"], c["banco"], c["numero"], c["moneda"]) for c in filas]
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"[cuentas] Semilla ilegible en {RUTA_SEMILLA} ({exc}); queda vacía")
+        return []
+
 
 BANCOS = {"santander": "Santander/Río", "frances": "BBVA/Francés",
           "galicia": "Galicia", "macro": "Macro", "ciudad": "Ciudad"}
@@ -155,7 +142,7 @@ def _cargar_local(ruta: str) -> list[dict]:
         "id": f"{banco}-{_digits(numero)}-{moneda.lower()}",
         "empresa": empresa, "banco": banco, "numero": numero, "moneda": moneda,
         "fbs_e": None, "fbs_o": None, "fbs_nombre": None,
-    } for empresa, banco, numero, moneda in SEMILLA]
+    } for empresa, banco, numero, moneda in _leer_semilla()]
     guardar(cuentas, ruta)
     return cuentas
 

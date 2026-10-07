@@ -1,0 +1,22 @@
+{
+  "hub_clave": "JKrNyV92tRSs5JbBAYigji6ELpg2ZSBGFQj1LedPb+g=",
+  "hub_clave_anterior": "Xze9qVIOJdtiO6anSdqxtXQIXbijU5f5iF2vZ3wN4Fw=",
+  "casos": [
+    {
+      "claro": "P@ssw0rd-ñandú/ü€!",
+      "cifrado_actual": "v1:KPvfLZEMicnmdExs0L+AXyrThdMQwQLiO7A7bqh9vSoJIfsVy1nsOwzQK963+2h3TSv5"
+    },
+    {
+      "claro": "simple",
+      "cifrado_actual": "v1:koc6ovmOoYFrQ6UQUtabx2LBeUIvBqsU+8q3UR9Nz7sv0Q=="
+    },
+    {
+      "claro": "v1:parece-cifrado",
+      "cifrado_actual": "v1:UWiYzz3t5YVDiRNN7+OCK0l0ecXi0+wcDQ2xOHHFNTSHpw2A4eO91Ev7qsGu"
+    }
+  ],
+  "cifrado_con_anterior": {
+    "claro": "P@ssw0rd-ñandú/ü€!",
+    "cifrado": "v1:ajK526Ob5CNgdiQWYw92UZyAiAnOc/C6RZbseITDA6LSjwcJ3vQNwP6e9pumlGk7vvpY"
+  }
+}

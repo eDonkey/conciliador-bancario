@@ -15,6 +15,7 @@ from datetime import date
 
 from engine import reglas as reglas_mod
 from engine import ai_assist
+from engine import presupuesto_ia
 
 _DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
 RUTA_DEFAULT = os.path.join(_DATOS, "analisis_aprendidos.json")
@@ -22,7 +23,7 @@ RUTA_CACHE = os.path.join(_DATOS, "analisis_cache.json")
 RUTA_USO = os.path.join(_DATOS, "analisis_uso.json")
 
 # Haiku 4.5: $1/$5 por millón de tokens — un análisis cuesta ~$0,003.
-MODELO = "claude-haiku-4-5"
+MODELO = presupuesto_ia.modelo_analisis()   # IA_MODELO_ANALISIS (solo servidor)
 # tope de llamadas a la API por día (más allá, análisis interno sin IA)
 MAX_LLAMADAS_DIA = int(os.environ.get("ANALISIS_MAX_DIA", "150"))
 MAX_CACHE = 5000
@@ -207,6 +208,7 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
         return {"texto": _interno(asiento, banco_residual,
                                   "No hay credenciales de IA configuradas."),
                 "origen": "interno"}
+    presupuesto_ia.verificar()          # tope diario de tokens: PresupuestoExcedido (429)
     if not _consumir_presupuesto():
         return {"texto": _interno(
             asiento, banco_residual,
@@ -264,6 +266,8 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
                 cache.pop(k, None)
         _escribir_json(RUTA_CACHE, cache)
         return {"texto": texto, "origen": "ia"}
+    except presupuesto_ia.PresupuestoExcedido:
+        raise                           # el endpoint responde 429
     except Exception as exc:  # noqa: BLE001 — nunca romper: análisis interno
         return {"texto": _interno(asiento, banco_residual,
                                   f"La IA no respondió ({exc})."),

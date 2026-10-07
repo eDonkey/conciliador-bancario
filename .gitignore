@@ -12,3 +12,7 @@ venv/
 *.xlsx
 *.pdf
 
+
+# Configuración con datos reales (el ejemplo .example sí se versiona)
+config/cuentas_semilla.json
+config/*.local.json

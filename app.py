@@ -18,7 +18,7 @@ import time
 import uuid
 from datetime import date, datetime
 
-from fastapi import Body, FastAPI, File, Form, UploadFile
+from fastapi import Body, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -36,11 +36,17 @@ from engine import gastos_conf
 from engine import cuentas as cuentas_mod
 from engine import analisis as analisis_mod
 from engine import telemetria
+from engine import acceso
+from engine import presupuesto_ia
+from engine import seguridad
 from parsers import diarios
 
 app = FastAPI(title="Conciliador bancario")
 # monitoreo (New Relic): el polling de progreso no se traza, es ruido
 telemetria.iniciar(app, "conciliador", puerto=8765, excluir=[r"/api/progreso/"])
+# autenticación obligatoria (APP_PASSWORD + sesión firmada); sin APP_PASSWORD
+# solo se atiende a la propia máquina. Ver engine/seguridad.py y AUDIT.md.
+acceso.instalar(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
@@ -188,6 +194,11 @@ async def api_conciliar(
     devuelve el job_id de inmediato. El mayor puede venir como Excel subido
     o directo del FBS (fbs_cuenta + fbs_desde + fbs_hasta, config del hub).
     El avance se consulta en /api/progreso."""
+    if usar_ia == "si":
+        try:
+            presupuesto_ia.verificar()
+        except presupuesto_ia.PresupuestoExcedido as exc:
+            return JSONResponse(status_code=429, content={"error": str(exc)})
     archivos = [(up.filename, await up.read()) for up in extractos]
     data_mayor = await mayor.read() if mayor else b""
     if not data_mayor and not fbs_cuenta:
@@ -346,6 +357,8 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                         residual_banco, residual_mayor, progreso=prog_ia,
                         glosario=equivalencias)
                     ia_estado = "ok"
+                except presupuesto_ia.PresupuestoExcedido as exc:
+                    ia_estado = f"error: {exc}"     # se sigue sin IA
                 except Exception as exc:  # noqa: BLE001 — mostrar el error
                     ia_estado = f"error: {exc}"
                     telemetria.registrar_error(exc, origen="ia", job=job_id)
@@ -393,9 +406,9 @@ def api_diagnostico():
     token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
     return {
         "ia_disponible": ai_assist.disponible(),
+        "ia_presupuesto": presupuesto_ia.estado(),
         "ANTHROPIC_API_KEY": {
             "presente": bool(clave.strip()),
-            "longitud": len(clave),
             "formato_esperado": clave.strip().startswith("sk-ant-"),
             "espacios_al_borde": clave != clave.strip(),
             "entre_comillas": clave.strip()[:1] in ('"', "'") if clave.strip() else False,
@@ -412,10 +425,6 @@ def api_diagnostico():
         "ia_uso": ia_log.resumen(),
         # monitoreo (New Relic): si está activo, con qué grupo y qué versión
         "monitor": telemetria.estado(),
-        # repr() revela caracteres invisibles en el nombre (espacios al final)
-        "variables_con_nombre_parecido": sorted(
-            repr(k) for k in os.environ
-            if "ANTHROPIC" in k.upper() or "API_KEY" in k.upper()),
     }
 
 
@@ -454,10 +463,13 @@ def api_analizar(job_id: str, cuerpo: dict = Body(...)):
         return {"analisis": cache[id_mayor]}
 
     correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
-    resultado = analisis_mod.analizar_asiento(
-        asiento, datos.get("banco_sin_contabilizar", []), correcciones,
-        cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
-        simular=bool(cuerpo.get("simular")))
+    try:
+        resultado = analisis_mod.analizar_asiento(
+            asiento, datos.get("banco_sin_contabilizar", []), correcciones,
+            cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
+            simular=bool(cuerpo.get("simular")))
+    except presupuesto_ia.PresupuestoExcedido as exc:
+        return JSONResponse(status_code=429, content={"error": str(exc)})
 
     cache[id_mayor] = {"texto": resultado["texto"], "fecha": date.today().isoformat(),
                        "veredicto": None, "correccion": "",
@@ -497,6 +509,13 @@ def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
 
 
 ARCHIVO_MIGRABLE_RE = re.compile(r'^[\w.-]+\.json$')
+# nunca viajan por la API de migración: la conexión del FBS (con su clave y
+# el servidor destino) y los contadores internos de IA
+ARCHIVOS_NO_MIGRABLES = {"fbs_sql.json", "ia_presupuesto.json", "ia_uso_log.json"}
+
+
+def _migrable(nombre: str) -> bool:
+    return bool(ARCHIVO_MIGRABLE_RE.match(nombre)) and nombre not in ARCHIVOS_NO_MIGRABLES
 
 
 @app.get("/api/migracion/exportar")
@@ -505,7 +524,7 @@ def api_migracion_exportar():
     tableros, cuentas) como un solo JSON. Nunca incluye credenciales."""
     bundle = {}
     for nombre in sorted(os.listdir(DATOS_DIR)):
-        if not ARCHIVO_MIGRABLE_RE.match(nombre):
+        if not _migrable(nombre):
             continue
         try:
             with open(os.path.join(DATOS_DIR, nombre), encoding="utf-8") as f:
@@ -529,7 +548,7 @@ def api_migracion_importar(cuerpo: dict = Body(...)):
     archivos = cuerpo.get("archivos") or {}
     escritos, ignorados = 0, []
     for nombre, contenido in archivos.items():
-        if not ARCHIVO_MIGRABLE_RE.match(nombre):
+        if not _migrable(nombre):
             ignorados.append(nombre)
             continue
         with open(os.path.join(DATOS_DIR, nombre), "w", encoding="utf-8") as f:
@@ -649,10 +668,17 @@ def api_fbs_sql_get(marca: str = ""):
 
 
 @app.post("/api/fbs-sql")
-def api_fbs_sql_post(cuerpo: dict = Body(...)):
+def api_fbs_sql_post(request: Request, cuerpo: dict = Body(...)):
+    # cambiar a QUÉ servidor se conecta la app (y con qué clave) solo se
+    # permite desde la propia máquina o si el despliegue lo habilita
+    # explícitamente (FBS_SQL_EDITABLE=1); la query siempre se puede editar
+    editable = (seguridad.es_local(request)
+                or os.environ.get("FBS_SQL_EDITABLE", "").strip().lower() in ("1", "true", "on", "si"))
     try:
-        fbs_sql.guardar_conf(cuerpo)
-    except ValueError as exc:   # protección de solo lectura sobre la query
+        fbs_sql.guardar_conf(cuerpo, permitir_destino=editable)
+    except PermissionError as exc:
+        return JSONResponse(status_code=403, content={"error": str(exc)})
+    except ValueError as exc:   # solo lectura / destino inválido
         return JSONResponse(status_code=422, content={"error": str(exc)})
     return fbs_sql.publica()
 
@@ -2347,4 +2373,6 @@ if __name__ == "__main__":
     import uvicorn
     puerto = int(os.environ.get("PORT", "8765"))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
-    uvicorn.run(app, host=host, port=puerto)
+    # proxy_headers=False: la IP del cliente y "es local" las decide
+    # engine/seguridad.py, no uvicorn (que confiaría en X-Forwarded-For)
+    uvicorn.run(app, host=host, port=puerto, proxy_headers=False)
