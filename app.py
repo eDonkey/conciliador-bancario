@@ -44,36 +44,16 @@ telemetria.iniciar(app, "conciliador", puerto=8765, excluir=[r"/api/progreso/"])
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
-DEMO_DIR = os.path.join(DATOS_DIR, "demo")
 os.makedirs(DATOS_DIR, exist_ok=True)
 RESULTADOS = {}  # job_id -> resultado serializado
 PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
 STAGING = {}     # staging_id -> archivos parseados del modo diario
 
-# Ambiente de demo (ROD-6 "05"): permite conciliar un extracto dropeado contra
-# un mayor FBS ya sembrado, sin necesitar que también se suba el archivo del
-# mayor. Sin esta variable el comportamiento es exactamente el de producción.
-DEMO_MODE = os.environ.get("DEMO_MODE", "").strip().lower() in ("1", "true", "on", "si")
-
-
-def _cargar_mayor_demo(cuenta_id: str):
-    """Asientos sembrados para <cuenta_id> (datos/demo/<cuenta_id>.json), en el
-    mismo formato que devuelve parsers.mayor_xlsx. None si no hay fixture."""
-    ruta = os.path.join(DEMO_DIR, f"{cuenta_id}.json")
-    if not os.path.exists(ruta):
-        return None
-    from parsers.mayor_xlsx import AsientoMayor
-    with open(ruta, encoding="utf-8") as f:
-        filas = json.load(f)
-    asientos = [AsientoMayor(
-        id=f"DEMO#{i}", hoja=d.get("hoja", "E"), asiento=d.get("asiento"),
-        fecha=date.fromisoformat(d["fecha"]) if d.get("fecha") else None,
-        referencia=d.get("referencia") or "", comentario=d.get("comentario") or "",
-        debe=float(d.get("debe") or 0.0), haber=float(d.get("haber") or 0.0),
-    ) for i, d in enumerate(filas, 1)]
-    fechas = [a.fecha for a in asientos if a.fecha]
-    return {"asientos": asientos, "desde": min(fechas) if fechas else None,
-            "hasta": max(fechas) if fechas else None}
+# Ambiente de demo: el FBS está simulado (engine/simulacion.py) y la demo
+# genera los extractos de cada cuenta del hub con el formato de su banco, a
+# partir de la misma simulación. Sin esta variable el comportamiento es
+# exactamente el de producción.
+DEMO_MODE = fbs_sql.simulado()
 
 
 LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
@@ -644,18 +624,12 @@ def _agregar_a_staging(stag: dict, nombre: str, info: dict, cuentas: list[dict])
 
 @app.post("/api/diario/identificar")
 async def api_diario_identificar(archivos: list[UploadFile] = File(...),
-                                 marca: str = "", staging: str = "",
-                                 demo: int = 0):
+                                 marca: str = "", staging: str = ""):
     """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
     deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
     identificación solo asigna cuentas de esa marca; con ?staging= los
     archivos se suman a una identificación previa (p. ej. al mayor ya traído
-    del FBS por SQL) en vez de empezar de cero.
-
-    Con ?demo=1 (solo si DEMO_MODE) no hace falta subir también el mayor: por
-    cada cuenta detectada en los extractos se busca un fixture sembrado
-    (datos/demo/<cuenta_id>.json) y se agrega a la conciliación como si se
-    hubiera dropeado también ese archivo — sin listarlo en la respuesta."""
+    del FBS por SQL) en vez de empezar de cero."""
     staging_id, stag = _staging_destino(staging, marca)
     cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
                                         stag.get("marca") or marca)
@@ -663,33 +637,7 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
         data = await up.read()
         info = diarios.identificar(up.filename, data)
         _agregar_a_staging(stag, up.filename, info, cuentas)
-
-    if DEMO_MODE and demo:
-        vistos = set()
-        for fila in list(stag["resumen"]):
-            cid = fila.get("cuenta_id")
-            if fila["tipo"] != "extracto" or not cid or cid in vistos:
-                continue
-            vistos.add(cid)
-            mayor = _cargar_mayor_demo(cid)
-            if not mayor:
-                continue
-            nombre_sint = f"__demo_mayor__{cid}"
-            stag["archivos"][nombre_sint] = {"tipo": "fbs",
-                                             "asientos": mayor["asientos"]}
-            stag["resumen"] = [f for f in stag["resumen"]
-                               if f["archivo"] != nombre_sint]
-            stag["resumen"].append({
-                "archivo": nombre_sint, "tipo": "fbs", "sintetico": True,
-                "cantidad": len(mayor["asientos"]),
-                "desde": mayor["desde"].isoformat() if mayor["desde"] else None,
-                "hasta": mayor["hasta"].isoformat() if mayor["hasta"] else None,
-                "cuenta_id": cid, "error": None,
-            })
-
-    # la fila sintética del mayor demo no se muestra: solo lo dropeado real
-    visibles = [f for f in stag["resumen"] if not f.get("sintetico")]
-    return {"staging_id": staging_id, "archivos": visibles,
+    return {"staging_id": staging_id, "archivos": stag["resumen"],
             "marca": stag.get("marca")}
 
 
@@ -2267,16 +2215,83 @@ def _generar_excel(datos):
 
 @app.get("/api/demo/estado")
 def api_demo_estado():
-    return {"demo": DEMO_MODE}
+    if not DEMO_MODE:
+        return {"demo": False}
+    from engine import simulacion
+    return {"demo": True, "hoy": simulacion.ultimo_habil().isoformat()}
 
 
-@app.get("/api/demo/kit")
-def api_demo_kit():
+def _cuentas_demo(marca: str = "") -> list[dict]:
+    """Las cuentas del hub con FBS (las que la simulación conoce), de la marca."""
+    from engine import simulacion
+    todas = fbs_sql.cuentas_fbs()
+    return simulacion.con_roles(fbs_sql._filtrar_cfgs(todas, marca), todas)
+
+
+def _rango_demo(desde: str, hasta: str):
+    from engine import simulacion
+    try:
+        d1 = date.fromisoformat(desde) if desde else simulacion.ultimo_habil()
+        d2 = date.fromisoformat(hasta) if hasta else d1
+    except ValueError:
+        return None
+    if d1 > d2:
+        d1, d2 = d2, d1
+    return d1, min(d2, date.today())
+
+
+@app.get("/api/demo/cuentas")
+def api_demo_cuentas(marca: str = ""):
+    """Cuentas para generar extractos en la demo, con el formato de su banco."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
-    kit_dir = os.path.join(BASE_DIR, "static", "kit-demo")
-    archivos = sorted(f for f in os.listdir(kit_dir) if f.lower().endswith((".csv", ".xlsx")))
-    return {"archivos": archivos}
+    from engine import simulacion
+    return {"cuentas": [{"cuenta_id": c["cuenta_id"], "etiqueta": c["etiqueta"],
+                         "banco": c["banco"], "moneda": c["moneda"], "rol": c["rol"],
+                         "formato": simulacion.FORMATOS.get(c["banco"], c["banco"])}
+                        for c in sorted(_cuentas_demo(marca), key=lambda x: x["etiqueta"])],
+            "hoy": simulacion.ultimo_habil().isoformat()}
+
+
+@app.get("/api/demo/extracto")
+def api_demo_extracto(cuenta: str, desde: str = "", hasta: str = "", marca: str = ""):
+    """El extracto de una cuenta para el rango, en el formato de su banco y
+    coherente con el mayor que trae el FBS simulado."""
+    if not DEMO_MODE:
+        return JSONResponse(status_code=404, content={"error": "No disponible"})
+    from engine import simulacion
+    rango = _rango_demo(desde, hasta)
+    c = next((x for x in _cuentas_demo(marca) if x["cuenta_id"] == cuenta), None)
+    if not rango or not c:
+        return JSONResponse(status_code=404, content={"error": "Esa cuenta no tiene FBS en el hub de la demo."})
+    try:
+        nombre, contenido, n = simulacion.extracto(c, *rango)
+    except RuntimeError as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
+    tipo = ("text/csv" if nombre.endswith(".csv") else "application/vnd.ms-excel"
+            if nombre.endswith(".xls") else
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return Response(content=contenido, media_type=tipo, headers={
+        "Content-Disposition": f'attachment; filename="{nombre}"',
+        "X-Movimientos": str(n), "Cache-Control": "no-store"})
+
+
+@app.get("/api/demo/extractos")
+def api_demo_extractos(marca: str = "", desde: str = "", hasta: str = ""):
+    """Los extractos de todas las cuentas de la marca, en un .zip."""
+    if not DEMO_MODE:
+        return JSONResponse(status_code=404, content={"error": "No disponible"})
+    from engine import simulacion
+    rango = _rango_demo(desde, hasta)
+    cuentas = _cuentas_demo(marca)
+    if not rango or not cuentas:
+        return JSONResponse(status_code=404, content={"error": "No hay cuentas con FBS en el hub de la demo."})
+    contenido = simulacion.zip_extractos(cuentas, *rango)
+    d1, d2 = rango
+    nombre = f"extractos_{cuentas_mod.slug(marca) or 'grupo'}_{d1.isoformat()}" + \
+             ("" if d1 == d2 else f"_a_{d2.isoformat()}") + ".zip"
+    return Response(content=contenido, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})
 
 
 _ID_JOB_RE = re.compile(r"^[0-9a-f]{12}\.json$")
@@ -2288,10 +2303,9 @@ def api_demo_reset():
     """Limpia el estado acumulado de la demo (ROD-10 "09"): lo que haya en
     memoria (movimientos/asientos ya consumidos), el arrastre entre corridas,
     y el historial de conciliaciones (jobs y grupos) — sin esto, repetir el
-    mismo archivo del kit lo mostraba como "ya conciliado" en vez de correrlo
-    de nuevo. Los fixtures de datos/demo/ y los archivos de static/kit-demo/
-    no se tocan (son los mismos en cada demo); para refrescar sus fechas
-    correr scripts/generar_kit_demo.py."""
+    mismo extracto lo mostraba como "ya conciliado" en vez de correrlo de
+    nuevo. Los extractos y el FBS simulado no guardan nada: salen siempre
+    iguales de engine/simulacion.py."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     STAGING.clear()
@@ -2311,16 +2325,6 @@ if DEMO_MODE:
         resp = await call_next(request)
         resp.headers["X-Robots-Tag"] = "noindex, nofollow"
         return resp
-
-    # el kit de demo (extractos de ejemplo + fixtures del mayor) es material
-    # GENERADO: no vive en el repo. Se regenera en cada arranque, lo que
-    # además mantiene las fechas de la demo siempre frescas.
-    try:
-        import runpy
-        runpy.run_path(os.path.join(BASE_DIR, "scripts", "generar_kit_demo.py"),
-                       run_name="__main__")
-    except Exception as exc:  # noqa: BLE001 — la demo degrada, no rompe
-        print(f"[demo] No pude generar el kit de demo: {exc}")
 
 
 @app.get("/diario")

@@ -1,0 +1,3 @@
+# Solo el ambiente de demo (DEMO_MODE): los extractos de BBVA y Macro son .xls binarios
+# (engine/simulacion.py). Lo instala el Dockerfile; el servidor de la empresa no lo necesita.
+xlwt>=1.3
