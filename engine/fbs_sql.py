@@ -33,6 +33,7 @@ import socket
 from datetime import date, datetime
 
 from engine import telemetria
+from engine.hub_cifrado import descifrar_fbs
 from parsers.mayor_xlsx import AsientoMayor
 
 _DATOS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datos")
@@ -374,7 +375,7 @@ def _ipv4(host: str) -> str:
 def _conectar(conf: dict):
     import pymssql   # import perezoso: la app arranca aunque falte el driver
     kwargs = dict(database=conf["base"], user=conf["usuario"],
-                  password=conf["clave"], login_timeout=10, timeout=60,
+                  password=descifrar_fbs(conf["clave"]), login_timeout=10, timeout=60,
                   charset="UTF-8")
     if os.environ.get("FBS_SQL_TDS"):        # p. ej. 7.0 / 7.2 / 7.4
         kwargs["tds_version"] = os.environ["FBS_SQL_TDS"]
@@ -419,7 +420,7 @@ def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
     servidor = (conf["servidor"] or "").strip()
     srv = servidor if "\\" in servidor else f"{servidor},{conf['puerto']}"
     cadena = (f"DRIVER={{{driver}}};SERVER={srv};DATABASE={conf['base']};"
-              f"UID={conf['usuario']};PWD={conf['clave']};")
+              f"UID={conf['usuario']};PWD={descifrar_fbs(conf['clave'])};")
     cadena += "ApplicationIntent=ReadOnly;"
     if driver.startswith("ODBC Driver"):
         # el SQL Server del FBS usa certificado autofirmado

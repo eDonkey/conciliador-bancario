@@ -127,6 +127,19 @@ privilegios, presupuesto con aviso 80 % y 429, modelo solo por servidor, semilla
 cuentas e identidad firmada del hub (`tests/test_firma_hub.py`: vector fijo del contrato, firma
 mala/vencida/de otra ruta, sin clave, rotación, CSRF, login propio intacto). El repo no tenía tests antes.
 
+
+## Contraseñas de FBS cifradas por el hub (punto 12)
+
+El hub puede guardar `fbs_conexiones.clave` cifrada (`HUB_FBS_CIFRADO=1`): `v1:` + base64(iv 12 | tag 16 | datos),
+AES-256-GCM con `HUB_CLAVE` (hub/cifrado.js). `engine/hub_cifrado.py` (`descifrar_fbs`) la descifra **al conectar al FBS**
+(no al listar): sin prefijo `v1:` es texto plano y se usa igual; prueba `HUB_CLAVE` y `HUB_CLAVE_ANTERIOR` (rotación);
+si falta `HUB_CLAVE` o no descifra, falla con un mensaje claro que no incluye la clave ni el secreto. La contraseña
+descifrada solo vive en el argumento del driver (pymssql/pyodbc): no se loguea ni sale por ninguna API (`clave_presente`
+solo informa si hay). Dependencia nueva: `cryptography` (requirements.txt).
+**Variable necesaria: `HUB_CLAVE` con el mismo valor que el hub** (y `HUB_CLAVE_ANTERIOR` mientras se rota). Tests:
+`tests/test_hub_cifrado.py` con el vector fijo `tests/vector_fbs_cifrado.json`, generado por el cifrado del hub
+(`hub/pruebas/generar-vector-fbs.js`). Limitación: una contraseña en claro que empiece con `v1:` se tomaría por cifrada.
+
 ## Variables a configurar ANTES de desplegar
 
 | Variable | Obligatoria | Para qué |
