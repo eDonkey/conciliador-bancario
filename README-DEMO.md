@@ -40,6 +40,10 @@ Por cuenta y día hábil:
 | Un pago anulado | nada | asiento y contraasiento en E | Contraasientos |
 | Comisiones, IVA, Ley 25.413, SIRCREB | débitos | la nota de débito del mes, el último día hábil | Gastos bancarios (en la mensual cierran contra la ND) |
 
+Una **multimarca de usados** del hub («Multimarca usados - Premium Centro») anda igual: sus cuentas, bancos y
+extractos son los de cualquier marca; lo único distinto es que los pagos «a la terminal» son compras de unidades
+usadas a subastas y mayoristas (`MAYORISTAS_USADOS`, por importes menores).
+
 La cuenta principal de cada marca (la primera en pesos) mueve más que las
 otras. Las cuentas en dólares tienen pocas operaciones.
 

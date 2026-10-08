@@ -157,7 +157,20 @@ TERMINALES = (
 )
 
 
+# una multimarca de usados no tiene terminal: compra el parque en subastas, a mayoristas y en consignación
+MAYORISTAS_USADOS = ("SUBASTAS AUTOMOTORES DEL SUR SA", "MAYORISTA DE USADOS RIVERA SRL",
+                     "CONSIGNACIONES AUTO CENTRO SA", "REMATES DEL LITORAL SRL")
+
+
+def es_usados(marca: str) -> bool:
+    """La demo del hub llama «Multimarca usados - <nombre>» a las concesionarias de usados."""
+    return _plano(marca).lower().startswith("multimarca usados")
+
+
 def terminal_de(marca: str) -> str:
+    if es_usados(marca):
+        return MAYORISTAS_USADOS[int(hashlib.sha256(_plano(marca).lower().encode()).hexdigest()[:4], 16)
+                                 % len(MAYORISTAS_USADOS)]
     palabras = set(re.split(r"[^a-z0-9]+", _plano(marca).lower()))
     for claves, nombre in TERMINALES:
         if palabras & set(claves):
@@ -409,14 +422,16 @@ def _operaciones_del_dia(cuenta: dict, d: date) -> list[Operacion]:
         debitos += imp
         transf_enviadas += 1
 
-    # pago a la terminal por unidades 0 km
+    # pago a la terminal por unidades 0 km (en una multimarca de usados, la compra de unidades usadas)
     if principal and r.random() < 0.3:
         term = terminal_de(marca)
-        imp = _redondo(r, 25_000_000, 95_000_000, 10_000)
+        usados = es_usados(marca)
+        imp = _redondo(r, 8_000_000, 40_000_000, 10_000) if usados else _redondo(r, 25_000_000, 95_000_000, 10_000)
         ref = f"OP 0001-{numero() % 10**8:08d}"
         ops.append(Operacion(
             mov(d, "TRANSFERENCIA ENVIADA", f"{term} CUIT {_cuit_proveedor(term)}", "", -imp),
-            _registrar(r, numero, d, "haber", imp, ref, f"Pago unidades 0 km {term}", "confirmado")))
+            _registrar(r, numero, d, "haber", imp, ref, f"{'Compra de unidades usadas' if usados else 'Pago unidades 0 km'} {term}",
+                       "confirmado")))
         debitos += imp
         transf_enviadas += 1
 
