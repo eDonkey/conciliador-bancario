@@ -34,14 +34,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import app as app_module  # noqa: E402
 
-DATA_DIR = app_module.DATOS_DIR
+DATA_DIR = app_module.DATA_DIR
 
 
 def _empty_data_dir():
     for name in os.listdir(DATA_DIR):
         path = os.path.join(DATA_DIR, name)
         shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
-    for store in (app_module.RESULTADOS, app_module.PROGRESO, app_module.STAGING):
+    for store in (app_module.RESULTS, app_module.PROGRESS, app_module.STAGING):
         store.clear()
 
 

@@ -142,9 +142,9 @@ def test_api_fbs_destino_requiere_local_o_editable(monkeypatch):
 
 
 def test_migracion_no_exporta_la_conexion_fbs():
-    assert not app_mod._migrable("fbs_sql.json")
-    assert not app_mod._migrable("ia_presupuesto.json")
-    assert app_mod._migrable("equivalencias.json")
+    assert not app_mod._migratable("fbs_sql.json")
+    assert not app_mod._migratable("ia_presupuesto.json")
+    assert app_mod._migratable("equivalencias.json")
 
 
 # ---- presupuesto de IA ------------------------------------------------------
@@ -185,7 +185,7 @@ def test_conciliar_responde_429_sin_presupuesto(monkeypatch):
 def test_analizar_responde_429(monkeypatch):
     monkeypatch.setenv("IA_TOKENS_DIA", "10")
     presupuesto_ia.registrar(10, 0)
-    monkeypatch.setattr(app_mod, "_obtener", lambda j: {
+    monkeypatch.setattr(app_mod, "_get_job", lambda j: {
         "e_sin_banco": [{"id": "E#1", "referencia": "x", "comentario": "y"}],
         "o_pendientes_sin_banco": [], "banco_sin_contabilizar": []})
     monkeypatch.setattr(app_mod.ai_assist, "available", lambda: True)
@@ -201,8 +201,8 @@ def test_modelo_solo_por_config_del_servidor(monkeypatch):
     assert presupuesto_ia.modelo_matching() == "claude-haiku-4-5"
     import inspect
     # ningún endpoint recibe el modelo desde el pedido
-    assert "modelo" not in inspect.getsource(app_mod.api_conciliar)
-    assert "modelo" not in inspect.getsource(app_mod.api_analizar)
+    assert "modelo" not in inspect.getsource(app_mod.api_reconcile)
+    assert "modelo" not in inspect.getsource(app_mod.api_analyze)
 
 
 # ---- cuentas fuera del código -----------------------------------------------
