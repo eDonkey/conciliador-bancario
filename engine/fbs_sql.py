@@ -83,7 +83,10 @@ _PROHIBIDAS = re.compile(
     r"|writetext|updatetext|readtext|bulk|disable|enable"
     r"|declare|set|waitfor|raiserror|throw|print|begin|while|goto|return"
     r"|commit|rollback|save|transaction|tran|cursor|reconfigure|checkpoint"
-    r"|go)\b", re.IGNORECASE)
+    r"|go"
+    # hints de bloqueo: dentro de la transacción traban la tabla para el FBS
+    # hasta el rollback
+    r"|tablockx|tablock|xlock|updlock|holdlock|paglock|serializable|repeatableread)\b", re.IGNORECASE)
 
 
 def _sin_literales(query: str) -> str:
