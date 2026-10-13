@@ -32,7 +32,7 @@ users or roles (F-22), and the Medium/Low items below.
 | Critical | 0 | 2 |
 | High | 1 | 5 |
 | Medium | 7 | 0 |
-| Low | 4 | 3 |
+| Low | 4 | 4 |
 
 ## Inventory
 
@@ -102,7 +102,7 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
 | OPS-04 | ⚠️ | `print()` logging; the full FBS query is printed (F-19) |
 | OPS-06 | ⚠️ | on-prem `.env` lives inside the repo folder (F-17) |
 | QA-05 | ⚠️ | test-phase leftovers: `DELETE /api/diario/memoria`, "TEMPORAL" `iniciar_8766.bat` (F-18) |
-| QA-07 | see branch `refactor/conciliador-bancario-english` |
+| QA-07 | ✅ fixed | code translated to English, rename-only, on `refactor/conciliador-bancario-english` (guarded, see AGENTS.md); public names and the modules added in PR #3 kept in Spanish |
 
 ## Findings
 
@@ -120,7 +120,7 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
 
 ### F-02 · FBS password readable through the API
 - **Severity:** Critical · **Checklist:** SEC-03, SEC-06, API-03 · **Jira:** TBD
-- **Where:** `app.py` `_obtener` and the data export; `engine/fbs_sql.py` `guardar_conf`
+- **Where:** `app.py` `_get_job` and the data export; `engine/fbs_sql.py` `save_config`
 - **What:** `GET /api/resultado/fbs_sql` returned `datos/fbs_sql.json` verbatim (any `datos/<name>.json` was a
   "job"), and the data export included it. Saving the FBS form also copied `FBS_SQL_CLAVE` from the environment
   into that file. After PR #3 the export no longer includes it, but `/api/resultado/fbs_sql` still returned it to
@@ -144,7 +144,7 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
 
 ### F-04 · Run ids reached files outside `datos/`
 - **Severity:** High · **Checklist:** API-01 · **Jira:** TBD
-- **Where:** `app.py` `_obtener`, `_guardar`, `/api/diario/{grupo_id}*`, `POST /api/gastos` (`job_id` in the body)
+- **Where:** `app.py` `_get_job`, `_save_job`, `/api/diario/{grupo_id}*`, `POST /api/gastos` (`job_id` in the body)
 - **What:** `job_id` from the body of `POST /api/gastos` was joined to a path (`../x` read and rewrote any JSON file
   the process could reach); on Windows `..\` in a path id did the same for every job/run route.
 - **Fix (done):** the access middleware rejects `\`, `..` and control characters in the URL (upstream); job ids
@@ -181,7 +181,7 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
 - **Severity:** High · **Checklist:** PRIV-02 · **Jira:** TBD
 - **What:** README-DEMO says the demo never connects to FBS; the code did not enforce it.
 - **Fix (done):** upstream `96698bc` simulates the FBS for the hub's accounts in `DEMO_MODE`; this branch makes
-  `fbs_sql._consultar` refuse any real connection in the demo (the manual mode was not simulated) and the data
+  `fbs_sql._query` refuse any real connection in the demo (the manual mode was not simulated) and the data
   export/import answer 404. Residual: the demo service's `DATABASE_URL` and `ANTHROPIC_API_KEY` must be demo-only
   values (verify on Railway).
 - **Status:** fixed
@@ -271,7 +271,7 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
 ### F-20 · Real account numbers in code and history; data on a dev machine
 - **Severity:** Low · **Checklist:** PRIV-03 · **Jira:** TBD
 - **What:** the group's real bank account numbers (company accounts, not personal data) were seeded in
-  `engine/cuentas.py`. Upstream `f317a43` moved them to the git-ignored `config/cuentas_semilla.json`; they remain
+  `engine/cuentas.py` (now `engine/accounts.py`). Upstream `f317a43` moved them to the git-ignored `config/cuentas_semilla.json`; they remain
   in the git history (AUDIT.md pending 3). The local clone used for this audit has a `datos/` folder with 3 jobs
   and 2 daily runs: check whether they are real and delete them if so.
 - **Status:** open (history and local data)
@@ -294,6 +294,16 @@ Only ⚠️ / ❌ rows; everything else ✅ or N/A.
   an admin role for FBS config, export/import, memory delete and diagnostics; record the user on writes. Same as
   AUDIT.md pending 6 ("deuda del hallazgo 3").
 - **Status:** open
+
+### F-23 · Results search box broke the monthly tables
+- **Severity:** Low · **Checklist:** QA-01 · **Jira:** TBD
+- **Where:** `static/index.html` (table filter in the results view)
+- **What:** typing in the search box threw `Cannot read properties of null (reading 'num')` on any table with an empty
+  cell (`typeof null === 'object'`), so the filtered table never rendered. Found while checking the UI after the
+  translation; present before it.
+- **Fix:** null check before reading the cell. No JS test harness in the repo, so no automated test (add one with
+  the UI tests backlog).
+- **Status:** fixed
 
 ## Waiting on answers from the owner
 
