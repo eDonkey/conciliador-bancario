@@ -34,7 +34,7 @@ from engine import rules as rules_mod
 from engine import equivalences
 from engine import fee_terms
 from engine import accounts as accounts_mod
-from engine import analisis as analisis_mod
+from engine import analysis
 from engine import telemetria
 from engine import acceso
 from engine import presupuesto_ia
@@ -427,7 +427,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         salida["job_id"] = job_id
         salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
         _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
-        analisis_mod.anotar_residuales(salida)
+        analysis.annotate_residuals(salida)
         RESULTADOS[job_id] = salida
         _guardar(job_id)
         PROGRESO[job_id] = {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
@@ -484,12 +484,12 @@ def api_analizar(job_id: str, cuerpo: dict = Body(...)):
     if id_mayor in cache and not cuerpo.get("rehacer"):
         return {"analisis": cache[id_mayor]}
 
-    aprendidos = analisis_mod.cargar()
+    aprendidos = analysis.load()
 
     # si la firma ya tiene un veredicto del usuario, no se gasta IA: se
     # devuelve directamente lo aprendido (regla o corrección)
     firma = rules_mod.ledger_signature(asiento.get("referencia"), asiento.get("comentario"))
-    previo = analisis_mod.buscar(firma, aprendidos)
+    previo = analysis.find(firma, aprendidos)
     if previo and not cuerpo.get("rehacer"):
         cache[id_mayor] = {
             "texto": previo.get("correccion") or previo.get("explicacion", ""),
@@ -503,10 +503,10 @@ def api_analizar(job_id: str, cuerpo: dict = Body(...)):
 
     correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
     try:
-        resultado = analisis_mod.analizar_asiento(
+        resultado = analysis.analyze_entry(
             asiento, datos.get("banco_sin_contabilizar", []), correcciones,
-            cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
-            simular=bool(cuerpo.get("simular")))
+            account=(datos.get("cuenta") or {}).get("etiqueta", ""),
+            simulate=bool(cuerpo.get("simular")))
     except presupuesto_ia.PresupuestoExcedido as exc:
         return JSONResponse(status_code=429, content={"error": str(exc)})
 
@@ -539,8 +539,8 @@ def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
                     if x["id"] == id_mayor), None)
     if asiento:
         firma = rules_mod.ledger_signature(asiento.get("referencia"), asiento.get("comentario"))
-        analisis_mod.aprender(firma, entrada["texto"], ok, correccion)
-        analisis_mod.anotar_residuales(datos)
+        analysis.learn(firma, entrada["texto"], ok, correccion)
+        analysis.annotate_residuals(datos)
     entrada["veredicto"] = "ok" if ok else "corregido"
     entrada["correccion"] = correccion
     _guardar(job_id)
@@ -1421,7 +1421,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
             salida["resumen"]["omitidos"] = om_movs + om_asientos
         salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
         _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
-        analisis_mod.anotar_residuales(salida)
+        analysis.annotate_residuals(salida)
         if arr_movs or arr_asientos:
             salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
                                   "desde_job": arrastre.get(cid)}
