@@ -34,7 +34,7 @@ from engine import fbs_sql  # noqa: E402
 ])
 def test_rechaza(query):
     with pytest.raises(ValueError):
-        fbs_sql._validar_solo_lectura(query)
+        fbs_sql._validate_read_only(query)
 
 
 @pytest.mark.parametrize("query", [
@@ -45,4 +45,4 @@ def test_rechaza(query):
     "SELECT 1 /* /* */ ; DROP TABLE t; /* */ */",
 ])
 def test_acepta(query):
-    fbs_sql._validar_solo_lectura(query)
+    fbs_sql._validate_read_only(query)

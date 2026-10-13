@@ -50,7 +50,7 @@ def test_fbs_password_from_env_is_not_written_to_disk(client, monkeypatch):
         monkeypatch.setenv(var, value)
     r = client.post("/api/fbs-sql", json={"query": "SELECT 'E' AS hoja, '1' AS codigo, 1 AS asiento"})
     assert r.status_code == 200, r.text
-    with open(fbs_sql.RUTA_CONF, encoding="utf-8") as f:
+    with open(fbs_sql.CONFIG_PATH, encoding="utf-8") as f:
         saved = f.read()
     assert "de-entorno" not in saved
     assert "10.0.0.5" not in saved
@@ -63,7 +63,7 @@ def test_demo_does_not_export_nor_reach_a_real_fbs(client, monkeypatch):
     assert client.post("/api/migracion/importar", json={"archivos": {}}).status_code == 404
     conf = {"servidor": "10.0.0.5", "puerto": 1433, "base": "FBS", "usuario": "lector", "clave": "x"}
     with pytest.raises(ValueError):
-        fbs_sql._consultar(conf, "SELECT 1 AS uno", {})
+        fbs_sql._query(conf, "SELECT 1 AS uno", {})
 
 
 def test_security_headers_and_no_api_description(client):

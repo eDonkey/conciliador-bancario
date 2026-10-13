@@ -69,7 +69,7 @@ STAGING = {}     # staging_id -> archivos parseados del modo diario
 # genera los extractos de cada cuenta del hub con el formato de su banco, a
 # partir de la misma simulación. Sin esta variable el comportamiento es
 # exactamente el de producción.
-DEMO_MODE = fbs_sql.simulado()
+DEMO_MODE = fbs_sql.simulated()
 
 
 def _bloqueado_en_demo():
@@ -333,8 +333,8 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                 d2 = date.fromisoformat(fbs_mayor["hasta"] or "")
                 if d1 > d2:
                     d1, d2 = d2, d1
-                infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
-                                      solo_cuentas=[fbs_mayor["cuenta"]])
+                infos = fbs_sql.fetch(d1.isoformat(), d2.isoformat(),
+                                      only_accounts=[fbs_mayor["cuenta"]])
             except ValueError as exc:
                 PROGRESO[job_id] = {"estado": "error",
                                     "mensaje": f"Mayor desde el FBS: {exc}"}
@@ -458,7 +458,7 @@ def api_diagnostico():
         # sin esto, todo el aprendizaje se pierde en cada deploy
         "datos_es_volumen": os.path.ismount(DATOS_DIR),
         # estado de la conexión directa al FBS vía config del hub
-        "fbs_hub": fbs_sql.diagnostico(),
+        "fbs_hub": fbs_sql.diagnostics(),
         # gasto real de la app en la API (tokens y USD estimados por llamada):
         # si la factura no coincide con esto, el consumo vino de otro lado
         "ia_uso": ai_usage.summary(),
@@ -707,7 +707,7 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
 def api_fbs_sql_get(marca: str = ""):
     """Configuración de la conexión directa al FBS (sin la clave). Con
     ?marca= las cuentas configuradas en el hub se limitan a esa marca."""
-    return fbs_sql.publica(marca)
+    return fbs_sql.public_config(marca)
 
 
 @app.post("/api/fbs-sql")
@@ -718,17 +718,17 @@ def api_fbs_sql_post(request: Request, cuerpo: dict = Body(...)):
     editable = (seguridad.es_local(request)
                 or os.environ.get("FBS_SQL_EDITABLE", "").strip().lower() in ("1", "true", "on", "si"))
     try:
-        fbs_sql.guardar_conf(cuerpo, permitir_destino=editable)
+        fbs_sql.save_config(cuerpo, allow_destination=editable)
     except PermissionError as exc:
         return JSONResponse(status_code=403, content={"error": str(exc)})
     except ValueError as exc:   # solo lectura / destino inválido
         return JSONResponse(status_code=422, content={"error": str(exc)})
-    return fbs_sql.publica()
+    return fbs_sql.public_config()
 
 
 @app.post("/api/fbs-sql/probar")
 def api_fbs_sql_probar():
-    return fbs_sql.probar()
+    return fbs_sql.test_connection()
 
 
 @app.post("/api/diario/fbs-sql")
@@ -745,9 +745,9 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
     if d1 > d2:
         d1, d2 = d2, d1
     try:
-        infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
-                              marca=cuerpo.get("marca") or "",
-                              solo_cuentas=cuerpo.get("cuentas") or None)
+        infos = fbs_sql.fetch(d1.isoformat(), d2.isoformat(),
+                              brand=cuerpo.get("marca") or "",
+                              only_accounts=cuerpo.get("cuentas") or None)
     except ValueError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     if not infos:
@@ -2296,8 +2296,8 @@ def api_demo_estado():
 def _cuentas_demo(marca: str = "") -> list[dict]:
     """Las cuentas del hub con FBS (las que la simulación conoce), de la marca."""
     from engine import simulacion
-    todas = fbs_sql.cuentas_fbs()
-    return simulacion.con_roles(fbs_sql._filtrar_cfgs(todas, marca), todas)
+    todas = fbs_sql.hub_fbs_accounts()
+    return simulacion.con_roles(fbs_sql._filter_configs(todas, marca), todas)
 
 
 def _rango_demo(desde: str, hasta: str):
