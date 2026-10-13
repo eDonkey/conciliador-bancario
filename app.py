@@ -33,7 +33,7 @@ from engine import ia_log
 from engine import rules as rules_mod
 from engine import equivalences
 from engine import fee_terms
-from engine import cuentas as cuentas_mod
+from engine import accounts as accounts_mod
 from engine import analisis as analisis_mod
 from engine import telemetria
 from engine import acceso
@@ -408,12 +408,12 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         salida["marca"] = marca or None
         if marca:
             # aviso si un extracto parece de una cuenta de OTRA marca
-            todas = cuentas_mod.cargar()
+            todas = accounts_mod.load()
             avisos_marca = []
             for e in parseados:
-                c = cuentas_mod.buscar_por_numero(
+                c = accounts_mod.find_by_number(
                     todas, e.get("banco"), e.get("cuenta"))
-                if c and cuentas_mod.slug(marca) not in cuentas_mod.slug(c["empresa"]):
+                if c and accounts_mod.slug(marca) not in accounts_mod.slug(c["empresa"]):
                     avisos_marca.append(
                         f'"{e["archivo"]}" parece la cuenta {c["numero"]} de '
                         f'{c["empresa"]}, no de la marca de esta página.')
@@ -625,14 +625,14 @@ def api_equivalencias_eliminar(eq_id: str):
 def api_cuentas(marca: str = ""):
     """Cuentas bancarias del grupo con su etiqueta y mapeo FBS. Con ?marca=
     se limita a esa marca (nombre completo o abreviado)."""
-    todas = cuentas_mod.cargar()
-    cuentas = cuentas_mod.filtrar_marca(todas, marca)
-    return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
-            "bancos": cuentas_mod.BANCOS, "marca": marca or None,
+    todas = accounts_mod.load()
+    cuentas = accounts_mod.filter_brand(todas, marca)
+    return {"cuentas": [{**c, "etiqueta": accounts_mod.label(c)} for c in cuentas],
+            "bancos": accounts_mod.BANKS, "marca": marca or None,
             "marca_nombre": (sorted({c["empresa"] for c in cuentas})[0]
                              if marca and cuentas else None),
             # para explicar un filtro vacío sin tener que adivinar el nombre
-            "marcas_disponibles": cuentas_mod.marcas_con_cuentas(todas)}
+            "marcas_disponibles": accounts_mod.brands_with_accounts(todas)}
 
 
 def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
@@ -643,14 +643,14 @@ def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
         cuenta = next((c for c in cuentas
                        if c["id"] == info["cuenta_id_config"]), None)
     elif info["tipo"] == "extracto":
-        cuenta = cuentas_mod.buscar_por_numero(
+        cuenta = accounts_mod.find_by_number(
             cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
     elif info["tipo"] == "fbs":
         idents = list((info.get("codigos") or {}).values()) + [info.get("nombre_fbs")]
-        cuenta = next((c for c in (cuentas_mod.buscar_por_fbs(cuentas, i)
+        cuenta = next((c for c in (accounts_mod.find_by_fbs(cuentas, i)
                                    for i in idents if i) if c), None)
         if cuenta is None:  # el nombre interno a veces trae el nro real
-            cuenta = cuentas_mod.buscar_por_nombre_fbs(cuentas, info.get("nombre_fbs"))
+            cuenta = accounts_mod.find_by_fbs_name(cuentas, info.get("nombre_fbs"))
     return {
         "archivo": nombre, "tipo": info["tipo"],
         "banco": info.get("banco"), "moneda": info.get("moneda"),
@@ -693,7 +693,7 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
     archivos se suman a una identificación previa (p. ej. al mayor ya traído
     del FBS por SQL) en vez de empezar de cero."""
     staging_id, stag = _staging_destino(staging, marca)
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
+    cuentas = accounts_mod.filter_brand(accounts_mod.load(),
                                         stag.get("marca") or marca)
     for up in archivos:
         data = await up.read()
@@ -755,7 +755,7 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
             "error": "La query del FBS no devolvió asientos E/O en ese rango."})
     marca = cuerpo.get("marca") or ""
     staging_id, stag = _staging_destino(cuerpo.get("staging_id") or "", marca)
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
+    cuentas = accounts_mod.filter_brand(accounts_mod.load(),
                                         stag.get("marca") or marca)
     for info in infos:
         _agregar_a_staging(stag, info["archivo"], info, cuentas)
@@ -1262,7 +1262,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
         return JSONResponse(status_code=404, content={
             "error": "La identificación expiró (el servidor se reinició). Volvé a subir los archivos."})
     asignaciones = cuerpo.get("asignaciones") or {}
-    cuentas = cuentas_mod.cargar()
+    cuentas = accounts_mod.load()
     por_id = {c["id"]: c for c in cuentas}
     # el id del tablero se conoce de entrada: cada job guarda a qué corrida
     # diaria pertenece, así su detalle sabe volver al tablero del día
@@ -1298,7 +1298,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
                     ident = cods.get(letra) or fila.get("nombre_fbs")
                     if ident and ident not in (por_id[cid].get("fbs_e"),
                                                por_id[cid].get("fbs_o")):
-                        cuentas = cuentas_mod.mapear_fbs(cid, letra, ident,
+                        cuentas = accounts_mod.map_fbs(cid, letra, ident,
                                                          fila.get("nombre_fbs"))
                 por_id = {c["id"]: c for c in cuentas}
 
@@ -1310,7 +1310,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
     memoria = _cargar_memoria()
     tablero = []
     for cid, g in grupos.items():
-        etiqueta = cuentas_mod.etiqueta(por_id[cid]) if cid in por_id else cid
+        etiqueta = accounts_mod.label(por_id[cid]) if cid in por_id else cid
 
         # memoria de conciliados: sumar lo consumido por la corrida anterior
         # (en su estado actual, manuales incluidos) y omitir las repeticiones
@@ -1462,21 +1462,21 @@ def api_diario_historial(marca: str = ""):
     tolerando renombres (misma_marca) y las cuentas por número, no por el id
     completo (que cambia si renombran el banco). Una corrida que no es de
     ninguna marca conocida se muestra igual, para no perderla de vista."""
-    todas = cuentas_mod.cargar() if marca else []
-    nums_marca = {cuentas_mod.numero_cuenta(c["id"])
-                  for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
-    nums_otras = ({cuentas_mod.numero_cuenta(c["id"]) for c in todas} - {""}) - nums_marca
-    marcas_hoy = cuentas_mod.marcas_con_cuentas(todas)
+    todas = accounts_mod.load() if marca else []
+    nums_marca = {accounts_mod.account_number(c["id"])
+                  for c in accounts_mod.filter_brand(todas, marca)} - {""}
+    nums_otras = ({accounts_mod.account_number(c["id"]) for c in todas} - {""}) - nums_marca
+    marcas_hoy = accounts_mod.brands_with_accounts(todas)
 
     def _de_esta_marca(g: dict, cuentas: list) -> bool:
-        nums = {cuentas_mod.numero_cuenta(c.get("cuenta_id")) for c in cuentas} - {""}
-        if cuentas_mod.misma_marca(g.get("marca"), marca) or (nums & nums_marca):
+        nums = {accounts_mod.account_number(c.get("cuenta_id")) for c in cuentas} - {""}
+        if accounts_mod.same_brand(g.get("marca"), marca) or (nums & nums_marca):
             return True
         if nums & nums_otras:                       # sus cuentas son de otra marca
             return False
         # sin cuentas reconocibles: se esconde solo si dice ser de otra marca
         # que hoy existe; si no, es huérfana y se muestra
-        return not any(cuentas_mod.misma_marca(g.get("marca"), m) for m in marcas_hoy)
+        return not any(accounts_mod.same_brand(g.get("marca"), m) for m in marcas_hoy)
     grupos = []
     for nombre in os.listdir(DATOS_DIR):
         if not (nombre.startswith("grupo_") and nombre.endswith(".json")):
@@ -1500,7 +1500,7 @@ def api_diario_historial(marca: str = ""):
             "desde": min(fechas_mov) if fechas_mov else None,
             "hasta": max(fechas_mov) if fechas_mov else None,
             "grupo_id": g.get("grupo_id"), "marca": g.get("marca"),
-            "bancos": sorted({cuentas_mod.banco_de(c.get("cuenta_id"))
+            "bancos": sorted({accounts_mod.bank_name(c.get("cuenta_id"))
                               for c in cuentas if c.get("cuenta_id")} - {""}),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
             "cuentas": len(cuentas), "conciliadas": len(ok),
@@ -1564,7 +1564,7 @@ def api_diario_conciliados(cuenta: str = "", q: str = "", corridas: int = 40,
 
     Se arma leyendo los tableros guardados (no una copia aparte), así refleja
     también lo que se conció a mano o se anuló después de la corrida."""
-    num = cuentas_mod.numero_cuenta(cuenta) if cuenta else ""
+    num = accounts_mod.account_number(cuenta) if cuenta else ""
     grupos = []
     for nombre in os.listdir(DATOS_DIR):
         if nombre.startswith("grupo_") and nombre.endswith(".json"):
@@ -1584,7 +1584,7 @@ def api_diario_conciliados(cuenta: str = "", q: str = "", corridas: int = 40,
             continue
         usadas = [c for c in g.get("cuentas", [])
                   if c.get("estado") == "ok" and c.get("job_id")
-                  and (not cuenta or cuentas_mod.numero_cuenta(c.get("cuenta_id")) == num)]
+                  and (not cuenta or accounts_mod.account_number(c.get("cuenta_id")) == num)]
         if not usadas:
             continue
         corridas_leidas += 1
@@ -2355,12 +2355,12 @@ def api_demo_extractos(marca: str = "", desde: str = "", hasta: str = ""):
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     from engine import simulacion
     rango = _rango_demo(desde, hasta)
-    cuentas = _cuentas_demo(marca)
-    if not rango or not cuentas:
+    accounts = _cuentas_demo(marca)
+    if not rango or not accounts:
         return JSONResponse(status_code=404, content={"error": "No hay cuentas con FBS en el hub de la demo."})
-    contenido = simulacion.zip_extractos(cuentas, *rango)
+    contenido = simulacion.zip_extractos(accounts, *rango)
     d1, d2 = rango
-    nombre = f"extractos_{cuentas_mod.slug(marca) or 'grupo'}_{d1.isoformat()}" + \
+    nombre = f"extractos_{accounts_mod.slug(marca) or 'grupo'}_{d1.isoformat()}" + \
              ("" if d1 == d2 else f"_a_{d2.isoformat()}") + ".zip"
     return Response(content=contenido, media_type="application/zip", headers={
         "Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})

@@ -5,7 +5,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import app as app_mod
-from engine import cuentas as cuentas_mod
+from engine import accounts as cuentas_mod
 from engine import fbs_sql, presupuesto_ia
 from engine import seguridad as seg
 
@@ -209,12 +209,12 @@ def test_modelo_solo_por_config_del_servidor(monkeypatch):
 
 def test_semilla_de_cuentas_fuera_del_codigo(monkeypatch, tmp_path):
     import inspect
-    assert "SEMILLA = [" not in inspect.getsource(cuentas_mod)
-    monkeypatch.setattr(cuentas_mod, "RUTA_SEMILLA", str(tmp_path / "no_existe.json"))
-    assert cuentas_mod._leer_semilla() == []
+    assert "SEED = [" not in inspect.getsource(cuentas_mod)
+    monkeypatch.setattr(cuentas_mod, "SEED_PATH", str(tmp_path / "no_existe.json"))
+    assert cuentas_mod._read_seed() == []
     ruta = tmp_path / "s.json"
     ruta.write_text(json.dumps([{"empresa": "E", "banco": "macro", "numero": "1", "moneda": "ARS"}]))
-    monkeypatch.setattr(cuentas_mod, "RUTA_SEMILLA", str(ruta))
-    assert cuentas_mod._leer_semilla() == [("E", "macro", "1", "ARS")]
+    monkeypatch.setattr(cuentas_mod, "SEED_PATH", str(ruta))
+    assert cuentas_mod._read_seed() == [("E", "macro", "1", "ARS")]
     ruta.write_text("{roto")
-    assert cuentas_mod._leer_semilla() == []
+    assert cuentas_mod._read_seed() == []

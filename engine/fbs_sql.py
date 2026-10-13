@@ -706,8 +706,8 @@ def _infos_desde_filas(filas: list[dict],
 def cuentas_fbs() -> list[dict]:
     """Cuentas bancarias del hub que tienen conexión FBS + IDs de plan.
     Devuelve [] si el hub todavía no tiene nada configurado (o no hay DB)."""
-    from engine import cuentas as cuentas_mod
-    url = cuentas_mod._database_url()
+    from engine import accounts as accounts_mod
+    url = accounts_mod._database_url()
     if not url:
         return []
     try:
@@ -736,9 +736,9 @@ def cuentas_fbs() -> list[dict]:
     salida = []
     for db_id, banco, numero, moneda, pe, po, fid, fnom, srv, prt, base, usu, clave, marca in filas:
         salida.append({
-            "cuenta_id": (f"{cuentas_mod._banco_key(banco)}-"
-                          f"{cuentas_mod._digits(numero)}-{(moneda or '').lower()}"),
-            "db_id": db_id, "banco": cuentas_mod._banco_key(banco), "numero": numero,
+            "cuenta_id": (f"{accounts_mod._bank_key(banco)}-"
+                          f"{accounts_mod._digits(numero)}-{(moneda or '').lower()}"),
+            "db_id": db_id, "banco": accounts_mod._bank_key(banco), "numero": numero,
             "moneda": (moneda or "").upper(),
             "empresa": marca,
             "etiqueta": (f"{marca} — " if marca else "") + f"{banco} {numero} ({moneda})",
@@ -756,10 +756,10 @@ _HUB_ESTADO = {"error": None}
 
 def diagnostico() -> dict:
     """Estado del modo hub, para GET /api/diagnostico."""
-    from engine import cuentas as cuentas_mod
+    from engine import accounts as accounts_mod
     cfgs = cuentas_fbs()
     return {
-        "database_url_presente": bool(cuentas_mod._database_url()),
+        "database_url_presente": bool(accounts_mod._database_url()),
         "cuentas_configuradas": len(cfgs),
         "cuentas": [x["etiqueta"] for x in cfgs],
         "conexiones": sorted({x["conexion_nombre"] for x in cfgs}),
@@ -773,9 +773,9 @@ def _filtrar_cfgs(cfgs: list[dict], marca: str) -> list[dict]:
     """Cuentas FBS de una marca (mismo criterio flexible que el resto)."""
     if not marca:
         return cfgs
-    from engine import cuentas as cuentas_mod
-    m = cuentas_mod.slug(marca)
-    return [c for c in cfgs if m in cuentas_mod.slug(c.get("empresa") or "")]
+    from engine import accounts as accounts_mod
+    m = accounts_mod.slug(marca)
+    return [c for c in cfgs if m in accounts_mod.slug(c.get("empresa") or "")]
 
 
 def _query_detmov(planes: list[tuple[str, int]]) -> str:
@@ -824,9 +824,9 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
         # la misma que arma los extractos (engine/simulacion.py)
         from engine import simulacion
         d1, d2 = date.fromisoformat(desde), date.fromisoformat(hasta)
-        cuentas = simulacion.con_roles(cfgs, cuentas_fbs())
+        accounts = simulacion.con_roles(cfgs, cuentas_fbs())
         for conexion_id, g in por_conexion.items():
-            filas = [f for c in cuentas if c["conexion_id"] == conexion_id
+            filas = [f for c in accounts if c["conexion_id"] == conexion_id
                      for f in simulacion.filas_detmov(c, d1, d2)]
             print(f"[fbs] (demo) {g['nombre']}: {len(filas)} fila(s) simuladas", flush=True)
             salida.extend(_infos_desde_filas(filas, g["cuenta_por_codigo"]))
