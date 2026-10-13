@@ -220,7 +220,7 @@
   .kit-demo a.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
   #demoMsj { flex-basis: 100%; }
 
-  /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
+  /* ---------- light theme (switchable, same identity as the hub) ---------- */
   body.claro {
     color-scheme: light;
     --acento: #0a6fb5;
@@ -265,12 +265,12 @@
 </head>
 <body>
 <script>
-// Servida en la raíz (/diario) o detrás del proxy del hub (/app/<id>/diario):
-// toda llamada cuelga de la CARPETA de la página, nunca de la raíz del dominio.
-// Una ruta absoluta ('/api/...') detrás del proxy apunta al hub y no a la app,
-// y la pantalla queda sin cuentas, sin FBS y sin historial.
+// Served at the root (/diario) or behind the hub proxy (/app/<id>/diario):
+// every call hangs from the page's FOLDER, never from the domain root.
+// An absolute path ('/api/...') behind the proxy points at the hub, not the app,
+// and the page is left without accounts, without FBS and without history.
 const BASE = location.pathname.replace(/\/[^/]*$/, '/');
-// Sesión: si el servidor responde 401 (sesión vencida), volver al login.
+// Session: if the server answers 401 (expired session), go back to the login.
 (function () {
   const original = window.fetch.bind(window);
   window.fetch = async (...args) => {
@@ -287,7 +287,7 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   });
 })();
 
-  // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
+  // Theme before the first paint: avoids the dark flash for light-mode users
   (function () {
     var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
     if (t === 'claro' || (!t && matchMedia('(prefers-color-scheme: light)').matches))
@@ -512,20 +512,20 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
 <script>
 const $ = s => document.querySelector(s);
 
-/* ============ diálogos accesibles (foco, Escape, retorno) ============ */
+/* ============ accessible dialogs (focus, Escape, return) ============ */
 const SCROLL = { behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' };
 let modalOpener = null;
-function abrirModal(id, foco) {
+function openModal(id, focus) {
   const m = document.getElementById(id);
   if (!m.classList.contains('oculto')) return;
   modalOpener = document.activeElement;
   m.classList.remove('oculto');
-  const el = (foco && document.querySelector(foco))
+  const el = (focus && document.querySelector(focus))
     || [...m.querySelectorAll('input, textarea, select, button, [tabindex="-1"]')]
       .find(x => x.offsetParent !== null);
   if (el) el.focus();
 }
-function cerrarModal(id) {
+function closeModal(id) {
   const m = document.getElementById(id);
   if (m.classList.contains('oculto')) return;
   m.classList.add('oculto');
@@ -533,205 +533,205 @@ function cerrarModal(id) {
   modalOpener = null;
 }
 document.addEventListener('keydown', e => {
-  const abierto = [...document.querySelectorAll('[role="dialog"]')]
+  const openDialog = [...document.querySelectorAll('[role="dialog"]')]
     .filter(m => !m.classList.contains('oculto')).pop();
-  if (!abierto) return;
+  if (!openDialog) return;
   if (e.key === 'Escape') {
-    const cerrar = abierto.querySelector('[data-cerrar]');
-    if (cerrar && cerrar.offsetParent !== null) { e.preventDefault(); cerrar.click(); }
+    const closeButton = openDialog.querySelector('[data-cerrar]');
+    if (closeButton && closeButton.offsetParent !== null) { e.preventDefault(); closeButton.click(); }
     return;
   }
   if (e.key !== 'Tab') return;
-  const f = [...abierto.querySelectorAll(
+  const f = [...openDialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')]
     .filter(x => x.offsetParent !== null);
   if (!f.length) { e.preventDefault(); return; }
-  const primero = f[0], ultimo = f[f.length - 1];
-  if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
-  else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
-  else if (!abierto.contains(document.activeElement)) { e.preventDefault(); primero.focus(); }
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  else if (!openDialog.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
 });
 
-// confirmar({ titulo, texto, ok, peligro }) -> Promise<boolean>: reemplaza a confirm()
-let confResolver = null;
-function confirmar({ titulo, texto, ok = 'Confirmar', peligro = false }) {
-  document.getElementById('modalConfirmarTitulo').textContent = titulo;
-  document.getElementById('modalConfirmarTexto').textContent = texto;
+// askConfirm({ titulo, texto, ok, peligro }) -> Promise<boolean>: replaces confirm()
+let confirmResolver = null;
+function askConfirm({ titulo: title, texto: text, ok = 'Confirmar', peligro: danger = false }) {
+  document.getElementById('modalConfirmarTitulo').textContent = title;
+  document.getElementById('modalConfirmarTexto').textContent = text;
   const b = document.getElementById('confOk');
   b.textContent = ok;
-  b.className = peligro ? 'secundario peligro' : 'principal';
-  return new Promise(res => { confResolver = res; abrirModal('modalConfirmar', '#confCancelar'); });
+  b.className = danger ? 'secundario peligro' : 'principal';
+  return new Promise(res => { confirmResolver = res; openModal('modalConfirmar', '#confCancelar'); });
 }
-function resolverConf(v) { const r = confResolver; confResolver = null; cerrarModal('modalConfirmar'); if (r) r(v); }
-document.getElementById('confOk').addEventListener('click', () => resolverConf(true));
-document.getElementById('confCancelar').addEventListener('click', () => resolverConf(false));
-document.getElementById('modalConfirmar').addEventListener('click', e => { if (e.target.id === 'modalConfirmar') resolverConf(false); });
+function resolveConfirm(v) { const r = confirmResolver; confirmResolver = null; closeModal('modalConfirmar'); if (r) r(v); }
+document.getElementById('confOk').addEventListener('click', () => resolveConfirm(true));
+document.getElementById('confCancelar').addEventListener('click', () => resolveConfirm(false));
+document.getElementById('modalConfirmar').addEventListener('click', e => { if (e.target.id === 'modalConfirmar') resolveConfirm(false); });
 
-// avisar(msg, 'error' | 'info'): aviso flotante con rol de alerta, reemplaza a alert()
-function avisar(msg, tipo = 'error') {
-  let cont = document.getElementById('toasts');
-  if (!cont) { cont = document.createElement('div'); cont.id = 'toasts'; document.body.appendChild(cont); }
+// notify(msg, 'error' | 'info'): floating notice with an alert role, replaces alert()
+function notify(msg, kind = 'error') {
+  let container = document.getElementById('toasts');
+  if (!container) { container = document.createElement('div'); container.id = 'toasts'; document.body.appendChild(container); }
   const d = document.createElement('div');
-  d.className = 'aviso ' + tipo + ' toast';
-  d.setAttribute('role', tipo === 'error' ? 'alert' : 'status');
+  d.className = 'aviso ' + kind + ' toast';
+  d.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   const s = document.createElement('span'); s.textContent = msg; d.appendChild(s);
   const b = document.createElement('button'); b.type = 'button'; b.className = 'toast-cerrar';
   b.setAttribute('aria-label', 'Cerrar aviso'); b.textContent = '×';
   b.addEventListener('click', () => d.remove()); d.appendChild(b);
-  cont.appendChild(d);
-  if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
+  container.appendChild(d);
+  if (kind !== 'error') setTimeout(() => d.remove(), 9000);
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-// argumento de un onclick="...": literal JS (JSON) escapado para el atributo. Escapar solo el
-// HTML no alcanza: el navegador decodifica &#39; antes de correr el JS.
+// argument of an onclick="...": a JS (JSON) literal escaped for the attribute. Escaping only
+// the HTML is not enough: the browser decodes &#39; before running the JS.
 const jsArg = s => esc(JSON.stringify(String(s ?? '')));
 
-// Tema claro/oscuro: elección compartida entre las páginas del conciliador
-function pintarTema() {
+// Light/dark theme: a choice shared by the reconciler's pages
+function paintTheme() {
   $('#btnTema').textContent = document.body.classList.contains('claro')
     ? 'Modo oscuro' : 'Modo claro';
 }
 $('#btnTema').addEventListener('click', () => {
-  const claro = document.body.classList.toggle('claro');
-  localStorage.setItem('tema', claro ? 'claro' : 'oscuro');
-  pintarTema();
+  const light = document.body.classList.toggle('claro');
+  localStorage.setItem('tema', light ? 'claro' : 'oscuro');
+  paintTheme();
 });
-pintarTema();
-let archivos = [], staging = null, cuentas = [], grupo = null, DEMO = false;
+paintTheme();
+let files = [], staging = null, accounts = [], run = null, DEMO = false;
 
-// modo demo: banner y generador de extractos. El FBS está simulado y los
-// extractos salen de la misma simulación (engine/simulacion.py)
+// demo mode: banner and statement generator. The FBS is simulated and the
+// statements come from the same simulation (engine/simulacion.py)
 fetch(`${BASE}api/demo/estado`).then(r => r.json()).then(j => {
   DEMO = !!j.demo;
   if (!DEMO) return;
   $('#demoBanner').textContent = 'DEMO — datos ficticios · FBS simulado';
   $('#demoBanner').classList.remove('oculto');
   $('#zonaTexto').textContent = 'Arrastrá o hacé clic — o generá los extractos de la demo arriba y cargalos con un clic.';
-  if (!MARCA) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
+  if (!BRAND) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
   document.title = 'Conciliación diaria — demo';
-  const btnReset = $('#btnResetDemo');
-  btnReset.classList.remove('oculto');
-  btnReset.addEventListener('click', async () => {
-    if (!(await confirmar({ titulo: '¿Reiniciar la demo?', texto: 'Se pierde lo que se haya conciliado en esta sesión y la demo vuelve a quedar como recién sembrada.', ok: 'Reiniciar demo', peligro: true }))) return;
-    btnReset.disabled = true;
+  const resetButton = $('#btnResetDemo');
+  resetButton.classList.remove('oculto');
+  resetButton.addEventListener('click', async () => {
+    if (!(await askConfirm({ titulo: '¿Reiniciar la demo?', texto: 'Se pierde lo que se haya conciliado en esta sesión y la demo vuelve a quedar como recién sembrada.', ok: 'Reiniciar demo', peligro: true }))) return;
+    resetButton.disabled = true;
     try {
       await fetch(`${BASE}api/demo/reset`, { method: 'POST' });
       location.href = location.pathname + location.search;
-    } catch { btnReset.disabled = false; }
+    } catch { resetButton.disabled = false; }
   });
-  generadorDemo(j.hoy);
+  demoGenerator(j.hoy);
 }).catch(() => {});
 
-// días hábiles hacia atrás desde el último hábil (la demo no tiene feriados)
-function habilesDemo(hoyIso, n) {
+// business days going back from the last business day (the demo has no holidays)
+function demoBusinessDays(todayIso, n) {
   const out = [];
-  const d = new Date(hoyIso + 'T12:00:00');
+  const d = new Date(todayIso + 'T12:00:00');
   while (out.length < n) {
     if (d.getDay() !== 0 && d.getDay() !== 6) out.push(d.toISOString().slice(0, 10));
     d.setDate(d.getDate() - 1);
   }
   return out;
 }
-const fechaCorta = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+const shortDate = iso => iso.slice(8, 10) + '/' + iso.slice(5, 7);
 
-async function generadorDemo(hoy) {
+async function demoGenerator(today) {
   let j;
-  try { j = await (await fetch(conMarca(`${BASE}api/demo/cuentas`))).json(); } catch { return; }
+  try { j = await (await fetch(withBrand(`${BASE}api/demo/cuentas`))).json(); } catch { return; }
   if (!j.cuentas || !j.cuentas.length) return;
-  const [h0, h1] = habilesDemo(hoy, 2);
-  const cinco = habilesDemo(hoy, 5);
-  const periodos = [
-    { id: 'hoy', txt: `Hoy (${fechaCorta(h0)})`, desde: h0, hasta: h0 },
-    { id: 'anterior', txt: `Día hábil anterior (${fechaCorta(h1)})`, desde: h1, hasta: h1 },
-    { id: 'cinco', txt: `Últimos 5 días hábiles (${fechaCorta(cinco[4])} al ${fechaCorta(h0)})`, desde: cinco[4], hasta: h0 },
+  const [h0, h1] = demoBusinessDays(today, 2);
+  const lastFive = demoBusinessDays(today, 5);
+  const periods = [
+    { id: 'hoy', txt: `Hoy (${shortDate(h0)})`, desde: h0, hasta: h0 },
+    { id: 'anterior', txt: `Día hábil anterior (${shortDate(h1)})`, desde: h1, hasta: h1 },
+    { id: 'cinco', txt: `Últimos 5 días hábiles (${shortDate(lastFive[4])} al ${shortDate(h0)})`, desde: lastFive[4], hasta: h0 },
   ];
-  $('#demoPeriodo').innerHTML = periodos.map(p => `<option value="${p.id}">${esc(p.txt)}</option>`).join('');
+  $('#demoPeriodo').innerHTML = periods.map(p => `<option value="${p.id}">${esc(p.txt)}</option>`).join('');
   $('#demoCuenta').innerHTML = `<option value="">Todas las cuentas (${j.cuentas.length})</option>` +
     j.cuentas.map(c => `<option value="${esc(c.cuenta_id)}">${esc(c.etiqueta)} · ${esc(c.formato)}</option>`).join('');
-  const elegido = () => periodos.find(p => p.id === $('#demoPeriodo').value) || periodos[0];
-  const cuentasElegidas = () => $('#demoCuenta').value
+  const chosenPeriod = () => periods.find(p => p.id === $('#demoPeriodo').value) || periods[0];
+  const chosenAccounts = () => $('#demoCuenta').value
     ? j.cuentas.filter(c => c.cuenta_id === $('#demoCuenta').value) : j.cuentas;
-  const urlExtracto = (c, p) => conMarca(`${BASE}api/demo/extracto?cuenta=${encodeURIComponent(c.cuenta_id)}` +
+  const statementUrl = (c, p) => withBrand(`${BASE}api/demo/extracto?cuenta=${encodeURIComponent(c.cuenta_id)}` +
     `&desde=${p.desde}&hasta=${p.hasta}`);
-  const pintarLink = () => {
-    const p = elegido();
+  const refreshLink = () => {
+    const p = chosenPeriod();
     const a = $('#lnkDemoDescargar');
     a.href = $('#demoCuenta').value
-      ? urlExtracto(cuentasElegidas()[0], p)
-      : conMarca(`${BASE}api/demo/extractos?desde=${p.desde}&hasta=${p.hasta}`);
+      ? statementUrl(chosenAccounts()[0], p)
+      : withBrand(`${BASE}api/demo/extractos?desde=${p.desde}&hasta=${p.hasta}`);
     a.textContent = $('#demoCuenta').value ? 'Descargar' : 'Descargar todos (.zip)';
   };
-  ['#demoCuenta', '#demoPeriodo'].forEach(s => $(s).addEventListener('change', pintarLink));
-  pintarLink();
+  ['#demoCuenta', '#demoPeriodo'].forEach(s => $(s).addEventListener('change', refreshLink));
+  refreshLink();
   $('#btnDemoCargar').addEventListener('click', async () => {
-    const p = elegido(), msj = $('#demoMsj');
-    msj.style.color = 'var(--texto2)';
-    msj.innerHTML = '<span class="spinner"></span>Generando extractos…';
+    const p = chosenPeriod(), msg = $('#demoMsj');
+    msg.style.color = 'var(--texto2)';
+    msg.innerHTML = '<span class="spinner"></span>Generando extractos…';
     $('#btnDemoCargar').disabled = true;
     try {
-      const nuevos = [];
-      for (const c of cuentasElegidas()) {
-        const r = await fetch(urlExtracto(c, p));
+      const newFiles = [];
+      for (const c of chosenAccounts()) {
+        const r = await fetch(statementUrl(c, p));
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo generar el extracto');
-        if (!Number(r.headers.get('X-Movimientos'))) continue;   // ese día la cuenta no se movió
-        const nombre = (r.headers.get('Content-Disposition') || '').split('filename="')[1]?.replace(/"$/, '') || 'extracto';
-        nuevos.push(new File([await r.blob()], nombre));
+        if (!Number(r.headers.get('X-Movimientos'))) continue;   // the account didn't move that day
+        const name = (r.headers.get('Content-Disposition') || '').split('filename="')[1]?.replace(/"$/, '') || 'extracto';
+        newFiles.push(new File([await r.blob()], name));
       }
-      // el mismo extracto dos veces se cruzaría dos veces: se reemplaza
-      archivos = archivos.filter(f => !nuevos.some(n => n.name === f.name));
-      agregar(nuevos);
-      msj.style.color = 'var(--verde, #4ade80)';
-      msj.textContent = nuevos.length
-        ? `${nuevos.length} extracto(s) listos abajo: tocá «Identificar archivos» y después traé el mayor del FBS.`
+      // the same statement twice would be matched twice: it is replaced
+      files = files.filter(f => !newFiles.some(n => n.name === f.name));
+      addFiles(newFiles);
+      msg.style.color = 'var(--verde, #4ade80)';
+      msg.textContent = newFiles.length
+        ? `${newFiles.length} extracto(s) listos abajo: tocá «Identificar archivos» y después traé el mayor del FBS.`
         : 'Esas cuentas no tuvieron movimientos en el período elegido.';
     } catch (e) {
-      msj.style.color = 'var(--rojo)';
-      msj.textContent = e.message;
+      msg.style.color = 'var(--rojo)';
+      msg.textContent = e.message;
     }
     $('#btnDemoCargar').disabled = false;
   });
   $('#kitDemo').classList.remove('oculto');
 }
 
-// ?marca=X limita toda la página (cuentas, identificación, historial) a esa
-// marca; los links generados la conservan para no salirse del contexto
-const MARCA = new URLSearchParams(location.search).get('marca') || '';
-const conMarca = (url) => MARCA
-  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
+// ?marca=X limits the whole page (accounts, identification, history) to that
+// brand; the generated links keep it so the context isn't lost
+const BRAND = new URLSearchParams(location.search).get('marca') || '';
+const withBrand = (url) => BRAND
+  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(BRAND)
   : url;
 
-fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
-  cuentas = j.cuentas;
-  if (MARCA) {
-    const nombre = j.marca_nombre || MARCA;
-    $('#chipMarca').textContent = nombre;
+fetch(withBrand(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
+  accounts = j.cuentas;
+  if (BRAND) {
+    const name = j.marca_nombre || BRAND;
+    $('#chipMarca').textContent = name;
     $('#chipMarca').classList.remove('oculto');
-    $('#linkMensual').href = conMarca(BASE);
-    document.title = `Conciliación diaria — ${nombre}`;
+    $('#linkMensual').href = withBrand(BASE);
+    document.title = `Conciliación diaria — ${name}`;
     if (!j.cuentas.length)
-      $('#subtitulo').innerHTML = `<span style="color:var(--rojo)">No hay cuentas de la marca "${esc(MARCA)}" — revisá el parámetro de la URL o cargala en el hub</span>`;
+      $('#subtitulo').innerHTML = `<span style="color:var(--rojo)">No hay cuentas de la marca "${esc(BRAND)}" — revisá el parámetro de la URL o cargala en el hub</span>`;
     else
-      $('#subtitulo').textContent = `Extractos + reportes FBS por cuenta — ${nombre}`;
+      $('#subtitulo').textContent = `Extractos + reportes FBS por cuenta — ${name}`;
   }
 });
 
-const zona = $('#zona'), input = $('#inputArchivos');
-zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
-zona.addEventListener('keydown', e => {
+const zone = $('#zona'), input = $('#inputArchivos');
+zone.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
+zone.addEventListener('keydown', e => {
     if (!e.target.classList.contains('zona-cta')) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
   });
-zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
-zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
-zona.addEventListener('drop', e => { e.preventDefault(); zona.classList.remove('arrastrando'); agregar([...e.dataTransfer.files]); });
-input.addEventListener('change', () => agregar([...input.files]));
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('arrastrando'); });
+zone.addEventListener('dragleave', () => zone.classList.remove('arrastrando'));
+zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('arrastrando'); addFiles([...e.dataTransfer.files]); });
+input.addEventListener('change', () => addFiles([...input.files]));
 
-function agregar(fs) { archivos = archivos.concat(fs); pintarArchivos(); }
-window.quitar = (i, e) => { e.stopPropagation(); archivos.splice(i, 1); pintarArchivos(); };
-function pintarArchivos() {
-  $('#listaArchivos').innerHTML = archivos.map((f, i) =>
+function addFiles(fs) { files = files.concat(fs); paintFiles(); }
+window.quitar = (i, e) => { e.stopPropagation(); files.splice(i, 1); paintFiles(); };
+function paintFiles() {
+  $('#listaArchivos').innerHTML = files.map((f, i) =>
     `<li><span>${esc(f.name)}</span><button onclick="quitar(${i}, event)" aria-label="Quitar ${esc(f.name)}">×</button></li>`).join('');
-  $('#btnIdentificar').disabled = !archivos.length;
+  $('#btnIdentificar').disabled = !files.length;
 }
 
 $('#btnIdentificar').addEventListener('click', async () => {
@@ -739,10 +739,10 @@ $('#btnIdentificar').addEventListener('click', async () => {
   $('#btnIdentificar').disabled = true;
   try {
     const fd = new FormData();
-    archivos.forEach(f => fd.append('archivos', f));
-    // si ya hay una identificación (p. ej. el FBS traído por SQL), sumarse a ella
+    files.forEach(f => fd.append('archivos', f));
+    // if there is already an identification (e.g. the FBS pulled through SQL), join it
     const qs = new URLSearchParams();
-    if (MARCA) qs.set('marca', MARCA);
+    if (BRAND) qs.set('marca', BRAND);
     if (staging) qs.set('staging', staging.staging_id);
     const resp = await fetch(`${BASE}api/diario/identificar` + (qs.toString() ? '?' + qs : ''),
                              { method: 'POST', body: fd });
@@ -750,37 +750,37 @@ $('#btnIdentificar').addEventListener('click', async () => {
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     staging = json;
     $('#estadoCarga').textContent = '';
-    pintarIdent();
+    paintIdentification();
   } catch (err) {
     $('#estadoCarga').textContent = '';
-    avisar(err.message);
+    notify(err.message);
     $('#btnIdentificar').disabled = false;
   }
 });
 
-// ---------- FBS directo por SQL ----------
-const hoyIso = new Date().toISOString().slice(0, 10);
-$('#fbsDesde').value = hoyIso;
-$('#fbsHasta').value = hoyIso;
+// ---------- direct FBS through SQL ----------
+const todayIso = new Date().toISOString().slice(0, 10);
+$('#fbsDesde').value = todayIso;
+$('#fbsHasta').value = todayIso;
 
-// El mayor se trae por rango: si el rango no cubre las fechas del extracto,
-// esos movimientos no tienen contra qué cruzar y figuran "sin asiento" aunque
-// en el FBS estén. Por eso el rango se copia solo del extracto subido, salvo
-// que el usuario lo haya elegido a mano.
-let rangoTocado = false;
+// The ledger is pulled by range: if the range doesn't cover the statement's
+// dates, those movements have nothing to match against and show "sin asiento"
+// even though they are in FBS. That's why the range is copied from the
+// uploaded statement, unless the user chose it by hand.
+let rangeTouched = false;
 ['#fbsDesde', '#fbsHasta'].forEach(sel =>
-  $(sel).addEventListener('change', () => { rangoTocado = true; }));
+  $(sel).addEventListener('change', () => { rangeTouched = true; }));
 
-function rangoDesdeExtractos() {
-  if (rangoTocado || !staging) return;
-  const fechas = (staging.archivos || [])
+function rangeFromStatements() {
+  if (rangeTouched || !staging) return;
+  const dates = (staging.archivos || [])
     .filter(a => a.tipo === 'extracto')
     .flatMap(a => [a.desde, a.hasta]).filter(Boolean).sort();
-  if (!fechas.length) return;
-  $('#fbsDesde').value = fechas[0];
-  // en la demo el mayor va justo hasta el extracto: con un extracto de días
-  // atrás, los asientos de hoy figurarían todos "sin banco"
-  $('#fbsHasta').value = DEMO || fechas[fechas.length - 1] > hoyIso ? fechas[fechas.length - 1] : hoyIso;
+  if (!dates.length) return;
+  $('#fbsDesde').value = dates[0];
+  // in the demo the ledger goes exactly up to the statement: with a statement
+  // from days ago, today's entries would all show up as "sin banco"
+  $('#fbsHasta').value = DEMO || dates[dates.length - 1] > todayIso ? dates[dates.length - 1] : todayIso;
   const m = $('#fbsSqlMsj');
   if (!m.textContent) {
     m.style.color = 'var(--texto2)';
@@ -788,27 +788,27 @@ function rangoDesdeExtractos() {
   }
 }
 
-async function refrescarFbsSql() {
+async function refreshFbsSql() {
   try {
-    const j = await (await fetch(conMarca(`${BASE}api/fbs-sql`))).json();
+    const j = await (await fetch(withBrand(`${BASE}api/fbs-sql`))).json();
     if (j.modo === 'hub') {
-      // la conexión vive en el hub: acá no hay nada que configurar
+      // the connection lives in the hub: there is nothing to configure here
       $('#btnFbsConf').style.display = 'none';
-      const cont = $('#fbsCuentas');
-      cont.style.display = 'flex';
+      const container = $('#fbsCuentas');
+      container.style.display = 'flex';
       if (j.cuentas.length) {
         $('#fbsSqlEstado').textContent =
           `Configurado en el hub (${(j.conexiones_hub || []).join(', ')}) — ` +
           'elegí qué cuentas traer y el rango: la consulta se arma sola.';
-        cont.innerHTML = j.cuentas.map(c =>
+        container.innerHTML = j.cuentas.map(c =>
           `<label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
              <input type="checkbox" class="fbsCta" value="${esc(c.cuenta_id)}" checked>
              ${esc(c.etiqueta)}</label>`).join('');
       } else {
         $('#fbsSqlEstado').innerHTML = `<span style="color:var(--rojo)">Ninguna cuenta
-          ${MARCA ? 'de esta marca ' : ''}tiene FBS configurado en el hub — cargale la
+          ${BRAND ? 'de esta marca ' : ''}tiene FBS configurado en el hub — cargale la
           conexión y los IDs E/O en Administración → Cuentas bancarias.</span>`;
-        cont.innerHTML = '';
+        container.innerHTML = '';
       }
       $('#btnFbsTraer').disabled = !j.cuentas.length;
     } else {
@@ -820,43 +820,43 @@ async function refrescarFbsSql() {
     return j;
   } catch { $('#fbsSqlEstado').textContent = 'No pude consultar la configuración.'; return null; }
 }
-refrescarFbsSql();
+refreshFbsSql();
 
 $('#btnFbsTraer').addEventListener('click', async () => {
-  const msj = $('#fbsSqlMsj');
+  const msg = $('#fbsSqlMsj');
   if ($('#fbsCuentas').style.display !== 'none' &&
       !document.querySelectorAll('.fbsCta:checked').length) {
-    msj.style.color = 'var(--rojo)';
-    msj.textContent = 'Tildá al menos una cuenta para traer.';
+    msg.style.color = 'var(--rojo)';
+    msg.textContent = 'Tildá al menos una cuenta para traer.';
     return;
   }
-  msj.style.color = 'var(--texto2)';
-  msj.innerHTML = '<span class="spinner"></span>Consultando el FBS…';
+  msg.style.color = 'var(--texto2)';
+  msg.innerHTML = '<span class="spinner"></span>Consultando el FBS…';
   $('#btnFbsTraer').disabled = true;
   try {
     const resp = await fetch(`${BASE}api/diario/fbs-sql`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ desde: $('#fbsDesde').value, hasta: $('#fbsHasta').value,
-                             staging_id: staging?.staging_id, marca: MARCA,
+                             staging_id: staging?.staging_id, marca: BRAND,
                              cuentas: [...document.querySelectorAll('.fbsCta:checked')].map(x => x.value) }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     staging = json;
-    msj.style.color = 'var(--verde, #4ade80)';
-    msj.innerHTML = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.
+    msg.style.color = 'var(--verde, #4ade80)';
+    msg.innerHTML = `Llegaron ${json.fbs_sql.asientos} asientos de ${json.fbs_sql.cuentas} cuenta(s)/hoja(s) del FBS.
       <a href="${BASE}api/diario/fbs-sql/excel/${esc(json.staging_id)}" style="color:var(--azul); margin-left:6px;"
          title="Excel con el mismo formato de los reportes Consulta del Mayor que antes se subían">Descargar Excel</a>`;
-    pintarIdent();
+    paintIdentification();
   } catch (err) {
-    msj.style.color = 'var(--rojo)';
-    msj.textContent = err.message;
+    msg.style.color = 'var(--rojo)';
+    msg.textContent = err.message;
   }
   $('#btnFbsTraer').disabled = false;
 });
 
 $('#btnFbsConf').addEventListener('click', async () => {
-  const j = await refrescarFbsSql();
+  const j = await refreshFbsSql();
   if (j) {
     $('#fbsServidor').value = j.servidor || '';
     $('#fbsPuerto').value = j.puerto || 1433;
@@ -867,20 +867,20 @@ $('#btnFbsConf').addEventListener('click', async () => {
     $('#fbsQuery').value = j.query || '';
   }
   $('#fbsConfMsj').textContent = '';
-  abrirModal('modalFbs');
+  openModal('modalFbs');
 });
-$('#btnFbsCerrar').addEventListener('click', () => cerrarModal('modalFbs'));
+$('#btnFbsCerrar').addEventListener('click', () => closeModal('modalFbs'));
 
-async function guardarConfFbs() {
-  const cuerpo = {
+async function saveFbsConfig() {
+  const body = {
     servidor: $('#fbsServidor').value.trim(), puerto: $('#fbsPuerto').value,
     base: $('#fbsBase').value.trim(), usuario: $('#fbsUsuario').value.trim(),
     query: $('#fbsQuery').value,
   };
-  if ($('#fbsClave').value) cuerpo.clave = $('#fbsClave').value;
+  if ($('#fbsClave').value) body.clave = $('#fbsClave').value;
   const resp = await fetch(`${BASE}api/fbs-sql`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(cuerpo),
+    body: JSON.stringify(body),
   });
   if (!resp.ok) throw new Error((await resp.json()).error || 'No se pudo guardar');
 }
@@ -888,10 +888,10 @@ async function guardarConfFbs() {
 $('#btnFbsGuardar').addEventListener('click', async () => {
   const m = $('#fbsConfMsj');
   try {
-    await guardarConfFbs();
+    await saveFbsConfig();
     m.style.color = 'var(--verde, #4ade80)';
     m.textContent = 'Configuración guardada.';
-    refrescarFbsSql();
+    refreshFbsSql();
   } catch (e) { m.style.color = 'var(--rojo)'; m.textContent = e.message; }
 });
 
@@ -900,29 +900,29 @@ $('#btnFbsProbar').addEventListener('click', async () => {
   m.style.color = 'var(--texto2)';
   m.innerHTML = '<span class="spinner"></span>Guardando y probando…';
   try {
-    await guardarConfFbs();
+    await saveFbsConfig();
     const r = await (await fetch(`${BASE}api/fbs-sql/probar`, { method: 'POST' })).json();
     m.style.color = r.ok ? 'var(--verde, #4ade80)' : 'var(--rojo)';
     m.textContent = r.ok ? `Conexión OK (driver ${r.driver || '?'}).` : r.error;
-    refrescarFbsSql();
+    refreshFbsSql();
   } catch (e) { m.style.color = 'var(--rojo)'; m.textContent = e.message; }
 });
 
-function selectorCuenta(a) {
+function accountSelector(a) {
   if (a.cuenta_fija) {
-    // el vínculo ya está definido en el hub: no se vuelve a elegir acá
-    const c = cuentas.find(x => x.id === a.cuenta_id);
+    // the link is already defined in the hub: it's not chosen again here
+    const c = accounts.find(x => x.id === a.cuenta_id);
     return `<span class="chip ok" title="Cuenta asignada desde la configuración del hub">
       ${esc(c ? c.etiqueta : a.cuenta_id)}</span>`;
   }
-  const ops = cuentas.map(c =>
+  const options = accounts.map(c =>
     `<option value="${esc(c.id)}" ${a.cuenta_id === c.id ? 'selected' : ''}>${esc(c.etiqueta)}</option>`);
   return `<select data-archivo="${esc(a.archivo)}" aria-label="Cuenta para ${esc(a.archivo)}">
     <option value="ignorar" ${!a.cuenta_id ? 'selected' : ''}>— elegir cuenta / ignorar —</option>
-    ${ops.join('')}</select>`;
+    ${options.join('')}</select>`;
 }
 
-function pintarIdent() {
+function paintIdentification() {
   $('#identCard').classList.remove('oculto');
   const thead = $('#tablaIdent thead'), tbody = $('#tablaIdent tbody');
   thead.innerHTML = '<tr><th scope="col">Archivo</th><th scope="col">Detectado</th><th scope="col">Movs</th><th scope="col">Rango</th><th scope="col">Cuenta</th></tr>';
@@ -942,62 +942,62 @@ function pintarIdent() {
       <td>${det}</td>
       <td class="num">${a.cantidad || ''}</td>
       <td style="white-space:nowrap">${esc(a.desde || '')}${a.hasta && a.hasta !== a.desde ? ' → ' + esc(a.hasta) : ''}</td>
-      <td>${a.tipo === 'desconocido' ? '—' : selectorCuenta(a)}</td>
+      <td>${a.tipo === 'desconocido' ? '—' : accountSelector(a)}</td>
     </tr>`;
   }).join('');
-  rangoDesdeExtractos();
+  rangeFromStatements();
   $('#identCard').scrollIntoView(SCROLL);
 }
 
 $('#btnConciliar').addEventListener('click', async () => {
-  const asignaciones = {};
+  const assignments = {};
   document.querySelectorAll('#tablaIdent select').forEach(s => {
-    asignaciones[s.dataset.archivo] = s.value;
+    assignments[s.dataset.archivo] = s.value;
   });
-  const nCuentas = new Set(Object.values(asignaciones).filter(v => v && v !== 'ignorar')).size
+  const accountCount = new Set(Object.values(assignments).filter(v => v && v !== 'ignorar')).size
     + (staging.archivos || []).filter(a => a.cuenta_fija).length;
   $('#btnConciliar').disabled = true;
-  mostrarOverlay(nCuentas);
+  showOverlay(accountCount);
   try {
     const resp = await fetch(`${BASE}api/diario/conciliar/${staging.staging_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ asignaciones }),
+      body: JSON.stringify({ asignaciones: assignments }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    grupo = json;
-    history.replaceState(null, '', conMarca(`?grupo=${grupo.grupo_id}`));
-    ocultarOverlay();
-    pintarTablero();
+    run = json;
+    history.replaceState(null, '', withBrand(`?grupo=${run.grupo_id}`));
+    hideOverlay();
+    paintBoard();
   } catch (err) {
     overlayError(err.message);
     $('#btnConciliar').disabled = false;
   }
 });
 
-/* ============ overlay de progreso del cruce diario ============ */
-// el endpoint es sincrónico: no hay porcentaje real, así que se muestra la
-// fase y el tiempo transcurrido, nunca una barra inventada
-let ovTimer = null, ovInicio = 0;
-function faseOverlay(n) {
-  const s = Math.round((Date.now() - ovInicio) / 1000);
-  const cuentas = n ? `${n} cuenta${n === 1 ? '' : 's'}` : 'las cuentas';
-  $('#ovFase').textContent = `Cruzando ${cuentas} contra el mayor del FBS` + (s >= 3 ? ` · ${s} s` : '');
+/* ============ progress overlay of the daily matching ============ */
+// the endpoint is synchronous: there is no real percentage, so the phase and
+// the elapsed time are shown, never a made-up bar
+let ovTimer = null, ovStart = 0;
+function overlayPhase(n) {
+  const s = Math.round((Date.now() - ovStart) / 1000);
+  const accountsText = n ? `${n} cuenta${n === 1 ? '' : 's'}` : 'las cuentas';
+  $('#ovFase').textContent = `Cruzando ${accountsText} contra el mayor del FBS` + (s >= 3 ? ` · ${s} s` : '');
 }
-function mostrarOverlay(n) {
-  ovInicio = Date.now();
+function showOverlay(n) {
+  ovStart = Date.now();
   $('#ovTitulo').textContent = 'Conciliando el día';
   $('#ovError').classList.add('oculto');
   $('#ovCerrar').classList.add('oculto');
   $('#ovAnillo').style.display = '';
-  faseOverlay(n);
+  overlayPhase(n);
   clearInterval(ovTimer);
-  ovTimer = setInterval(() => faseOverlay(n), 1000);
-  abrirModal('overlay');
+  ovTimer = setInterval(() => overlayPhase(n), 1000);
+  openModal('overlay');
 }
-function ocultarOverlay() {
+function hideOverlay() {
   clearInterval(ovTimer); ovTimer = null;
-  cerrarModal('overlay');
+  closeModal('overlay');
 }
 function overlayError(msg) {
   clearInterval(ovTimer); ovTimer = null;
@@ -1009,9 +1009,9 @@ function overlayError(msg) {
   $('#ovCerrar').classList.remove('oculto');
   $('#ovCerrar').focus();
 }
-$('#ovCerrar').addEventListener('click', ocultarOverlay);
+$('#ovCerrar').addEventListener('click', hideOverlay);
 
-function chipEstado(f) {
+function statusChip(f) {
   if (f.estado === 'ok') {
     const p = f.resumen.porcentaje_explicado;
     const cls = p >= 85 ? 'ok' : (p >= 60 ? 'warn' : 'err');
@@ -1024,28 +1024,28 @@ function chipEstado(f) {
   return `<span class="chip err">${esc(f.estado)}</span>`;
 }
 
-const diaCorto = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
+const shortDay = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
 
-function textoCobertura(c) {
-  const partes = [];
-  if (c.antes) partes.push(`${c.antes} movimiento${c.antes === 1 ? '' : 's'} anterior${c.antes === 1 ? '' : 'es'} al ${diaCorto(c.mayor_desde)}`);
-  if (c.despues) partes.push(`${c.despues} posterior${c.despues === 1 ? '' : 'es'} al ${diaCorto(c.mayor_hasta)}`);
-  return `el mayor que se trajo del FBS cubre del ${diaCorto(c.mayor_desde)} al ${diaCorto(c.mayor_hasta)},
-    y el extracto llega del ${diaCorto(c.banco_desde)} al ${diaCorto(c.banco_hasta)}:
-    ${partes.join(' y ')} no tienen asiento contra el cual cruzarse — no es que falte en el FBS,
-    es que no se trajo. Traé el mayor desde el ${diaCorto(c.banco_desde)} y volvé a conciliar.`;
+function coverageText(c) {
+  const parts = [];
+  if (c.antes) parts.push(`${c.antes} movimiento${c.antes === 1 ? '' : 's'} anterior${c.antes === 1 ? '' : 'es'} al ${shortDay(c.mayor_desde)}`);
+  if (c.despues) parts.push(`${c.despues} posterior${c.despues === 1 ? '' : 'es'} al ${shortDay(c.mayor_hasta)}`);
+  return `el mayor que se trajo del FBS cubre del ${shortDay(c.mayor_desde)} al ${shortDay(c.mayor_hasta)},
+    y el extracto llega del ${shortDay(c.banco_desde)} al ${shortDay(c.banco_hasta)}:
+    ${parts.join(' y ')} no tienen asiento contra el cual cruzarse — no es que falte en el FBS,
+    es que no se trajo. Traé el mayor desde el ${shortDay(c.banco_desde)} y volvé a conciliar.`;
 }
 
-function chipCobertura(c) {
+function coverageChip(c) {
   if (!c) return '';
-  return ` <span class="chip warn" title="${esc(textoCobertura(c).replace(/\s+/g, ' '))}">mayor incompleto: ${c.fuera} movs fuera del rango</span>`;
+  return ` <span class="chip warn" title="${esc(coverageText(c).replace(/\s+/g, ' '))}">mayor incompleto: ${c.fuera} movs fuera del rango</span>`;
 }
 
-function pintarTablero() {
+function paintBoard() {
   $('#identCard').classList.add('oculto');
   $('#cargaCard').classList.add('oculto');
   $('#tableroCard').classList.remove('oculto');
-  $('#fechaProc').textContent = `procesado el ${grupo.procesado}`;
+  $('#fechaProc').textContent = `procesado el ${run.procesado}`;
   const thead = $('#tablaTablero thead'), tbody = $('#tablaTablero tbody');
   thead.innerHTML = `<tr><th scope="col">Cuenta</th><th scope="col">Estado</th>
     <th scope="col" title="Días que cubren los extractos subidos en esta corrida (pueden ser varios si se acumularon)">Período</th>
@@ -1055,38 +1055,38 @@ function pintarTablero() {
     <th scope="col" title="Comisiones, impuestos y percepciones del banco (no se registran asiento por asiento)">Gastos banc.</th>
     <th scope="col" title="Movimientos del banco que siguen sin asiento: quedan pendientes y se arrastran a mañana">Sin asiento aún</th>
     <th scope="col" title="Asientos del FBS que siguen sin movimiento del banco: también se arrastran">FBS sin banco</th><th scope="col"></th></tr>`;
-  tbody.innerHTML = grupo.cuentas.map(f => {
+  tbody.innerHTML = run.cuentas.map(f => {
     const r = f.resumen || {};
-    const delDia = r.movimientos_banco != null ?
+    const ofTheDay = r.movimientos_banco != null ?
       r.movimientos_banco - (r.arrastrados_movs || 0) : null;
-    const arr = (r.arrastrados_movs || 0) + (r.arrastrados_asientos || 0) ?
+    const carried = (r.arrastrados_movs || 0) + (r.arrastrados_asientos || 0) ?
       `${r.arrastrados_movs || 0} movs · ${r.arrastrados_asientos || 0} asientos` : '—';
-    const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
-    const periodo = f.desde ?
-      (f.desde === f.hasta ? dia(f.desde) : `${dia(f.desde)} → ${dia(f.hasta)}`) : '';
+    const day = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
+    const period = f.desde ?
+      (f.desde === f.hasta ? day(f.desde) : `${day(f.desde)} → ${day(f.hasta)}`) : '';
     return `<tr>
       <td>${esc(f.etiqueta)}</td>
-      <td>${chipEstado(f)}${chipCobertura(f.cobertura_mayor)}</td>
-      <td style="white-space:nowrap">${periodo}${f.desde && f.desde !== f.hasta ?
+      <td>${statusChip(f)}${coverageChip(f.cobertura_mayor)}</td>
+      <td style="white-space:nowrap">${period}${f.desde && f.desde !== f.hasta ?
         ' <span class="chip extracto" title="Esta corrida acumuló extractos de más de un día: se cruzan todos juntos (es lo correcto: un pago de un día puede tener su asiento al día siguiente)">varios días</span>' : ''}</td>
-      <td class="num">${delDia ?? ''}</td>
-      <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? arr : ''}${r.omitidos ?
+      <td class="num">${ofTheDay ?? ''}</td>
+      <td class="num" style="color:var(--texto2)">${r.movimientos_banco != null ? carried : ''}${r.omitidos ?
         `<br><small title="Los archivos de hoy re-incluían ítems ya conciliados en corridas anteriores: se omiten para no duplicar">${r.omitidos} ya conciliados, omitidos</small>` : ''}</td>
       <td class="num">${r.conciliados ?? ''}</td>
       <td class="num">${r.gastos_bancarios ?? ''}</td>
       <td class="num">${r.banco_sin_contabilizar ?? ''}</td>
       <td class="num">${r.mayor_sin_banco ?? ''}</td>
-      <td>${f.job_id ? `<a href="${conMarca(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank"
+      <td>${f.job_id ? `<a href="${withBrand(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank"
         style="color:var(--azul)">Abrir detalle →</a>` : ''}</td>
     </tr>`;
   }).join('');
-  const incompletas = grupo.cuentas.filter(f => f.cobertura_mayor);
-  $('#sinAsignar').innerHTML = (grupo.sin_asignar.length ?
-    `<div class="aviso info">Archivos no procesados: ${grupo.sin_asignar.map(x =>
+  const incomplete = run.cuentas.filter(f => f.cobertura_mayor);
+  $('#sinAsignar').innerHTML = (run.sin_asignar.length ?
+    `<div class="aviso info">Archivos no procesados: ${run.sin_asignar.map(x =>
       `<b>${esc(x.archivo)}</b> (${esc(x.motivo)})`).join(' · ')}</div>` : '') +
-    (incompletas.length ?
-      `<div class="aviso alerta"><b>El mayor no cubre todo el extracto.</b> ${incompletas.map(f =>
-        `<div style="margin-top:6px"><b>${esc(f.etiqueta)}</b>: ${textoCobertura(f.cobertura_mayor)}</div>`).join('')}</div>` : '') +
+    (incomplete.length ?
+      `<div class="aviso alerta"><b>El mayor no cubre todo el extracto.</b> ${incomplete.map(f =>
+        `<div style="margin-top:6px"><b>${esc(f.etiqueta)}</b>: ${coverageText(f.cobertura_mayor)}</div>`).join('')}</div>` : '') +
     `<div style="font-size:var(--fs-sm); color:var(--texto2); margin-top:12px; line-height:1.6; max-width:72ch;">
       <b>Cómo leer el tablero:</b> "Sin asiento aún" y "FBS sin banco" no son errores —
       son operaciones cuya contrapartida todavía no llegó (el asiento se carga después,
@@ -1098,29 +1098,29 @@ function pintarTablero() {
       <b>Se puede subir acumulado sin miedo</b>: si el extracto o el mayor de hoy
       re-incluyen días ya procesados (o directamente el mes entero), lo ya conciliado
       se omite solo y no se duplica nada.</div>`;
-  cargarHistorial();
+  loadHistory();
   $('#tableroCard').scrollIntoView(SCROLL);
 }
 
 $('#btnExcelTablero').addEventListener('click', () => {
-  // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
-  if (grupo) location.href = `${BASE}api/diario/${grupo.grupo_id}/excel`;
+  // relative path: works the same served at the root or behind the hub (/app/…)
+  if (run) location.href = `${BASE}api/diario/${run.grupo_id}/excel`;
 });
 
 $('#btnCopiarTablero').addEventListener('click', async () => {
-  const url = `${location.origin}${conMarca(`${location.pathname}?grupo=${grupo.grupo_id}`)}`;
-  try { await navigator.clipboard.writeText(url); } catch { avisar('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
+  const url = `${location.origin}${withBrand(`${location.pathname}?grupo=${run.grupo_id}`)}`;
+  try { await navigator.clipboard.writeText(url); } catch { notify('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
   $('#btnCopiarTablero').textContent = 'Link copiado';
   setTimeout(() => { $('#btnCopiarTablero').textContent = 'Copiar link del tablero'; }, 2000);
 });
 
-/* ============ historial de conciliados por cuenta ============ */
-// Para el control que antes no se podía hacer: un movimiento figura "sin
-// asiento" y en el FBS está — acá se ve si ese asiento ya se había consumido
-// en otra corrida, y con qué movimiento se cruzó.
+/* ============ matched history per account ============ */
+// For the check that couldn't be done before: a movement shows "sin asiento"
+// and it is in FBS — here you see whether that entry was already consumed in
+// another run, and with which movement it was matched.
 let histTimer = null;
 
-function pintarHistConc(json) {
+function paintMatchedHistory(json) {
   const thead = $('#tablaHistConc thead'), tbody = $('#tablaHistConc tbody');
   const pesos = n => n == null ? '' : n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   thead.innerHTML = `<tr><th scope="col">Corrida</th><th scope="col">Cómo se resolvió</th>
@@ -1133,61 +1133,61 @@ function pintarHistConc(json) {
   }
   tbody.innerHTML = json.filas.map(f => {
     const b = f.banco || {}, a = f.asiento || {};
-    const imp = b.debito ? `-${pesos(b.debito)}` : (b.credito ? pesos(b.credito) : '');
+    const amount = b.debito ? `-${pesos(b.debito)}` : (b.credito ? pesos(b.credito) : '');
     return `<tr>
       <td style="white-space:nowrap">${esc(f.procesado || '')}${f.hora ? '<br><small style="color:var(--texto2)">' + esc(f.hora) + '</small>' : ''}</td>
       <td>${esc(f.tipo)}<br><small style="color:var(--texto2)">${esc(f.metodo || '')}</small></td>
-      <td>${b.fecha ? diaCorto(b.fecha) + ' · ' : ''}${esc(b.descripcion || '')}
+      <td>${b.fecha ? shortDay(b.fecha) + ' · ' : ''}${esc(b.descripcion || '')}
         ${b.comprobante ? `<br><small style="color:var(--texto2)">comp. ${esc(b.comprobante)}</small>` : ''}</td>
-      <td class="num">${imp}</td>
-      <td>${a.fecha ? diaCorto(a.fecha) + ' · ' : ''}${a.asiento ? 'as. ' + esc(a.asiento) : ''}
+      <td class="num">${amount}</td>
+      <td>${a.fecha ? shortDay(a.fecha) + ' · ' : ''}${a.asiento ? 'as. ' + esc(a.asiento) : ''}
         ${a.hoja ? `<span class="chip ${a.hoja === 'E' ? 'ok' : 'extracto'}">${esc(a.hoja)}</span>` : ''}
         ${a.referencia || a.comentario ? `<br><small style="color:var(--texto2)">${esc(a.referencia || '')} ${esc(a.comentario || '')}</small>` : ''}</td>
       <td class="num">${a.debe ? pesos(a.debe) : ''}${a.haber ? '-' + pesos(a.haber) : ''}</td>
-      <td><a href="${conMarca(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank" style="color:var(--azul); white-space:nowrap">Ver corrida →</a></td>
+      <td><a href="${withBrand(`${BASE}?job=${esc(f.job_id)}`)}" target="_blank" style="color:var(--azul); white-space:nowrap">Ver corrida →</a></td>
     </tr>`;
   }).join('');
 }
 
-async function cargarHistConc() {
-  const cuenta = $('#histCuenta').value || '';
+async function loadMatchedHistory() {
+  const account = $('#histCuenta').value || '';
   const q = $('#histBuscar').value.trim();
   $('#histEstado').innerHTML = '<span class="spinner"></span>Buscando…';
   try {
-    const url = `${BASE}api/diario/conciliados?cuenta=${encodeURIComponent(cuenta)}&q=${encodeURIComponent(q)}`;
+    const url = `${BASE}api/diario/conciliados?cuenta=${encodeURIComponent(account)}&q=${encodeURIComponent(q)}`;
     const resp = await fetch(url);
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     $('#histEstado').textContent =
       `${json.total} resultado${json.total === 1 ? '' : 's'} en las últimas ${json.corridas} corrida${json.corridas === 1 ? '' : 's'}`;
-    pintarHistConc(json);
+    paintMatchedHistory(json);
   } catch (err) {
     $('#histEstado').textContent = err.message;
   }
 }
 
-function abrirHistConc(cuentaId) {
-  const cuentas = (grupo?.cuentas || []).filter(c => c.cuenta_id);
-  $('#histCuenta').innerHTML = cuentas.map(c =>
+function openMatchedHistory(accountId) {
+  const runAccounts = (run?.cuentas || []).filter(c => c.cuenta_id);
+  $('#histCuenta').innerHTML = runAccounts.map(c =>
     `<option value="${esc(c.cuenta_id)}">${esc(c.etiqueta)}</option>`).join('') ||
     '<option value="">todas las cuentas</option>';
-  if (cuentaId) $('#histCuenta').value = cuentaId;
+  if (accountId) $('#histCuenta').value = accountId;
   $('#histBuscar').value = '';
-  abrirModal('modalHist', '#histBuscar');
-  cargarHistConc();
+  openModal('modalHist', '#histBuscar');
+  loadMatchedHistory();
 }
 
-$('#btnHistConc').addEventListener('click', () => abrirHistConc());
-$('#btnHistCerrar').addEventListener('click', () => cerrarModal('modalHist'));
-$('#histCuenta').addEventListener('change', cargarHistConc);
+$('#btnHistConc').addEventListener('click', () => openMatchedHistory());
+$('#btnHistCerrar').addEventListener('click', () => closeModal('modalHist'));
+$('#histCuenta').addEventListener('change', loadMatchedHistory);
 $('#histBuscar').addEventListener('input', () => {
   clearTimeout(histTimer);
-  histTimer = setTimeout(cargarHistConc, 350);
+  histTimer = setTimeout(loadMatchedHistory, 350);
 });
 
-/* ============ memoria diaria (historial persistente) ============ */
+/* ============ daily memory (persistent history) ============ */
 $('#btnBorrarMemoria').addEventListener('click', async () => {
-  if (!(await confirmar({ titulo: '¿Borrar toda la memoria de conciliados?', texto: 'Los asientos y movimientos que ya se conciliaron en corridas anteriores volverán a aparecer como pendientes en las próximas traídas. No borra los tableros ni el arrastre. Pensado para la fase de prueba.', ok: 'Borrar memoria', peligro: true }))) return;
+  if (!(await askConfirm({ titulo: '¿Borrar toda la memoria de conciliados?', texto: 'Los asientos y movimientos que ya se conciliaron en corridas anteriores volverán a aparecer como pendientes en las próximas traídas. No borra los tableros ni el arrastre. Pensado para la fase de prueba.', ok: 'Borrar memoria', peligro: true }))) return;
   const b = $('#btnBorrarMemoria');
   b.disabled = true;
   try {
@@ -1199,20 +1199,20 @@ $('#btnBorrarMemoria').addEventListener('click', async () => {
   setTimeout(() => { b.textContent = 'Borrar memoria de conciliados'; b.disabled = false; }, 3500);
 });
 
-async function cargarHistorial() {
+async function loadHistory() {
   try {
-    const resp = await fetch(conMarca(`${BASE}api/diario`));
+    const resp = await fetch(withBrand(`${BASE}api/diario`));
     const json = await resp.json();
     if (!resp.ok) return;
-    $('#histCard').classList.remove('oculto');   // siempre visible (ahí vive
-    // el botón de borrar memoria); sin corridas muestra el estado vacío
+    $('#histCard').classList.remove('oculto');   // always visible (the delete
+    // memory button lives there); without runs it shows the empty state
     if (!json.grupos.length) {
       $('#tablaHist thead').innerHTML = '';
       $('#tablaHist tbody').innerHTML = `<tr><td style="color:var(--texto2)">
-        Sin conciliaciones guardadas${MARCA ? ' para esta marca' : ''} todavía.</td></tr>`;
+        Sin conciliaciones guardadas${BRAND ? ' para esta marca' : ''} todavía.</td></tr>`;
       return;
     }
-    const actual = grupo && grupo.grupo_id;
+    const current = run && run.grupo_id;
     $('#tablaHist thead').innerHTML = `<tr><th scope="col">Día</th><th scope="col">Bancos</th><th scope="col">Cuentas</th>
       <th scope="col" title="Cuentas que se pudieron cruzar (extracto + FBS)">Conciliadas</th>
       <th scope="col" title="Cuentas a las que les faltó el extracto o el FBS ese día">Incompletas</th>
@@ -1220,13 +1220,13 @@ async function cargarHistorial() {
       <th scope="col" title="Pendientes que venían arrastrados de días anteriores">Arrastrados</th>
       <th scope="col" title="Lo que quedó sin cruzar ese día (movimientos sin asiento + asientos sin banco): pasa al día siguiente">Quedaron pendientes</th>
       <th scope="col">% explicado</th><th scope="col"></th></tr>`;
-    const dia = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
+    const day = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
     $('#tablaHist tbody').innerHTML = json.grupos.map(g => `
-      <tr style="${g.grupo_id === actual ? 'background:color-mix(in srgb, var(--acento) 7%, transparent);' : ''}">
+      <tr style="${g.grupo_id === current ? 'background:color-mix(in srgb, var(--acento) 7%, transparent);' : ''}">
         <td style="white-space:nowrap">${esc(g.procesado || '')}${g.hora ? ' · ' + esc(g.hora) : ''}
-          ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${dia(g.desde)}${
-            g.hasta && g.hasta !== g.desde ? ' al ' + dia(g.hasta) : ''}</small>` : ''}
-          ${g.grupo_id === actual ? ' <span class="chip extracto">este tablero</span>' : ''}</td>
+          ${g.desde ? `<br><small style="color:var(--texto2)">movimientos del ${day(g.desde)}${
+            g.hasta && g.hasta !== g.desde ? ' al ' + day(g.hasta) : ''}</small>` : ''}
+          ${g.grupo_id === current ? ' <span class="chip extracto">este tablero</span>' : ''}</td>
         <td>${esc((g.bancos || []).join(', '))}</td>
         <td class="num">${g.cuentas}</td>
         <td class="num">${g.conciliadas}</td>
@@ -1235,7 +1235,7 @@ async function cargarHistorial() {
         <td class="num">${g.arrastrados || ''}</td>
         <td class="num">${g.pendientes || ''}</td>
         <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
-        <td style="white-space:nowrap"><a href="${conMarca(`?grupo=${esc(g.grupo_id)}`)}" style="color:var(--azul)">Abrir tablero →</a>
+        <td style="white-space:nowrap"><a href="${withBrand(`?grupo=${esc(g.grupo_id)}`)}" style="color:var(--azul)">Abrir tablero →</a>
           <button class="secundario btn-fila peligro" onclick="eliminarGrupo(${jsArg(g.grupo_id)}, ${jsArg(g.procesado || '')})"
             aria-label="Eliminar la corrida del ${esc(g.procesado || '')}"
             title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
@@ -1243,11 +1243,11 @@ async function cargarHistorial() {
       </tr>`).join('');
   } catch {}
 }
-cargarHistorial();
+loadHistory();
 
-window.eliminarGrupo = async (id, fecha) => {
-  const ok = await confirmar({
-    titulo: `Eliminar la corrida del ${fecha}`,
+window.eliminarGrupo = async (id, date) => {
+  const ok = await askConfirm({
+    titulo: `Eliminar la corrida del ${date}`,
     texto: 'Se borra el tablero y el detalle de sus cuentas, incluido lo conciliado a mano ahí, ' +
       'y el arrastre de cada cuenta vuelve a su corrida anterior. ' +
       'Usalo cuando se subió un archivo equivocado y hay que rehacer la carga. Esta acción no se puede deshacer.',
@@ -1257,25 +1257,25 @@ window.eliminarGrupo = async (id, fecha) => {
     const resp = await fetch(`${BASE}api/diario/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    if (grupo && grupo.grupo_id === id) { location.href = location.pathname; return; }
-    cargarHistorial();
-  } catch (err) { avisar(err.message); }
+    if (run && run.grupo_id === id) { location.href = location.pathname; return; }
+    loadHistory();
+  } catch (err) { notify(err.message); }
 };
 
-// al entrar con ?grupo=... se retoma el tablero guardado
-(async function retomar() {
+// entering with ?grupo=... resumes the saved board
+(async function resume() {
   const g = new URLSearchParams(location.search).get('grupo');
   if (!g) return;
   try {
     const resp = await fetch(`${BASE}api/diario/${g}`);
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'no encontrado');
-    grupo = json;
-    pintarTablero();
-    // ?conciliados=<cuenta> abre el historial de esa cuenta: es el link que
-    // trae el detalle de una conciliación ("¿esto ya se cruzó antes?")
+    run = json;
+    paintBoard();
+    // ?conciliados=<cuenta> opens that account's history: it's the link the
+    // detail of a reconciliation brings ("was this matched before?")
     const c = new URLSearchParams(location.search).get('conciliados');
-    if (c) abrirHistConc(c);
+    if (c) openMatchedHistory(c);
   } catch (err) {
     document.querySelector('main').insertAdjacentHTML('afterbegin',
       `<div class="aviso error">No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);
