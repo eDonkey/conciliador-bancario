@@ -41,12 +41,22 @@ from engine import presupuesto_ia
 from engine import seguridad
 from parsers import diarios
 
-app = FastAPI(title="Conciliador bancario")
+# sin /docs ni /openapi.json: el mapa de la API no se publica
+app = FastAPI(title="Conciliador bancario",
+              docs_url=None, redoc_url=None, openapi_url=None)
 # monitoreo (New Relic): el polling de progreso no se traza, es ruido
 telemetria.iniciar(app, "conciliador", puerto=8765, excluir=[r"/api/progreso/"])
 # autenticación obligatoria (APP_PASSWORD + sesión firmada); sin APP_PASSWORD
 # solo se atiende a la propia máquina. Ver engine/seguridad.py y AUDIT.md.
 acceso.instalar(app)
+
+
+@app.middleware("http")
+async def _cabeceras_seguridad(request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    return resp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
@@ -62,16 +72,42 @@ STAGING = {}     # staging_id -> archivos parseados del modo diario
 DEMO_MODE = fbs_sql.simulado()
 
 
+def _bloqueado_en_demo():
+    """La demo no exporta ni importa los datos del servicio. Devuelve la
+    respuesta 404 si corresponde."""
+    if DEMO_MODE:
+        return JSONResponse(status_code=404, content={"error": "No disponible en la demo"})
+    return None
+
+
 LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
 LISTAS_MAYOR = ["e_sin_banco", "o_pendientes_sin_banco"]
 
 
+# Los ids de job (12) y de corrida diaria (10) son hex de uuid4. Se validan
+# antes de armar una ruta: un id con "..\" (Windows) o un job_id del cuerpo
+# con "../" leía y pisaba archivos .json fuera de datos/.
+_JOB_VALIDO_RE = re.compile(r"^[0-9a-f]{12}$")
+_GRUPO_VALIDO_RE = re.compile(r"^[0-9a-f]{10}$")
+
+
+def _ruta_grupo(grupo_id) -> str | None:
+    """Ruta del tablero de una corrida diaria; None si el id no es válido."""
+    if not isinstance(grupo_id, str) or not _GRUPO_VALIDO_RE.match(grupo_id):
+        return None
+    return os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
+
+
 def _guardar(job_id):
+    if not _JOB_VALIDO_RE.match(job_id):
+        raise ValueError(f"id de job inválido: {job_id!r}")
     with open(os.path.join(DATOS_DIR, f"{job_id}.json"), "w", encoding="utf-8") as f:
         json.dump(RESULTADOS[job_id], f, ensure_ascii=False)
 
 
 def _obtener(job_id):
+    if not isinstance(job_id, str) or not _JOB_VALIDO_RE.match(job_id):
+        return None
     if job_id not in RESULTADOS:
         ruta = os.path.join(DATOS_DIR, f"{job_id}.json")
         if os.path.exists(ruta):
@@ -115,8 +151,11 @@ def _recalcular_resumen(datos):
             info = cargados.get(_clave_mov_dict(m))
             m["cargado_fbs"] = info["fecha"] if info else None
     r = datos["resumen"]
-    imp_b = lambda x: x["credito"] or x["debito"]
-    imp_m = lambda x: x["debe"] or x["haber"]
+    def imp_b(x):
+        return x["credito"] or x["debito"]
+
+    def imp_m(x):
+        return x["debe"] or x["haber"]
     for lista in LISTAS_BANCO:
         r[lista] = {"cantidad": len(datos[lista]),
                     "importe": round(sum(imp_b(x) for x in datos[lista]), 2)}
@@ -522,6 +561,8 @@ def _migrable(nombre: str) -> bool:
 def api_migracion_exportar():
     """Exporta todos los datos del servicio (aprendizajes, resultados,
     tableros, cuentas) como un solo JSON. Nunca incluye credenciales."""
+    if bloqueo := _bloqueado_en_demo():
+        return bloqueo
     bundle = {}
     for nombre in sorted(os.listdir(DATOS_DIR)):
         if not _migrable(nombre):
@@ -540,6 +581,8 @@ def api_migracion_importar(cuerpo: dict = Body(...)):
     """Importa un bundle exportado desde otro servicio. Como protección,
     solo funciona sobre un servicio SIN conciliaciones diarias previas
     (salvo {"forzar": true}), para no pisar datos productivos por error."""
+    if bloqueo := _bloqueado_en_demo():
+        return bloqueo
     hay_grupos = any(n.startswith("grupo_") for n in os.listdir(DATOS_DIR))
     if hay_grupos and not cuerpo.get("forzar"):
         return JSONResponse(status_code=409, content={
@@ -1448,7 +1491,8 @@ def api_diario_historial(marca: str = ""):
         if marca and not _de_esta_marca(g, cuentas):
             continue
         ok = [c for c in cuentas if c.get("estado") == "ok"]
-        r = lambda c, k: (c.get("resumen") or {}).get(k) or 0
+        def r(c, k):
+            return (c.get("resumen") or {}).get(k) or 0
         expl = [c["resumen"]["porcentaje_explicado"] for c in ok
                 if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
         fechas_mov = [c.get(k) for c in cuentas for k in ("desde", "hasta") if c.get(k)]
@@ -1587,8 +1631,8 @@ def api_diario_excel(grupo_id: str):
     haberes, gastos y pendientes del mayor), con la columna Cuenta en cada
     hoja. El detalle completo de UNA cuenta se sigue exportando desde adentro
     de esa conciliación."""
-    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
-    if not os.path.exists(ruta):
+    ruta = _ruta_grupo(grupo_id)
+    if not ruta or not os.path.exists(ruta):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
     with open(ruta, encoding="utf-8") as f:
         grupo = json.load(f)
@@ -1651,8 +1695,8 @@ def api_diario_excel(grupo_id: str):
 
 @app.get("/api/diario/{grupo_id}")
 def api_diario_grupo(grupo_id: str):
-    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
-    if not os.path.exists(ruta):
+    ruta = _ruta_grupo(grupo_id)
+    if not ruta or not os.path.exists(ruta):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
     with open(ruta, encoding="utf-8") as f:
         grupo = json.load(f)
@@ -1671,8 +1715,8 @@ def api_diario_eliminar(grupo_id: str):
     """Elimina una corrida diaria completa (p. ej. se subió un extracto
     equivocado): borra el tablero y los jobs de sus cuentas, y rebobina la
     cadena de arrastre de cada cuenta a su corrida anterior."""
-    ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
-    if not os.path.exists(ruta):
+    ruta = _ruta_grupo(grupo_id)
+    if not ruta or not os.path.exists(ruta):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
     with open(ruta, encoding="utf-8") as f:
         grupo = json.load(f)
@@ -1962,8 +2006,8 @@ def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
         return JSONResponse(status_code=422, content={
             "error": "Contanos por qué va en esa clasificación, así queda registrado"})
     banco_id = cuerpo.get("banco_id")
-    origen = next((l for l in ("banco_sin_contabilizar", "gastos_bancarios")
-                   if any(m["id"] == banco_id for m in datos.get(l, []))), None)
+    origen = next((lista for lista in ("banco_sin_contabilizar", "gastos_bancarios")
+                   if any(m["id"] == banco_id for m in datos.get(lista, []))), None)
     if not origen:
         return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
     mov = next(m for m in datos[origen] if m["id"] == banco_id)
@@ -2152,9 +2196,10 @@ def _generar_excel(datos):
 
     cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
                   "Archivo", "Cargado en FBS"]
-    fila_banco = lambda b: (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
-                            b["debito"] or "", b["credito"] or "", b["archivo"],
-                            b.get("cargado_fbs") or "")
+    def fila_banco(b):
+        return (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
+                b["debito"] or "", b["credito"] or "", b["archivo"],
+                b.get("cargado_fbs") or "")
     habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
     resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
     # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
@@ -2164,8 +2209,9 @@ def _generar_excel(datos):
          [fila_banco(b) for b in datos["gastos_bancarios"]])
 
     cols_mayor = ["Hoja", "Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"]
-    fila_mayor = lambda a: (a["hoja"], a["asiento"], a["fecha"], a["referencia"],
-                            a["comentario"], a["debe"] or "", a["haber"] or "")
+    def fila_mayor(a):
+        return (a["hoja"], a["asiento"], a["fecha"], a["referencia"],
+                a["comentario"], a["debe"] or "", a["haber"] or "")
     hoja("Mayor E sin banco", cols_mayor, [fila_mayor(a) for a in datos["e_sin_banco"]])
     hoja("O pendientes sin banco", cols_mayor,
          [fila_mayor(a) for a in datos["o_pendientes_sin_banco"]])

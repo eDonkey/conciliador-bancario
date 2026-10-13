@@ -491,8 +491,11 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     #    y su contrapartida que nunca van a tener movimiento en el banco)
     e_sin_banco, contraasientos = netear_contraasientos(e_sin_banco)
 
-    tot = lambda ms: round(sum(x.importe for x in ms), 2)
-    tot_a = lambda as_: round(sum(x.importe for x in as_), 2)
+    def tot(ms):
+        return round(sum(x.importe for x in ms), 2)
+
+    def tot_a(as_):
+        return round(sum(x.importe for x in as_), 2)
 
     # % explicado: además de los conciliados, los gastos bancarios cuyo período
     # cruzó contra una nota de débito del mayor están justificados aunque no

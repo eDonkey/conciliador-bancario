@@ -1,0 +1,17 @@
+.git
+.github
+.standards
+.claude
+.impeccable
+.venv
+venv
+tests
+__pycache__
+datos
+.env
+.env.*
+*.md
+config/cuentas_semilla.json
+*.pem
+.pytest_cache
+.ruff_cache

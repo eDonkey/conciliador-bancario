@@ -83,7 +83,10 @@ _PROHIBIDAS = re.compile(
     r"|writetext|updatetext|readtext|bulk|disable|enable"
     r"|declare|set|waitfor|raiserror|throw|print|begin|while|goto|return"
     r"|commit|rollback|save|transaction|tran|cursor|reconfigure|checkpoint"
-    r"|go)\b", re.IGNORECASE)
+    r"|go"
+    # hints de bloqueo: dentro de la transacción traban la tabla para el FBS
+    # hasta el rollback
+    r"|tablockx|tablock|xlock|updlock|holdlock|paglock|serializable|repeatableread)\b", re.IGNORECASE)
 
 
 def _sin_literales(query: str) -> str:
@@ -197,7 +200,8 @@ def _importe(v) -> float:
     return float(v)
 
 
-def cargar_conf() -> dict:
+def _conf_archivo() -> dict:
+    """La config guardada en datos/fbs_sql.json, sin los overrides del entorno."""
     conf = {"servidor": "", "puerto": 1433, "base": "", "usuario": "",
             "clave": "", "query": QUERY_EJEMPLO}
     if os.path.exists(RUTA_CONF):
@@ -206,6 +210,11 @@ def cargar_conf() -> dict:
                 conf.update(json.load(f))
         except (json.JSONDecodeError, OSError):
             pass
+    return conf
+
+
+def cargar_conf() -> dict:
+    conf = _conf_archivo()
     # el entorno pisa al archivo (deploys sin tocar datos/)
     conf["servidor"] = os.environ.get("FBS_SQL_SERVIDOR", conf["servidor"])
     conf["puerto"] = int(os.environ.get("FBS_SQL_PUERTO", conf["puerto"] or 1433))
@@ -274,7 +283,7 @@ def validar_destino(servidor: str, puerto) -> None:
     try:
         puerto = int(puerto or 1433)
     except (TypeError, ValueError):
-        raise ValueError("El puerto del FBS no es un número.")
+        raise ValueError("El puerto del FBS no es un número.") from None
     if not 1 <= puerto <= 65535 or puerto in _PUERTOS_PROHIBIDOS:
         raise ValueError(f"El puerto {puerto} no es aceptable para una conexión SQL Server.")
     try:
@@ -284,7 +293,7 @@ def validar_destino(servidor: str, puerto) -> None:
             ips = sorted({ipaddress.ip_address(i[4][0])
                           for i in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)})
         except OSError:
-            raise ValueError(f'El servidor "{host}" del FBS no resuelve.')
+            raise ValueError(f'El servidor "{host}" del FBS no resuelve.') from None
     for ip in ips:
         if ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
             raise ValueError(f"El servidor del FBS apunta a una dirección no permitida ({ip}).")
@@ -303,14 +312,17 @@ def guardar_conf(datos: dict, permitir_destino: bool = True):
     if str(datos.get("query") or "").strip():
         _validar_solo_lectura(str(datos["query"]))
         _validar_bloques_unicos(str(datos["query"]))
-    conf = cargar_conf()
-    previo = (conf["servidor"], conf["puerto"], conf["base"], conf["usuario"])
+    actual = cargar_conf()
+    # lo que viene del entorno (FBS_SQL_*, clave incluida) no se copia al
+    # archivo: se guarda lo que ya estaba en el archivo más lo que cambió
+    conf = _conf_archivo()
+    previo = (actual["servidor"], actual["puerto"], actual["base"], actual["usuario"])
     if "query" in datos:
         conf["query"] = str(datos["query"] or "").strip()
-    nuevo = (str(datos.get("servidor", conf["servidor"]) or "").strip(),
-             int(datos.get("puerto") or conf["puerto"] or 1433),
-             str(datos.get("base", conf["base"]) or "").strip(),
-             str(datos.get("usuario", conf["usuario"]) or "").strip())
+    nuevo = (str(datos.get("servidor", actual["servidor"]) or "").strip(),
+             int(datos.get("puerto") or actual["puerto"] or 1433),
+             str(datos.get("base", actual["base"]) or "").strip(),
+             str(datos.get("usuario", actual["usuario"]) or "").strip())
     cambios_destino = nuevo != previo or bool(datos.get("clave"))
     if cambios_destino:
         if destino_bloqueado():
@@ -434,7 +446,7 @@ def _consultar_pyodbc(conf: dict, query: str, params: dict) -> list[dict]:
         cur = con.cursor()
         cur.execute(q, *[params[n] for n in nombres]) if nombres else cur.execute(q)
         cols = [c[0] for c in cur.description]
-        filas = [dict(zip(cols, f)) for f in cur.fetchall()]
+        filas = [dict(zip(cols, f, strict=False)) for f in cur.fetchall()]
     finally:
         try:
             con.rollback()      # solo lectura
@@ -495,6 +507,10 @@ def _verificar_login_solo_lectura(conf: dict):
 def _consultar(conf: dict, query: str, params: dict) -> list[dict]:
     """_consultar_driver medido para el monitoreo: cada consulta al FBS queda
     como un tramo (servidor, base, driver, filas, demora y el error si falla)."""
+    if simulado():
+        # la demo nunca llega a un SQL Server: el modo hub usa la simulación
+        # y la conexión manual no existe ahí
+        raise ValueError("En la demo no hay conexión a un FBS real.")
     validar_destino(conf.get("servidor"), conf.get("puerto"))
     _verificar_login_solo_lectura(conf)
     with telemetria.tramo("FBS consulta", tipo="cliente", **{
@@ -525,7 +541,7 @@ def _consultar_driver(conf: dict, query: str, params: dict) -> list[dict]:
             return filas
         except ImportError as exc:
             if elegido == "pyodbc":
-                raise ValueError(f"pyodbc no disponible: {exc}")
+                raise ValueError(f"pyodbc no disponible: {exc}") from exc
             errores.append(f"[odbc] {exc}")
         except Exception as exc:  # noqa: BLE001
             if elegido == "pyodbc":
@@ -628,7 +644,7 @@ def traer(desde: str, hasta: str, marca: str = "",
     try:
         filas = _consultar(conf, conf["query"], {"desde": desde, "hasta": hasta})
     except Exception as exc:  # noqa: BLE001
-        raise ValueError(f"La consulta al FBS falló: {exc}")
+        raise ValueError(f"La consulta al FBS falló: {exc}") from exc
     _log_filas(filas)
     return _infos_desde_filas(filas)
 
@@ -788,7 +804,7 @@ def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
             except ValueError:
                 raise ValueError(
                     f'El ID de la cuenta {hoja} de {c["etiqueta"]} configurado '
-                    f'en el hub no es numérico: "{plan}".')
+                    f'en el hub no es numérico: "{plan}".') from None
             if (hoja, plan_n) in g["planes"]:
                 # dos cuentas del hub con el mismo ID de plan: un solo bloque,
                 # si no cada asiento vendría duplicado

@@ -55,7 +55,7 @@ def test_sin_clave_loopback_detras_de_proxy_se_rechaza():
 
 
 def test_health_es_publico():
-    assert cliente().get("/health").json() == {"ok": True}
+    assert cliente().get("/health").json() == {"ok": True, "status": "ok", "version": "local"}
 
 
 # ---- con APP_PASSWORD ------------------------------------------------------

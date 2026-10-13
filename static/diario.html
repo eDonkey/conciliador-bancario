@@ -582,6 +582,9 @@ function avisar(msg, tipo = 'error') {
   if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// argumento de un onclick="...": literal JS (JSON) escapado para el atributo. Escapar solo el
+// HTML no alcanza: el navegador decodifica &#39; antes de correr el JS.
+const jsArg = s => esc(JSON.stringify(String(s ?? '')));
 
 // Tema claro/oscuro: elección compartida entre las páginas del conciliador
 function pintarTema() {
@@ -1233,7 +1236,7 @@ async function cargarHistorial() {
         <td class="num">${g.pendientes || ''}</td>
         <td class="num">${g.explicado_promedio != null ? g.explicado_promedio + '%' : ''}</td>
         <td style="white-space:nowrap"><a href="${conMarca(`?grupo=${esc(g.grupo_id)}`)}" style="color:var(--azul)">Abrir tablero →</a>
-          <button class="secundario btn-fila peligro" onclick="eliminarGrupo('${esc(g.grupo_id)}', '${esc(g.procesado || '')}')"
+          <button class="secundario btn-fila peligro" onclick="eliminarGrupo(${jsArg(g.grupo_id)}, ${jsArg(g.procesado || '')})"
             aria-label="Eliminar la corrida del ${esc(g.procesado || '')}"
             title="Eliminar esta corrida (para rehacerla, p. ej. si se subió un extracto equivocado)"
             style="margin-left:8px;">Eliminar</button></td>

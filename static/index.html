@@ -749,6 +749,9 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// argumento de un onclick="...": literal JS (JSON) escapado para el atributo. Escapar solo el
+// HTML no alcanza: el navegador decodifica &#39; antes de correr el JS.
+const jsArg = s => esc(JSON.stringify(String(s ?? '')));
 
 /* ============ diálogos accesibles (foco, Escape, retorno) ============ */
 const SCROLL = { behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' };
@@ -1193,7 +1196,7 @@ $('#btnNuevaConc').addEventListener('click', () => {
     } else if (p.estado === 'listo' && !datos) {
       $('#avisos').innerHTML = `<div class="aviso info">Hay una conciliación previa disponible.
         <button class="secundario btn-chico" style="margin-left:8px;"
-          onclick="cargarResultado('${j}')">Retomar resultado</button></div>`;
+          onclick="cargarResultado(${jsArg(j)})">Retomar resultado</button></div>`;
     }
   } catch {}
 })();
@@ -1269,7 +1272,7 @@ function htmlVetos() {
       <span class="lado-eq"><b>${esc(v.mov.descripcion)}</b><small>${esc(fmtF(v.mov.fecha))} · $ ${fmt(v.mov.neto)}${v.mov.comprobante ? ' · ' + esc(v.mov.comprobante) : ''}</small></span>
       <span class="flecha" aria-hidden="true">≠</span>
       <span class="lado-eq"><b>${esc(v.asiento.hoja)} ${esc(v.asiento.asiento)}</b><small>${esc(fmtF(v.asiento.fecha))} · Debe $ ${fmt(v.asiento.debe)} · Haber $ ${fmt(v.asiento.haber)}${v.metodo ? ' · era ' + esc(v.metodo) : ''}${v.fecha ? ' · anulado el ' + esc(fmtF(v.fecha)) : ''}</small></span>
-      <button class="secundario btn-fila" type="button" onclick="permitirCruce('${esc(v.id)}')">Volver a permitir</button>
+      <button class="secundario btn-fila" type="button" onclick="permitirCruce(${jsArg(v.id)})">Volver a permitir</button>
     </div>`).join('')}
   </section>`;
 }
@@ -1612,12 +1615,12 @@ function pintarTabla() {
       if (tabActiva === 'conciliados_o')
         f.push({ html: m.confirmado
           ? `<button class="mini" style="background:var(--verde)"
-               onclick="confirmarMatch('${esc(m.banco.id)}', false)">Confirmado</button>`
+               onclick="confirmarMatch(${jsArg(m.banco.id)}, false)">Confirmado</button>`
           : `<button class="secundario btn-chico"
-               onclick="confirmarMatch('${esc(m.banco.id)}', true)">Confirmar</button>` });
+               onclick="confirmarMatch(${jsArg(m.banco.id)}, true)">Confirmar</button>` });
       f.push({ html: `<button class="secundario btn-fila"
         title="Este cruce no corresponde: se deshace, cada parte vuelve a su lista de pendientes y el sistema no lo vuelve a proponer"
-        onclick="anularCruce('${esc(m.banco.id)}')">Anular cruce</button>` });
+        onclick="anularCruce(${jsArg(m.banco.id)})">Anular cruce</button>` });
       return f;
     });
   } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios'
@@ -1640,17 +1643,17 @@ function pintarTabla() {
       let botones = b.cargado_fbs
         ? `<button class="secundario btn-fila"
             title="Quitar la marca: vuelve a figurar como pendiente de cargar"
-            onclick="marcarCargado('${esc(b.id)}', false)">Desmarcar</button>`
+            onclick="marcarCargado(${jsArg(b.id)}, false)">Desmarcar</button>`
         : `<button class="secundario btn-fila"
             title="Ya cargué este movimiento en el FBS. Queda pintado para el control (sigue en esta solapa hasta que cruce solo en la próxima conciliación)"
-            onclick="marcarCargado('${esc(b.id)}', true)">Cargado</button>`;
+            onclick="marcarCargado(${jsArg(b.id)}, true)">Cargado</button>`;
       botones += ` <button class="secundario btn-fila"
           title="Cambiar la clasificación de este movimiento, explicando el porqué (las próximas corridas lo respetan)"
-          onclick="abrirTransfer('${esc(b.id)}')">Transferir</button>`;
+          onclick="abrirTransfer(${jsArg(b.id)})">Transferir</button>`;
       if (tabActiva === 'banco_sin_contabilizar')
         botones += ` <button class="secundario btn-fila"
           title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras (aprende el término, no solo este movimiento)"
-          onclick="marcarGasto('${esc(b.descripcion).replace(/'/g, '&#39;')}')">→ gasto</button>`;
+          onclick="marcarGasto(${jsArg(b.descripcion)})">→ gasto</button>`;
       f.push({ html: botones });
       if (b.cargado_fbs) f._clase = 'cargado';
       return f;
@@ -1668,7 +1671,7 @@ function pintarTabla() {
         a.comentario, { num: a.debe }, { num: a.haber },
         { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}` },
         { html: `<button class="secundario btn-fila"
-           onclick="deshacerExclusion('${e.excl_id}')">Restaurar</button>` }]));
+           onclick="deshacerExclusion(${jsArg(e.excl_id)})">Restaurar</button>` }]));
     });
   } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
@@ -1708,7 +1711,7 @@ function pintarTabla() {
     cols = ['Movimientos banco', 'Asientos mayor', 'Confianza', 'Motivo', 'Acción'];
     filas = datos.ia.sugerencias.map((s, i) => [
       s.ids_banco.join(', '), s.ids_mayor.join(', '),
-      { html: `<span class="conf-${s.confianza}">${s.confianza}</span>` }, s.motivo,
+      { html: `<span class="conf-${esc(s.confianza)}">${esc(s.confianza)}</span>` }, s.motivo,
       { html: s.aceptada ? '<span class="conf-alta">aceptada</span>'
              : `<button class="mini" onclick="aceptarSugerencia(${i})">Aceptar</button>` }]);
   }
@@ -1743,7 +1746,7 @@ function celdaAnalisis(a) {
       ? 'regla previa' : 'corregido antes'}</span>`;
   return `<span style="display:flex; gap:6px; align-items:center;">
     <button class="btn-info" aria-label="Analizar con IA por qué este asiento quedó pendiente" title="Analizar con IA por qué este asiento quedó pendiente"
-      onclick="verAnalisis('${esc(a.id)}')">i</button>${badge}</span>`;
+      onclick="verAnalisis(${jsArg(a.id)})">i</button>${badge}</span>`;
 }
 
 window.verAnalisis = async id => {
@@ -2000,7 +2003,7 @@ function pintarMatchesManual() {
           ${m.regla_aprendida ? ' · <span class="metodo">regla aprendida para próximas conciliaciones</span>' : ''}
           ${m.nota ? ` · ${esc(m.nota)}` : ''}</div>
       </div>
-      <button onclick="deshacerManual('${m.match_id}')">Deshacer</button>
+      <button onclick="deshacerManual(${jsArg(m.match_id)})">Deshacer</button>
     </div>`).join('');
 }
 
@@ -2111,7 +2114,7 @@ function pintarEquiv() {
       <span class="lado-eq"><b>${esc(p.extracto)}</b><small>en el extracto</small></span>
       <span class="flecha">≈</span>
       <span class="lado-eq"><b>${esc(p.sistema)}</b><small>en el sistema</small></span>
-      <button class="quitar" title="Eliminar" onclick="eliminarEquiv('${esc(p.id)}')">×</button>
+      <button class="quitar" title="Eliminar" onclick="eliminarEquiv(${jsArg(p.id)})">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:var(--fs-md);">Todavía no hay equivalencias cargadas.</p>';
 }
@@ -2175,13 +2178,13 @@ function pintarGastos() {
   $('#gasLista').innerHTML = gastosConf.map(t => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(t.termino)}</b><small>se clasifica como gasto bancario</small></span>
-      <button class="quitar" title="Eliminar" onclick="eliminarGasto('${esc(t.id)}')">×</button>
+      <button class="quitar" title="Eliminar" onclick="eliminarGasto(${jsArg(t.id)})">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:var(--fs-md);">Todavía no cargaron conceptos propios. También podés usar el botón "→ gasto" en la solapa "Banco sin contabilizar".</p>';
   $('#excLista').innerHTML = gastosExc.map(t => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(t.termino)}</b><small>nunca se clasifica como gasto bancario</small></span>
-      <button class="quitar" title="Eliminar la excepción" onclick="eliminarExcepcion('${esc(t.id)}')">×</button>
+      <button class="quitar" title="Eliminar la excepción" onclick="eliminarExcepcion(${jsArg(t.id)})">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:var(--fs-md);">Sin excepciones todavía.</p>';
 }

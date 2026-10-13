@@ -3,6 +3,7 @@
 Ver engine/seguridad.py para el criterio."""
 import html
 import json
+import os
 import time
 from urllib.parse import parse_qs
 
@@ -12,6 +13,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from engine import seguridad as seg
 
 _METODOS_SEGUROS = ("GET", "HEAD", "OPTIONS")
+# commit desplegado (Railway lo pone en el entorno); "local" fuera de Railway
+VERSION = (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "")[:7] or "local"
 _NEXT_PERMITIDOS = {"": "./", "diario": "diario"}
 
 _PAGINA = """<!DOCTYPE html>
@@ -70,7 +73,9 @@ def instalar(app: FastAPI):
             return JSONResponse(status_code=400, content={"error": "Ruta inválida."})
 
         if path == "/health":
-            return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
+            # forma estándar de platform-standards ("status") + "ok" que ya se usaba
+            return JSONResponse({"ok": True, "status": "ok", "version": VERSION},
+                                headers={"Cache-Control": "no-store"})
 
         # Identidad del hub: el hub (Orbit) ya autenticó al usuario y firma sus cabeceras
         # X-Orbit-* (hub/docs/FIRMA_ORBIT.md). Con firma válida y un usuario no hace falta

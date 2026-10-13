@@ -1,0 +1,31 @@
+name: ci
+
+# Standard CI from caliper-lab/platform-standards. Required checks: "ci / build", "security / gate".
+# Tune with the inputs documented in the reusable workflows; don't add steps here unless
+# they are truly specific to this repo.
+
+on:
+  pull_request:
+  push:
+    branches: [main, master, fbs-sql]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: caliper-lab/platform-standards/.github/workflows/python-ci.yml@v1
+    with:
+      requirements: requirements-dev.txt   # includes requirements.txt + pytest/httpx/ruff
+      lint-blocking: true                  # tier 2: `ruff check .` is clean
+
+  security:
+    uses: caliper-lab/platform-standards/.github/workflows/security.yml@v1
+    # with:
+    #   sast-blocking: true      # tier 2
+    #   trivy-blocking: true     # tier 2
