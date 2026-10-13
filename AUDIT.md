@@ -193,3 +193,20 @@ local de cuentas, y servir siempre por https (la cookie se marca `Secure` solo s
     (`HUB_FBS_CIFRADO`), y este código tendrá que leerlas descifradas cuando se active.
 11. `/api/migracion/importar` sigue pudiendo sobrescribir datos (con `forzar`), ahora
     solo para usuarios autenticados y sin tocar la conexión FBS.
+
+## Override temporal del login con escritura (13/10/2026)
+
+Si el login del FBS todavía tiene permisos de escritura (db_owner, db_datawriter, sysadmin, db_ddladmin) y no hay uno de solo
+lectura, el conciliador se negaba a consultar. Para pasar el tiempo hasta crear el login nuevo:
+
+    FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA=AAAA-MM-DD
+
+- Vale hasta ese día inclusive, y la fecha puede estar a **60 días como máximo** de hoy. Vencida, o con una fecha inválida, el
+  rechazo vuelve solo (falla cerrado). Hay que reiniciar la app al cambiarla.
+- Con el override vigente el chequeo **sigue corriendo**: no corta, pero imprime una advertencia fuerte por login y por día
+  con los permisos que tiene, y deja el estado en `GET /api/diagnostico` (`override_login_escritura`).
+- Tiene prioridad sobre `FBS_SQL_PERMITIR_LOGIN_ESCRITURA=1`, la forma vieja y sin vencimiento, que sigue andando para no
+  cortar instalaciones que ya la usan pero se marca "SIN VENCIMIENTO" en el aviso y el diagnóstico.
+- No cambia nada del resto de la garantía: la app solo ejecuta una consulta SELECT validada (una sola sentencia, sin palabras
+  de escritura ni EXEC) y deshace cualquier efecto con rollback. El override solo afloja el chequeo de los permisos del login.
+- Se quita borrando la variable cuando exista el login con db_datareader.

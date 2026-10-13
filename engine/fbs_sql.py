@@ -462,33 +462,98 @@ _SQL_PRIVILEGIOS = (
     "ISNULL(IS_MEMBER('db_ddladmin'), 0) AS db_ddladmin")
 
 
+_OVERRIDE_MAX_DIAS = 60
+# login (servidor, puerto, base, usuario) -> {"fecha": día del último aviso, "permisos": [...]}
+_LOGINS_CON_OVERRIDE: dict = {}
+
+
+def override_login_escritura() -> dict:
+    """Estado del override temporal del chequeo de login de solo lectura.
+
+    FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA=AAAA-MM-DD deja pasar un login con permisos de escritura hasta ese
+    día inclusive (como máximo _OVERRIDE_MAX_DIAS días desde hoy). Vencido o con una fecha inválida, el chequeo
+    vuelve solo: falla cerrado. Tiene prioridad sobre FBS_SQL_PERMITIR_LOGIN_ESCRITURA=1, la forma vieja y sin
+    vencimiento, que sigue andando para no cortar instalaciones que ya la usan (y queda marcada como tal)."""
+    hasta_txt = os.environ.get("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", "").strip()
+    if hasta_txt:
+        try:
+            hasta = date.fromisoformat(hasta_txt)
+        except ValueError:
+            return {"activo": False, "invalido": True, "hasta": hasta_txt,
+                    "motivo": "la fecha no es AAAA-MM-DD"}
+        dias = (hasta - date.today()).days
+        if dias < 0:
+            return {"activo": False, "vencido": True, "hasta": hasta.isoformat(),
+                    "motivo": "el override venció"}
+        if dias > _OVERRIDE_MAX_DIAS:
+            return {"activo": False, "invalido": True, "hasta": hasta.isoformat(),
+                    "motivo": f"la fecha está a más de {_OVERRIDE_MAX_DIAS} días: un override es temporal"}
+        return {"activo": True, "hasta": hasta.isoformat(), "dias_restantes": dias}
+    if os.environ.get("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "").strip().lower() in ("1", "true", "on", "si"):
+        return {"activo": True, "hasta": None, "sin_vencimiento": True}
+    return {"activo": False}
+
+
 def permite_login_con_escritura() -> bool:
-    return os.environ.get("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "").strip().lower() in (
-        "1", "true", "on", "si")
+    return bool(override_login_escritura()["activo"])
+
+
+def _avisar_override(clave: tuple, permisos: list, ov: dict):
+    """Un aviso por login y por día (log fuerte y estado en /api/diagnostico)."""
+    hoy = date.today().isoformat()
+    previo = _LOGINS_CON_OVERRIDE.get(clave)
+    _LOGINS_CON_OVERRIDE[clave] = {"fecha": hoy, "permisos": permisos}
+    if previo and previo["fecha"] == hoy:
+        return
+    cuando = (f"hasta el {ov['hasta']} ({ov['dias_restantes']} días)" if ov.get("hasta")
+              else "SIN VENCIMIENTO (FBS_SQL_PERMITIR_LOGIN_ESCRITURA=1: pasá a _HASTA=AAAA-MM-DD)")
+    for _ in range(3):
+        print(f"[fbs] ADVERTENCIA SEGURIDAD: el login '{clave[3]}' del FBS ({clave[0]}/{clave[2]}) tiene "
+              f"permisos de {', '.join(permisos) or 'escritura o administración'} y se usa igual por el override "
+              f"temporal, {cuando}. La app solo ejecuta SELECT, pero hay que crear el login con db_datareader.",
+              flush=True)
 
 
 def _verificar_login_solo_lectura(conf: dict):
     """Capa 3 de la garantía de solo lectura: el login con el que se conecta
     el conciliador no puede ser administrador ni poder escribir. Se chequea
     una vez por (servidor, base, usuario) y se rechaza si tiene sysadmin,
-    db_owner, db_datawriter o db_ddladmin. FBS_SQL_PERMITIR_LOGIN_ESCRITURA=1
-    lo deja pasar (excepción consciente, mientras se crea un login de solo
-    lectura)."""
-    if simulado() or permite_login_con_escritura():
+    db_owner, db_datawriter o db_ddladmin.
+
+    Override temporal (mientras se crea un login de solo lectura):
+    FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA=AAAA-MM-DD. Con el override vigente el chequeo sigue corriendo: no
+    corta, pero avisa una vez por día qué permisos tiene el login, y queda en /api/diagnostico. Al vencer la
+    fecha el rechazo vuelve solo. Las otras capas (solo SELECT, rollback) no se tocan."""
+    if simulado():
         return
     clave = (conf.get("servidor"), conf.get("puerto"), conf.get("base"),
              conf.get("usuario"))
     if clave in _LOGINS_VERIFICADOS:
+        return
+    ov = override_login_escritura()
+    previo = _LOGINS_CON_OVERRIDE.get(clave)
+    if ov["activo"] and previo and previo["fecha"] == date.today().isoformat():
         return
     filas = _consultar_driver(conf, _SQL_PRIVILEGIOS, {})
     fila = {str(k).lower(): v for k, v in (filas[0] if filas else {}).items()}
     con_permiso = [k for k in ("sysadmin", "db_owner", "db_datawriter", "db_ddladmin")
                    if fila.get(k) == 1]
     if con_permiso or not fila:
+        if ov["activo"]:
+            _avisar_override(clave, con_permiso, ov)
+            return
+        causa = ""
+        if ov.get("vencido"):
+            causa = f" El override temporal venció el {ov['hasta']}."
+        elif ov.get("invalido"):
+            causa = f" El override temporal no vale: {ov['motivo']}."
         raise ValueError(
             "Protección de solo lectura: el usuario del FBS tiene permisos de "
             f"escritura o administración ({', '.join(con_permiso) or 'no se pudo verificar'}). "
-            "Creá un login con solo db_datareader y usalo acá.")
+            "Creá un login con solo db_datareader y usalo acá. Mientras tanto, "
+            "FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA=AAAA-MM-DD (máximo "
+            f"{_OVERRIDE_MAX_DIAS} días) lo deja pasar con aviso.{causa}")
+    _LOGINS_CON_OVERRIDE.pop(clave, None)
     _LOGINS_VERIFICADOS.add(clave)
 
 
@@ -750,6 +815,12 @@ def diagnostico() -> dict:
         "error_lectura_hub": _HUB_ESTADO["error"],
         "modo": "hub" if cfgs else "manual",
         "simulado": simulado(),
+        # override temporal del chequeo de login de solo lectura y los logins que hoy pasan gracias a él
+        "override_login_escritura": {
+            **override_login_escritura(),
+            "logins_con_escritura": [{"servidor": k[0], "base": k[2], "usuario": k[3], **v}
+                                     for k, v in _LOGINS_CON_OVERRIDE.items()],
+        },
     }
 
 
