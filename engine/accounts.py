@@ -42,7 +42,7 @@ def _read_seed() -> list[tuple]:
     except FileNotFoundError:
         return []
     except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"[cuentas] Semilla ilegible en {SEED_PATH} ({exc}); queda vacía")
+        print(f"[accounts] Unreadable seed in {SEED_PATH} ({exc}); it stays empty")
         return []
 
 
@@ -101,7 +101,7 @@ def _from_db() -> list[dict] | None:
     _cache["cuentas"] = None
     url = _database_url()
     if not url:
-        print("[cuentas] Sin DATABASE_URL: uso la copia local de cuentas")
+        print("[accounts] No DATABASE_URL: using the local copy of the accounts")
         return None
     try:
         import psycopg2
@@ -124,8 +124,8 @@ def _from_db() -> list[dict] | None:
         _cache["cuentas"] = accounts or None
         return _cache["cuentas"]
     except Exception as e:
-        print(f"[cuentas] No pude leer las cuentas del Postgres del hub ({e}); "
-              "uso la copia local como fallback")
+        print(f"[accounts] Could not read the accounts from the hub Postgres ({e}); "
+              "falling back to the local copy")
         return None
 
 

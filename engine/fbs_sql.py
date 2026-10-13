@@ -527,7 +527,7 @@ def _query_with_driver(conf: dict, query: str, params: dict) -> list[dict]:
     """Runs the query with the best driver available: Windows' native ODBC
     first, FreeTDS (pymssql) as the fallback. FBS_SQL_DRIVER (pyodbc|pymssql)
     forces just one."""
-    print("[fbs] Query a ejecutar (copiable a SSMS):\n"
+    print("[fbs] Query to run (paste it into SSMS):\n"
           "-------------------------------------------\n"
           + _query_for_log(query, params)
           + "\n-------------------------------------------", flush=True)
@@ -557,7 +557,7 @@ def _query_with_driver(conf: dict, query: str, params: dict) -> list[dict]:
 
 
 def _log_rows(rows: list[dict]):
-    print(f"[fbs] La consulta devolvió {len(rows)} fila(s) "
+    print(f"[fbs] The query returned {len(rows)} row(s) "
           f"(driver {_DRIVER_USED['nombre']})", flush=True)
 
 
@@ -728,7 +728,7 @@ def hub_fbs_accounts() -> list[dict]:
         finally:
             con.close()
     except Exception as exc:  # noqa: BLE001 — no hub configured is not an error
-        print(f"[fbs] No pude leer la config FBS del hub ({exc})")
+        print(f"[fbs] Could not read the FBS config from the hub ({exc})")
         _HUB_STATE["error"] = str(exc)
         return []
     _HUB_STATE["error"] = None
@@ -807,8 +807,8 @@ def _fetch_from_hub(cfgs: list[dict], date_from: str, date_to: str) -> list[dict
             if (sheet, plan_n) in g["planes"]:
                 # two hub accounts with the same plan id: a single block,
                 # otherwise every entry would come twice
-                print(f"[fbs] Aviso: el plan {plan_n} ({sheet}) está configurado "
-                      f"en más de una cuenta del hub; se consulta una sola vez",
+                print(f"[fbs] Warning: plan {plan_n} ({sheet}) is configured "
+                      f"in more than one hub account; it is queried once",
                       flush=True)
                 continue
             g["planes"].append((sheet, plan_n))
@@ -827,7 +827,7 @@ def _fetch_from_hub(cfgs: list[dict], date_from: str, date_to: str) -> list[dict
         for connection_id, g in by_connection.items():
             rows = [f for c in accounts if c["conexion_id"] == connection_id
                     for f in simulacion.filas_detmov(c, d1, d2)]
-            print(f"[fbs] (demo) {g['nombre']}: {len(rows)} fila(s) simuladas", flush=True)
+            print(f"[fbs] (demo) {g['nombre']}: {len(rows)} simulated row(s)", flush=True)
             out.extend(_infos_from_rows(rows, g["cuenta_por_codigo"]))
         return out
     for g in by_connection.values():
@@ -845,5 +845,5 @@ def _fetch_from_hub(cfgs: list[dict], date_from: str, date_to: str) -> list[dict
     if errors and not out:
         raise ValueError("La consulta al FBS falló: " + " | ".join(errors))
     if errors:
-        print(f"[fbs] Conexiones con error (parcial): {errors}")
+        print(f"[fbs] Connections with errors (partial): {errors}")
     return out
