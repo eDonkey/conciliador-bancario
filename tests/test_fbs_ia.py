@@ -188,7 +188,7 @@ def test_analizar_responde_429(monkeypatch):
     monkeypatch.setattr(app_mod, "_obtener", lambda j: {
         "e_sin_banco": [{"id": "E#1", "referencia": "x", "comentario": "y"}],
         "o_pendientes_sin_banco": [], "banco_sin_contabilizar": []})
-    monkeypatch.setattr(app_mod.ai_assist, "disponible", lambda: True)
+    monkeypatch.setattr(app_mod.ai_assist, "available", lambda: True)
     monkeypatch.setattr(app_mod.analisis_mod, "cargar", lambda: [])
     c = TestClient(app_mod.app, client=LOCAL, follow_redirects=False)
     r = c.post("/api/analizar/abc", json={"id_mayor": "E#1"})

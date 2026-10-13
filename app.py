@@ -384,17 +384,17 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                      eta=(total - tanda + 1) * seg_tanda)
 
             if usar_ia == "simular":
-                ia_sugerencias = ai_assist.simular_sugerencias(
-                    residual_banco, residual_mayor, progreso=prog_ia,
-                    glosario=equivalencias)
+                ia_sugerencias = ai_assist.simulate_suggestions(
+                    residual_banco, residual_mayor, progress=prog_ia,
+                    glossary=equivalencias)
                 ia_estado = "simulada"
-            elif not ai_assist.disponible():
+            elif not ai_assist.available():
                 ia_estado = "sin_credenciales"
             else:
                 try:
-                    ia_sugerencias = ai_assist.sugerir_matches(
-                        residual_banco, residual_mayor, progreso=prog_ia,
-                        glosario=equivalencias)
+                    ia_sugerencias = ai_assist.suggest_matches(
+                        residual_banco, residual_mayor, progress=prog_ia,
+                        glossary=equivalencias)
                     ia_estado = "ok"
                 except presupuesto_ia.PresupuestoExcedido as exc:
                     ia_estado = f"error: {exc}"     # se sigue sin IA
@@ -444,7 +444,7 @@ def api_diagnostico():
     clave = os.environ.get("ANTHROPIC_API_KEY") or ""
     token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
     return {
-        "ia_disponible": ai_assist.disponible(),
+        "ia_disponible": ai_assist.available(),
         "ia_presupuesto": presupuesto_ia.estado(),
         "ANTHROPIC_API_KEY": {
             "presente": bool(clave.strip()),
@@ -453,7 +453,7 @@ def api_diagnostico():
             "entre_comillas": clave.strip()[:1] in ('"', "'") if clave.strip() else False,
         },
         "ANTHROPIC_AUTH_TOKEN_presente": bool(token.strip()),
-        "archivo_clave_local": os.path.exists(ai_assist.RUTA_CLAVE),
+        "archivo_clave_local": os.path.exists(ai_assist.KEY_FILE),
         # True si datos/ está montado como volumen persistente (Railway):
         # sin esto, todo el aprendizaje se pierde en cada deploy
         "datos_es_volumen": os.path.ismount(DATOS_DIR),

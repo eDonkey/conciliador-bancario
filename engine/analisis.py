@@ -204,7 +204,7 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
     if clave in cache:
         return {"texto": cache[clave]["texto"], "origen": "cache"}
 
-    if not ai_assist.disponible():
+    if not ai_assist.available():
         return {"texto": _interno(asiento, banco_residual,
                                   "No hay credenciales de IA configuradas."),
                 "origen": "interno"}
@@ -246,7 +246,7 @@ def analizar_asiento(asiento: dict, banco_residual: list[dict],
                                       "correccion": (c.get("correccion") or "")[:200]}
                                      for c in correcciones[:5]], ensure_ascii=False))
 
-        ai_assist._cargar_clave()
+        ai_assist._load_key()
         client = anthropic.Anthropic(timeout=60, max_retries=2)
         r = client.messages.create(
             model=MODELO, max_tokens=400, system=SYSTEM,
