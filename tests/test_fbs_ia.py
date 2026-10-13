@@ -218,3 +218,120 @@ def test_semilla_de_cuentas_fuera_del_codigo(monkeypatch, tmp_path):
     assert cuentas_mod._leer_semilla() == [("E", "macro", "1", "ARS")]
     ruta.write_text("{roto")
     assert cuentas_mod._leer_semilla() == []
+
+
+# ---- override temporal del login con escritura --------------------------------------------------
+
+from datetime import date as _date, timedelta as _td
+
+
+def _conf_login():
+    return {"servidor": "192.168.1.5", "puerto": 1433, "base": "b", "usuario": "consultoraread"}
+
+
+def _con_escritura(monkeypatch):
+    monkeypatch.setattr(fbs_sql, "_consultar_driver",
+                        lambda c, q, p: [{"sysadmin": 0, "db_owner": 0, "db_datawriter": 1, "db_ddladmin": 0}])
+    fbs_sql._LOGINS_VERIFICADOS.clear()
+    fbs_sql._LOGINS_CON_OVERRIDE.clear()
+    for v in ("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA"):
+        monkeypatch.delenv(v, raising=False)
+
+
+def _en(dias: int) -> str:
+    return (_date.today() + _td(days=dias)).isoformat()
+
+
+def test_override_temporal_vigente_pasa_y_avisa(monkeypatch, capsys):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(7))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    salida = capsys.readouterr().out
+    assert "ADVERTENCIA SEGURIDAD" in salida and "db_datawriter" in salida and "consultoraread" in salida
+    d = fbs_sql.diagnostico()["override_login_escritura"]
+    assert d["activo"] and d["dias_restantes"] == 7
+    assert d["logins_con_escritura"][0]["permisos"] == ["db_datawriter"]
+
+
+def test_override_aviso_una_vez_por_dia(monkeypatch, capsys):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(3))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    capsys.readouterr()
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    assert "ADVERTENCIA" not in capsys.readouterr().out
+
+
+def test_override_vence_y_el_rechazo_vuelve(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(-1))
+    with pytest.raises(ValueError, match="venció"):
+        fbs_sql._verificar_login_solo_lectura(_conf_login())
+    assert not fbs_sql.permite_login_con_escritura()
+
+
+def test_override_hasta_hoy_inclusive(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(0))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+
+
+def test_override_se_corta_al_cambiar_el_dia(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(2))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    clave = next(iter(fbs_sql._LOGINS_CON_OVERRIDE))
+    fbs_sql._LOGINS_CON_OVERRIDE[clave]["fecha"] = _en(-1)      # el último aviso fue ayer: se vuelve a chequear
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(-1))
+    with pytest.raises(ValueError, match="solo lectura"):
+        fbs_sql._verificar_login_solo_lectura(_conf_login())
+
+
+@pytest.mark.parametrize("valor", ["mañana", "2026-13-40", "", "31/12/2026"])
+def test_override_fecha_invalida_falla_cerrado(monkeypatch, valor):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", valor)
+    with pytest.raises(ValueError, match="solo lectura"):
+        fbs_sql._verificar_login_solo_lectura(_conf_login())
+
+
+def test_override_no_puede_ser_largo(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(fbs_sql._OVERRIDE_MAX_DIAS + 1))
+    with pytest.raises(ValueError, match="temporal"):
+        fbs_sql._verificar_login_solo_lectura(_conf_login())
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(fbs_sql._OVERRIDE_MAX_DIAS))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+
+
+def test_override_con_fecha_vencida_gana_sobre_el_flag_viejo(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "1")
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(-2))
+    with pytest.raises(ValueError):
+        fbs_sql._verificar_login_solo_lectura(_conf_login())
+
+
+def test_flag_viejo_sigue_andando_y_se_marca_sin_vencimiento(monkeypatch, capsys):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "1")
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    assert "SIN VENCIMIENTO" in capsys.readouterr().out
+    assert fbs_sql.diagnostico()["override_login_escritura"]["sin_vencimiento"] is True
+
+
+def test_override_no_toca_la_validacion_de_las_consultas(monkeypatch):
+    _con_escritura(monkeypatch)
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(5))
+    with pytest.raises(ValueError, match="solo lectura"):
+        fbs_sql._validar_solo_lectura("UPDATE t SET a=1")
+
+
+def test_login_limpio_con_override_no_avisa(monkeypatch, capsys):
+    monkeypatch.setattr(fbs_sql, "_consultar_driver",
+                        lambda c, q, p: [{"sysadmin": 0, "db_owner": 0, "db_datawriter": 0, "db_ddladmin": 0}])
+    fbs_sql._LOGINS_VERIFICADOS.clear()
+    fbs_sql._LOGINS_CON_OVERRIDE.clear()
+    monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(5))
+    fbs_sql._verificar_login_solo_lectura(_conf_login())
+    assert "ADVERTENCIA" not in capsys.readouterr().out
