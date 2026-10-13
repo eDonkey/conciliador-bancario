@@ -1,49 +1,54 @@
 # -*- coding: utf-8 -*-
-"""Telemetría del servicio (monitoreo): errores, trazas, métricas y logs.
+"""Service telemetry (monitoring): errors, traces, metrics and logs.
 
-Manda todo por OpenTelemetry a New Relic (o a cualquier backend OTLP/HTTP)
-con el GRUPO y el SERVICIO en cada dato, así un mismo tablero y las mismas
-alertas sirven para todos los grupos donde se instalen las apps.
+Sends everything through OpenTelemetry to New Relic (or any OTLP/HTTP backend)
+with the GROUP and the SERVICE on every item, so one dashboard and one set of
+alerts serve every group where the apps are installed.
 
-FUENTE ÚNICA: monitor/python/telemetria.py. Cada app tiene una copia idéntica
-en engine/telemetria.py (app/telemetria.py en la API de planes de ahorro,
-src/sga_mcp/telemetria.py en su MCP) que se actualiza con
+SINGLE SOURCE: monitor/python/telemetria.py. Each app has an identical copy in
+engine/telemetria.py (app/telemetria.py in the savings-plan API,
+src/sga_mcp/telemetria.py in its MCP) that is updated with
 `python monitor/sincronizar.py`.
-No editar la copia de una app: se pisa en la próxima sincronización.
+Don't edit an app's copy: the next sync overwrites it.
 
-Uso (app.py, apenas se crea la app):
+The public API keeps its Spanish names (every app calls it): iniciar, tramo,
+registrar_error, anotar, evento, envolver_asgi, activa, estado. Everything the
+module sends (attribute keys and values, span, metric and log names) is a
+contract with the dashboard and the alerts and stays as it is.
+
+Usage (app.py, right after creating the app):
 
     from engine import telemetria
     app = FastAPI(...)
     telemetria.iniciar(app, "conciliador", puerto=8765)
 
-Errores que la app maneja (no llegan como 500) pero que hay que ver igual:
+Errors the app handles (they don't arrive as 500s) but that must still be seen:
 
     except Exception as exc:
         telemetria.registrar_error(exc, origen="job", job=job_id)
 
-Tramos propios, para medir lo que importa (consultas al FBS, jobs, IA):
+Custom spans, to measure what matters (FBS queries, jobs, AI):
 
     with telemetria.tramo("FBS consulta", tipo="cliente", marca=marca) as t:
         filas = ...
         t.set_attribute("fbs.filas", len(filas))
 
-Variables (del entorno o del .env al lado de app.py, sin pisar el entorno):
+Variables (from the environment or the .env next to app.py, never overriding the environment):
 
-    NEW_RELIC_LICENSE_KEY   license key de ingesta: activa el envío a New Relic
-    NEW_RELIC_REGION        us (por defecto) | eu
+    NEW_RELIC_LICENSE_KEY   ingest license key: turns on sending to New Relic
+    NEW_RELIC_REGION        us (default) | eu
     OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS
-                            otro backend OTLP/HTTP (Grafana Cloud, SigNoz...)
-    MONITOR_GRUPO           grupo o cliente dueño de la instalación (nave-motors)
+                            another OTLP/HTTP backend (Grafana Cloud, SigNoz...)
+    MONITOR_GRUPO           group or client that owns the installation (nave-motors)
     MONITOR_ENTORNO         produccion | demo | desarrollo
-    MONITOR_DESPLIEGUE      on-premise | railway (se detecta solo)
-    MONITOR_MUESTREO        fracción de trazas que se guardan (1 = todas)
-    MONITOR_NIVEL_LOGS      nivel mínimo de logs que se envían (INFO)
-    MONITOR_INTERVALO       segundos entre envíos de métricas (60)
-    MONITOR_ACTIVO=0        apaga la telemetría aunque haya destino
+    MONITOR_DESPLIEGUE      on-premise | railway (detected automatically)
+    MONITOR_MUESTREO        fraction of traces kept (1 = all)
+    MONITOR_NIVEL_LOGS      minimum level of the logs that are sent (INFO)
+    MONITOR_INTERVALO       seconds between metric exports (60)
+    MONITOR_ACTIVO=0        turns telemetry off even with a destination
 
-Nunca rompe la app: sin destino, sin los paquetes instalados o ante cualquier
-falla propia queda en modo nulo y la app sigue exactamente igual.
+It never breaks the app: without a destination, without the packages installed
+or on any failure of its own it stays in null mode and the app runs exactly the same.
 """
 import atexit
 import importlib
@@ -60,30 +65,31 @@ import unicodedata
 from contextlib import contextmanager
 from urllib.parse import unquote, urlparse
 
-VERSION_MODULO = "2026.09.24"
+VERSION_MODULO = "2026.10.05"
 
-# carpeta de la app (este archivo vive en <app>/engine/)
-_RAIZ_APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# the app's folder (this file lives in <app>/engine/)
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Lo que no vale la pena trazar: estáticos, el chequeo del vigía del hub y el
-# ícono. Son regex separadas por coma (no usar comas dentro de una regex).
-_EXCLUIR_SIEMPRE = (
+# Not worth tracing: static files, the hub watchdog's check and the icon.
+# Regexes joined by commas (don't use commas inside a regex).
+_ALWAYS_EXCLUDED = (
     r"/static/",
     r"\.(?:js|css|map|png|jpe?g|gif|svg|ico|woff2?|ttf)(?:\?|$)",
     r"favicon",
     r"/__monitor",
 )
 
-_estado = {"activo": False, "motivo": "sin iniciar"}
+# What estado() reports; its keys are part of the apps' /api/diagnostico.
+_state = {"activo": False, "motivo": "sin iniciar"}
 _tracer = None
-_contador_errores = None
-_proveedores = []
-_inicio = time.time()
+_error_counter = None
+_providers = []
+_start_time = time.time()
 _log = logging.getLogger("monitor")
 
 
-class _TramoNulo:
-    """Lo que devuelve tramo() sin telemetría: acepta todo y no hace nada."""
+class _NullSpan:
+    """What tramo() returns without telemetry: accepts everything and does nothing."""
 
     def set_attribute(self, *a, **k):
         pass
@@ -104,95 +110,105 @@ class _TramoNulo:
         return False
 
 
-_TRAMO_NULO = _TramoNulo()
+_NULL_SPAN = _NullSpan()
 
 
-# ---------------------------------------------------------------- utilidades
-def _verdadero(valor) -> bool:
-    return str(valor or "").strip().lower() in ("1", "true", "on", "si", "sí", "yes")
+# ------------------------------------------------------------------ helpers
+def _truthy(value) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "on", "si", "sí", "yes")
 
 
-def _slug(texto) -> str:
-    t = unicodedata.normalize("NFD", str(texto or "")).encode("ascii", "ignore").decode()
+def _slug(text) -> str:
+    t = unicodedata.normalize("NFD", str(text or "")).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "-", t.lower()).strip("-")
 
 
-def _recortar(texto, largo=1000) -> str:
-    texto = str(texto)
-    return texto if len(texto) <= largo else texto[: largo - 1] + "…"
+def _truncate(text, length=1000) -> str:
+    text = str(text)
+    return text if len(text) <= length else text[: length - 1] + "…"
 
 
-def _limpiar(atributos: dict) -> dict:
-    """Atributos aceptados por OpenTelemetry: escalares o listas de escalares."""
-    limpios = {}
-    for clave, valor in (atributos or {}).items():
-        if valor is None:
+_URL_WITH_QUERY = re.compile(r"(\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s?#\"'<>]*)\?[^\s#\"'<>]*")
+
+
+def _strip_url_queries(text: str) -> str:
+    """Removes the query of the URLs in a log message: httpx logs every request at
+    INFO with its full URL ("HTTP Request: GET https://api/x?documento=..."), and
+    searches, documents and tokens travel there."""
+    return _URL_WITH_QUERY.sub(r"\1", text) if "://" in text else text
+
+
+def _clean_attributes(attributes: dict) -> dict:
+    """Attributes OpenTelemetry accepts: scalars or lists of scalars."""
+    cleaned = {}
+    for key, value in (attributes or {}).items():
+        if value is None:
             continue
-        if isinstance(valor, (bool, int, float)):
-            limpios[str(clave)] = valor
-        elif isinstance(valor, (list, tuple, set)):
-            limpios[str(clave)] = [_recortar(v, 300) for v in list(valor)[:50]]
+        if isinstance(value, (bool, int, float)):
+            cleaned[str(key)] = value
+        elif isinstance(value, (list, tuple, set)):
+            cleaned[str(key)] = [_truncate(v, 300) for v in list(value)[:50]]
         else:
-            limpios[str(clave)] = _recortar(valor)
-    return limpios
+            cleaned[str(key)] = _truncate(value)
+    return cleaned
 
 
-def _cargar_env_local():
-    """Suma las variables de monitoreo del .env de la app, sin pisar el entorno.
-    Solo MONITOR_*, NEW_RELIC_* y OTEL_*: el resto lo carga cada app a su modo."""
+def _load_local_env():
+    """Adds the monitoring variables of the app's .env, without overriding the
+    environment. Only MONITOR_*, NEW_RELIC_* and OTEL_*: each app loads the rest its own way."""
     try:
-        with open(os.path.join(_RAIZ_APP, ".env"), encoding="utf-8-sig") as f:
-            lineas = f.read().splitlines()
+        with open(os.path.join(_APP_ROOT, ".env"), encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
     except OSError:
         return
-    for linea in lineas:
-        m = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", linea)
+    for line in lines:
+        m = re.match(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", line)
         if not m or not m.group(1).startswith(("MONITOR_", "NEW_RELIC_", "OTEL_")):
             continue
-        valor = m.group(2)
-        if len(valor) >= 2 and valor[0] == valor[-1] and valor[0] in "\"'":
-            valor = valor[1:-1]
-        os.environ.setdefault(m.group(1), valor)
+        value = m.group(2)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(m.group(1), value)
 
 
-def _version_git():
-    """(rama, commit corto) de lo que está corriendo, leyendo .git sin llamar a
-    git. En Railway vienen en variables del deploy."""
-    rama = os.environ.get("RAILWAY_GIT_BRANCH", "")
+def _git_version():
+    """(branch, short commit) of what is running, reading .git without calling
+    git. On Railway they come in deploy variables."""
+    branch = os.environ.get("RAILWAY_GIT_BRANCH", "")
     commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7]
     if commit:
-        return rama, commit
+        return branch, commit
     try:
-        git = os.path.join(_RAIZ_APP, ".git")
-        if os.path.isfile(git):                      # worktree: "gitdir: <ruta>"
+        git = os.path.join(_APP_ROOT, ".git")
+        if os.path.isfile(git):                      # worktree: "gitdir: <path>"
             with open(git, encoding="utf-8") as f:
-                git = os.path.normpath(os.path.join(_RAIZ_APP, f.read().split(":", 1)[1].strip()))
-        comun = git
+                git = os.path.normpath(os.path.join(_APP_ROOT, f.read().split(":", 1)[1].strip()))
+        common = git
         if os.path.isfile(os.path.join(git, "commondir")):
             with open(os.path.join(git, "commondir"), encoding="utf-8") as f:
-                comun = os.path.normpath(os.path.join(git, f.read().strip()))
+                common = os.path.normpath(os.path.join(git, f.read().strip()))
         with open(os.path.join(git, "HEAD"), encoding="utf-8") as f:
             head = f.read().strip()
         if not head.startswith("ref:"):
-            return "", head[:7]                      # HEAD suelto
+            return "", head[:7]                      # detached HEAD
         ref = head[4:].strip()
-        rama = ref.split("refs/heads/", 1)[-1]
-        ruta_ref = os.path.join(comun, *ref.split("/"))
-        if os.path.isfile(ruta_ref):
-            with open(ruta_ref, encoding="utf-8") as f:
+        branch = ref.split("refs/heads/", 1)[-1]
+        ref_path = os.path.join(common, *ref.split("/"))
+        if os.path.isfile(ref_path):
+            with open(ref_path, encoding="utf-8") as f:
                 commit = f.read().strip()[:7]
-        elif os.path.isfile(os.path.join(comun, "packed-refs")):
-            with open(os.path.join(comun, "packed-refs"), encoding="utf-8") as f:
-                for linea in f:
-                    if linea.rstrip().endswith(" " + ref):
-                        commit = linea.split()[0][:7]
+        elif os.path.isfile(os.path.join(common, "packed-refs")):
+            with open(os.path.join(common, "packed-refs"), encoding="utf-8") as f:
+                for line in f:
+                    if line.rstrip().endswith(" " + ref):
+                        commit = line.split()[0][:7]
                         break
     except (OSError, IndexError):
         pass
-    return rama, commit
+    return branch, commit
 
 
-def _puerto(por_defecto) -> str:
+def _port(default) -> str:
     if os.environ.get("PORT"):
         return os.environ["PORT"].strip()
     args = sys.argv
@@ -201,91 +217,92 @@ def _puerto(por_defecto) -> str:
             return args[i + 1]
         if arg.startswith("--port="):
             return arg.split("=", 1)[1]
-    return str(por_defecto or "")
+    return str(default or "")
 
 
-def _entorno() -> str:
-    valor = _slug(os.environ.get("MONITOR_ENTORNO", ""))
-    if valor:
-        return valor
-    # cada app tiene su bandera de demo (DEMO_MODE, PANEL_DEMO, COMPENSADOR_DEMO_MODE...)
-    if any(_verdadero(v) for k, v in os.environ.items()
+def _environment() -> str:
+    value = _slug(os.environ.get("MONITOR_ENTORNO", ""))
+    if value:
+        return value
+    # every app has its own demo flag (DEMO_MODE, PANEL_DEMO, COMPENSADOR_DEMO_MODE...)
+    if any(_truthy(v) for k, v in os.environ.items()
            if k == "DEMO_MODE" or k.endswith(("_DEMO", "_DEMO_MODE"))):
         return "demo"
     return "produccion"
 
 
-def _despliegue() -> str:
-    valor = _slug(os.environ.get("MONITOR_DESPLIEGUE", ""))
-    if valor:
-        return valor
+def _deployment() -> str:
+    value = _slug(os.environ.get("MONITOR_DESPLIEGUE", ""))
+    if value:
+        return value
     if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"):
         return "railway"
     return "on-premise" if os.name == "nt" else "servidor"
 
 
-def _cabeceras(texto: str) -> dict:
-    """OTEL_EXPORTER_OTLP_HEADERS: "clave=valor,clave2=valor2" (url-encoded)."""
-    cab = {}
-    for parte in str(texto or "").split(","):
-        if "=" in parte:
-            clave, valor = parte.split("=", 1)
-            if clave.strip():
-                cab[unquote(clave.strip())] = unquote(valor.strip())
-    return cab
+def _parse_headers(text: str) -> dict:
+    """OTEL_EXPORTER_OTLP_HEADERS: "key=value,key2=value2" (url-encoded)."""
+    headers = {}
+    for part in str(text or "").split(","):
+        if "=" in part:
+            key, value = part.split("=", 1)
+            if key.strip():
+                headers[unquote(key.strip())] = unquote(value.strip())
+    return headers
 
 
-def _destino():
-    """(url base, cabeceras, nombre) del backend OTLP/HTTP; None si no hay."""
-    clave = (os.environ.get("NEW_RELIC_LICENSE_KEY") or "").strip().strip("\"'")
+def _destination():
+    """(base url, headers, name) of the OTLP/HTTP backend; None if there is none."""
+    key = (os.environ.get("NEW_RELIC_LICENSE_KEY") or "").strip().strip("\"'")
     base = (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or "").strip()
     if base:
-        cabeceras = _cabeceras(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", ""))
-        es_nr = (urlparse(base).hostname or "").endswith("nr-data.net")
-        # la license key solo viaja a New Relic, nunca a otro backend
-        if clave and es_nr and not any(k.lower() == "api-key" for k in cabeceras):
-            cabeceras["api-key"] = clave
-        return base.rstrip("/"), cabeceras, "new-relic" if es_nr else "otlp"
-    if clave:
+        headers = _parse_headers(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS", ""))
+        host = urlparse(base).hostname or ""
+        is_new_relic = host == "nr-data.net" or host.endswith(".nr-data.net")
+        # the license key only goes to New Relic, never to another backend
+        if key and is_new_relic and not any(k.lower() == "api-key" for k in headers):
+            headers["api-key"] = key
+        return base.rstrip("/"), headers, "new-relic" if is_new_relic else "otlp"
+    if key:
         eu = os.environ.get("NEW_RELIC_REGION", "").strip().lower() == "eu"
         base = "https://otlp.eu01.nr-data.net" if eu else "https://otlp.nr-data.net"
-        return base, {"api-key": clave}, "new-relic"
+        return base, {"api-key": key}, "new-relic"
     return None
 
 
-def _severidad(nivel: int):
+def _severity(level: int):
     from opentelemetry._logs import SeverityNumber
-    if nivel >= logging.CRITICAL:
+    if level >= logging.CRITICAL:
         return SeverityNumber.FATAL, "FATAL"
-    if nivel >= logging.ERROR:
+    if level >= logging.ERROR:
         return SeverityNumber.ERROR, "ERROR"
-    if nivel >= logging.WARNING:
+    if level >= logging.WARNING:
         return SeverityNumber.WARN, "WARN"
-    if nivel >= logging.INFO:
+    if level >= logging.INFO:
         return SeverityNumber.INFO, "INFO"
     return SeverityNumber.DEBUG, "DEBUG"
 
 
-class _ManejadorLogs(logging.Handler):
-    """Manda los logs de Python como logs OTLP, con la traza y la excepción."""
+class _LogHandler(logging.Handler):
+    """Sends Python logs as OTLP logs, with the trace and the exception."""
 
-    def __init__(self, proveedor, nivel):
-        super().__init__(level=nivel)
-        self._proveedor = proveedor
+    def __init__(self, provider, level):
+        super().__init__(level=level)
+        self._provider = provider
         self._local = threading.local()
 
     def emit(self, record):
-        # los logs del propio envío (exportador, urllib3) no se re-envían: si
-        # el backend está caído sería un bucle
-        if record.name.startswith(("opentelemetry", "urllib3")) or getattr(self._local, "dentro", False):
+        # the exporter's own logs (exporter, urllib3) are not re-sent: with the
+        # backend down that would be a loop
+        if record.name.startswith(("opentelemetry", "urllib3")) or getattr(self._local, "inside", False):
             return
-        self._local.dentro = True
+        self._local.inside = True
         try:
             try:
-                cuerpo = record.getMessage()
-            except Exception:  # noqa: BLE001 — un log mal formado igual sale
-                cuerpo = str(record.msg)
-            atributos = {
+                body = record.getMessage()
+            except Exception:  # noqa: BLE001 — a malformed log still goes out
+                body = str(record.msg)
+            attributes = {
                 "logger.name": record.name,
                 "code.function.name": record.funcName,
                 "code.file.path": record.pathname,
@@ -294,97 +311,97 @@ class _ManejadorLogs(logging.Handler):
             }
             extra = getattr(record, "monitor", None)
             if isinstance(extra, dict):
-                atributos.update(extra)
-            numero, texto = _severidad(record.levelno)
-            excepcion = record.exc_info[1] if record.exc_info else None
-            self._proveedor.get_logger(record.name).emit(
+                attributes.update(extra)
+            number, text = _severity(record.levelno)
+            exception = record.exc_info[1] if record.exc_info else None
+            self._provider.get_logger(record.name).emit(
                 timestamp=int(record.created * 1e9),
-                severity_number=numero,
-                severity_text=texto,
-                body=_recortar(cuerpo, 8000),
-                attributes=_limpiar(atributos),
-                exception=excepcion,
+                severity_number=number,
+                severity_text=text,
+                body=_truncate(_strip_url_queries(body), 8000),
+                attributes=_clean_attributes(attributes),
+                exception=exception,
             )
-        except Exception:  # noqa: BLE001 — el monitoreo nunca rompe la app
+        except Exception:  # noqa: BLE001 — monitoring never breaks the app
             pass
         finally:
-            self._local.dentro = False
+            self._local.inside = False
 
 
-# ------------------------------------------------------------------ arranque
+# ------------------------------------------------------------------- startup
 def iniciar(app=None, servicio: str = "", *, puerto=None, excluir=(), carpeta_datos=None) -> bool:
-    """Configura la telemetría del proceso. Devuelve True si quedó activa.
+    """Configures the process's telemetry. Returns True if it ended up active.
 
-    app            la app FastAPI (None para procesos sin HTTP)
-    servicio       nombre corto y fijo del servicio: conciliador, ventas...
-    puerto         puerto por defecto de la app (si no viene en PORT o --port)
-    excluir        regex extra de URLs que no se trazan (polling, p. ej.)
-    carpeta_datos  carpeta cuyo disco se vigila (por defecto la de la app)
+    app            the FastAPI app (None for processes without HTTP)
+    servicio       short, fixed name of the service: conciliador, ventas...
+    puerto         the app's default port (if it doesn't come in PORT or --port)
+    excluir        extra regexes of URLs that aren't traced (polling, e.g.)
+    carpeta_datos  folder whose disk is watched (the app's by default)
     """
-    if _estado["activo"]:
+    if _state["activo"]:
         return True
     try:
-        _cargar_env_local()
-        servicio = _slug(servicio) or "app"
-        grupo = _slug(os.environ.get("MONITOR_GRUPO", "")) or "sin-grupo"
-        entorno = _entorno()
-        despliegue = _despliegue()
-        rama, commit = _version_git()
-        version = f"{rama}@{commit}" if rama and commit else (commit or "sin-version")
+        _load_local_env()
+        service = _slug(servicio) or "app"
+        group = _slug(os.environ.get("MONITOR_GRUPO", "")) or "sin-grupo"
+        environment = _environment()
+        deployment = _deployment()
+        branch, commit = _git_version()
+        version = f"{branch}@{commit}" if branch and commit else (commit or "sin-version")
         host = socket.gethostname()
-        instancia = f"{host}:{_puerto(puerto) or 'pid' + str(os.getpid())}"
-        _estado.update({
-            "servicio": servicio, "grupo": grupo, "nombre": f"{grupo}/{servicio}",
-            "entorno": entorno, "despliegue": despliegue, "version": version,
-            "instancia": instancia,
+        instance = f"{host}:{_port(puerto) or 'pid' + str(os.getpid())}"
+        _state.update({
+            "servicio": service, "grupo": group, "nombre": f"{group}/{service}",
+            "entorno": environment, "despliegue": deployment, "version": version,
+            "instancia": instance,
         })
 
-        if not _verdadero(os.environ.get("MONITOR_ACTIVO", "1")):
-            _estado["motivo"] = "apagada con MONITOR_ACTIVO=0"
+        if not _truthy(os.environ.get("MONITOR_ACTIVO", "1")):
+            _state["motivo"] = "apagada con MONITOR_ACTIVO=0"
             return False
-        destino = _destino()
-        if not destino:
-            _estado["motivo"] = "sin destino: falta NEW_RELIC_LICENSE_KEY (u OTEL_EXPORTER_OTLP_ENDPOINT)"
+        destination = _destination()
+        if not destination:
+            _state["motivo"] = "sin destino: falta NEW_RELIC_LICENSE_KEY (u OTEL_EXPORTER_OTLP_ENDPOINT)"
             return False
-        base, cabeceras, backend = destino
-        _estado["destino"] = f"{backend} ({urlparse(base).hostname})"
+        base, headers, backend = destination
+        _state["destino"] = f"{backend} ({urlparse(base).hostname})"
 
-        # convenciones HTTP estables de OpenTelemetry (las que usan los tableros)
+        # OpenTelemetry's stable HTTP conventions (the ones the dashboards use)
         os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")
         try:
-            _configurar(app, base, cabeceras, excluir, carpeta_datos, {
-                "service.name": f"{grupo}/{servicio}",
-                "service.namespace": grupo,
+            _configure(app, base, headers, excluir, carpeta_datos, {
+                "service.name": f"{group}/{service}",
+                "service.namespace": group,
                 "service.version": version,
-                "service.instance.id": instancia,
-                "deployment.environment": entorno,
-                "deployment.environment.name": entorno,
+                "service.instance.id": instance,
+                "deployment.environment": environment,
+                "deployment.environment.name": environment,
                 "host.name": host,
-                # los atributos "tags.*" quedan como tags de la entidad en New
-                # Relic: filtran tableros, alertas y workloads por grupo
-                "tags.grupo": grupo,
-                "tags.servicio": servicio,
-                "tags.entorno": entorno,
-                "tags.despliegue": despliegue,
-                "tags.rama": rama or "-",
+                # "tags.*" attributes become entity tags in New Relic: they
+                # filter dashboards, alerts and workloads by group
+                "tags.grupo": group,
+                "tags.servicio": service,
+                "tags.entorno": environment,
+                "tags.despliegue": deployment,
+                "tags.rama": branch or "-",
             })
         except ImportError as exc:
-            _estado["motivo"] = f"faltan paquetes de OpenTelemetry ({exc.name}): pip install -r requirements.txt"
-            print(f"[monitor] telemetría desactivada: {_estado['motivo']}", file=sys.stderr)
+            _state["motivo"] = f"faltan paquetes de OpenTelemetry ({exc.name}): pip install -r requirements.txt"
+            print(f"[monitor] telemetría desactivada: {_state['motivo']}", file=sys.stderr)
             return False
 
-        _estado.update({"activo": True, "motivo": ""})
-        evento(f"Servicio iniciado: {grupo}/{servicio} {version} en {instancia} ({despliegue}, {entorno})",
+        _state.update({"activo": True, "motivo": ""})
+        evento(f"Servicio iniciado: {group}/{service} {version} en {instance} ({deployment}, {environment})",
                evento="inicio")
         return True
-    except Exception as exc:  # noqa: BLE001 — el monitoreo nunca rompe la app
-        _estado.update({"activo": False, "motivo": f"error al iniciar: {exc!r}"})
+    except Exception as exc:  # noqa: BLE001 — monitoring never breaks the app
+        _state.update({"activo": False, "motivo": f"error al iniciar: {exc!r}"})
         print(f"[monitor] telemetría desactivada: {exc!r}", file=sys.stderr)
         return False
 
 
-def _configurar(app, base, cabeceras, excluir, carpeta_datos, atributos):
-    global _tracer, _contador_errores
+def _configure(app, base, headers, excluded, data_folder, attributes):
+    global _tracer, _error_counter
     from opentelemetry import metrics, trace
     from opentelemetry._logs import set_logger_provider
     from opentelemetry.exporter.otlp.proto.http import Compression
@@ -401,214 +418,215 @@ def _configurar(app, base, cabeceras, excluir, carpeta_datos, atributos):
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
     if app is not None:
-        # se importa acá para que, si falta, no quede nada configurado a medias
+        # imported here so that, if it's missing, nothing is left half configured
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: F401
 
-    recurso = Resource.create(atributos)
-    comun = {"headers": cabeceras, "timeout": 5, "compression": Compression.Gzip}
+    resource = Resource.create(attributes)
+    common = {"headers": headers, "timeout": 5, "compression": Compression.Gzip}
 
     try:
-        muestreo = min(1.0, max(0.0, float(os.environ.get("MONITOR_MUESTREO") or 1)))
+        sampling = min(1.0, max(0.0, float(os.environ.get("MONITOR_MUESTREO") or 1)))
     except ValueError:
-        muestreo = 1.0
-    trazas = TracerProvider(resource=recurso, sampler=ParentBased(TraceIdRatioBased(muestreo)))
-    trazas.add_span_processor(_sin_consultas_sueltas(
-        BatchSpanProcessor(OTLPSpanExporter(endpoint=base + "/v1/traces", **comun))))
-    trace.set_tracer_provider(trazas)
+        sampling = 1.0
+    tracer_provider = TracerProvider(resource=resource, sampler=ParentBased(TraceIdRatioBased(sampling)))
+    tracer_provider.add_span_processor(_without_orphan_queries(
+        BatchSpanProcessor(OTLPSpanExporter(endpoint=base + "/v1/traces", **common))))
+    trace.set_tracer_provider(tracer_provider)
     _tracer = trace.get_tracer("monitor")
 
-    # New Relic pide temporalidad delta para contadores e histogramas
-    delta, acumulada = AggregationTemporality.DELTA, AggregationTemporality.CUMULATIVE
+    # New Relic asks for delta temporality for counters and histograms
+    delta, cumulative = AggregationTemporality.DELTA, AggregationTemporality.CUMULATIVE
     try:
-        intervalo = max(5.0, float(os.environ.get("MONITOR_INTERVALO") or 60))
+        interval = max(5.0, float(os.environ.get("MONITOR_INTERVALO") or 60))
     except ValueError:
-        intervalo = 60.0
-    lector = PeriodicExportingMetricReader(
+        interval = 60.0
+    reader = PeriodicExportingMetricReader(
         OTLPMetricExporter(endpoint=base + "/v1/metrics", preferred_temporality={
             Counter: delta, Histogram: delta, ObservableCounter: delta,
-            UpDownCounter: acumulada, ObservableUpDownCounter: acumulada, ObservableGauge: acumulada,
-        }, **comun),
-        export_interval_millis=intervalo * 1000,
+            UpDownCounter: cumulative, ObservableUpDownCounter: cumulative, ObservableGauge: cumulative,
+        }, **common),
+        export_interval_millis=interval * 1000,
     )
-    medidas = MeterProvider(resource=recurso, metric_readers=[lector])
-    metrics.set_meter_provider(medidas)
+    meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+    metrics.set_meter_provider(meter_provider)
 
-    logs = LoggerProvider(resource=recurso)
-    logs.add_log_record_processor(BatchLogRecordProcessor(OTLPLogExporter(endpoint=base + "/v1/logs", **comun)))
-    set_logger_provider(logs)
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter(endpoint=base + "/v1/logs", **common)))
+    set_logger_provider(logger_provider)
 
-    _proveedores.extend([medidas, logs, trazas])
-    atexit.register(_cerrar)
+    _providers.extend([meter_provider, logger_provider, tracer_provider])
+    atexit.register(_shutdown)
 
-    _conectar_logging(logs)
-    _metricas(metrics.get_meter("monitor"), carpeta_datos or _RAIZ_APP)
-    _contador_errores = metrics.get_meter("monitor").create_counter(
+    _connect_logging(logger_provider)
+    _register_metrics(metrics.get_meter("monitor"), data_folder or _APP_ROOT)
+    _error_counter = metrics.get_meter("monitor").create_counter(
         "monitor.errores", unit="{error}", description="Errores registrados por el servicio")
-    _instrumentar(app, excluir, urlparse(base).hostname or "")
-    _enganchar_excepciones()
+    _instrument(app, excluded, urlparse(base).hostname or "")
+    _hook_uncaught_exceptions()
 
 
-class _Espaciado(logging.Filter):
-    """Los avisos del propio envío (backend caído, sin internet, key inválida)
-    salen por consola como mucho uno cada 10 minutos por tipo: avisan sin
-    llenar el .log del servicio. El resto de los logs pasa intacto."""
+class _ThrottleExporterNotices(logging.Filter):
+    """The exporter's own notices (backend down, no internet, invalid key) reach
+    the console at most once every 10 minutes per kind: they warn without
+    filling the service's .log. Every other log passes untouched."""
 
     def __init__(self):
         super().__init__()
-        self._visto = {}
+        self._seen = {}
 
     def filter(self, record):
         if not record.name.startswith(("opentelemetry", "urllib3")):
             return True
-        clave = (record.name, str(record.msg)[:120])
-        ahora = time.monotonic()
-        if ahora - self._visto.get(clave, -1e9) < 600:
+        key = (record.name, str(record.msg)[:120])
+        now = time.monotonic()
+        if now - self._seen.get(key, -1e9) < 600:
             return False
-        self._visto[clave] = ahora
+        self._seen[key] = now
         return True
 
 
-def _sin_consultas_sueltas(interno):
-    """Envuelve el procesador de trazas: las consultas a la base que no cuelgan
-    de ninguna request ni tramo (arranque, migraciones, tareas periódicas) no se
-    mandan. Serían miles de trazas de una sola consulta, sin contexto."""
+def _without_orphan_queries(inner):
+    """Wraps the span processor: database queries that hang from no request or
+    span (startup, migrations, periodic tasks) are not sent. They would be
+    thousands of single-query traces without context."""
     from opentelemetry.sdk.trace import SpanProcessor
-    alcances_bd = ("opentelemetry.instrumentation.psycopg", "opentelemetry.instrumentation.dbapi")
+    db_scopes = ("opentelemetry.instrumentation.psycopg", "opentelemetry.instrumentation.dbapi")
 
-    class _SinConsultasSueltas(SpanProcessor):
+    class _WithoutOrphanQueries(SpanProcessor):
         def on_start(self, span, parent_context=None):
-            interno.on_start(span, parent_context=parent_context)
+            inner.on_start(span, parent_context=parent_context)
 
         def _on_ending(self, span):
-            if hasattr(interno, "_on_ending"):
-                interno._on_ending(span)
+            if hasattr(inner, "_on_ending"):
+                inner._on_ending(span)
 
         def on_end(self, span):
-            alcance = getattr(getattr(span, "instrumentation_scope", None), "name", "") or ""
-            if span.parent is None and alcance.startswith(alcances_bd):
+            scope = getattr(getattr(span, "instrumentation_scope", None), "name", "") or ""
+            if span.parent is None and scope.startswith(db_scopes):
                 return
-            interno.on_end(span)
+            inner.on_end(span)
 
         def shutdown(self):
-            interno.shutdown()
+            inner.shutdown()
 
         def force_flush(self, timeout_millis=30000):
-            return interno.force_flush(timeout_millis)
+            return inner.force_flush(timeout_millis)
 
-    return _SinConsultasSueltas()
-
-
-def _conectar_logging(proveedor):
-    nivel = logging.getLevelName(str(os.environ.get("MONITOR_NIVEL_LOGS") or "INFO").upper())
-    raiz = logging.getLogger()
-    # Sin handlers, Python imprime los WARNING+ por stderr (lastResort). Al
-    # sumar el nuestro eso se apagaría y los .log de los servicios quedarían
-    # mudos: se deja un handler de consola equivalente.
-    if not raiz.handlers:
-        consola = logging.StreamHandler()
-        consola.setLevel(logging.WARNING)
-        raiz.addHandler(consola)
-    espaciado = _Espaciado()
-    for handler in raiz.handlers:
-        handler.addFilter(espaciado)
-    raiz.addHandler(_ManejadorLogs(proveedor, nivel if isinstance(nivel, int) else logging.INFO))
-    _log.setLevel(logging.INFO)   # los eventos propios salen aunque la raíz esté en WARNING
+    return _WithoutOrphanQueries()
 
 
-def _metricas(medidor, carpeta):
+def _connect_logging(provider):
+    level = logging.getLevelName(str(os.environ.get("MONITOR_NIVEL_LOGS") or "INFO").upper())
+    root = logging.getLogger()
+    # Without handlers, Python prints WARNING+ to stderr (lastResort). Adding
+    # ours would turn that off and leave the services' .log files silent:
+    # an equivalent console handler is added.
+    if not root.handlers:
+        console = logging.StreamHandler()
+        console.setLevel(logging.WARNING)
+        root.addHandler(console)
+    throttle = _ThrottleExporterNotices()
+    for handler in root.handlers:
+        handler.addFilter(throttle)
+    root.addHandler(_LogHandler(provider, level if isinstance(level, int) else logging.INFO))
+    _log.setLevel(logging.INFO)   # our own events go out even if the root is at WARNING
+
+
+def _register_metrics(meter, folder):
     from opentelemetry.metrics import Observation
 
-    def latido(_):
+    def heartbeat(_):
         yield Observation(1)
 
-    medidor.create_observable_gauge(
-        "monitor.servicio.activo", callbacks=[latido],
+    meter.create_observable_gauge(
+        "monitor.servicio.activo", callbacks=[heartbeat],
         description="Latido: 1 mientras el servicio está vivo")
-    medidor.create_observable_gauge(
+    meter.create_observable_gauge(
         "monitor.proceso.uptime", unit="s", description="Segundos desde que arrancó el proceso",
-        callbacks=[lambda _: [Observation(round(time.time() - _inicio))]])
+        callbacks=[lambda _: [Observation(round(time.time() - _start_time))]])
 
-    def disco(_):
+    def disk(_):
         try:
-            uso = shutil.disk_usage(carpeta)
-            return [Observation(uso.free, {"tipo": "libre"}),
-                    Observation(round(100 * uso.used / uso.total, 1), {"tipo": "uso_pct"})]
+            usage = shutil.disk_usage(folder)
+            return [Observation(usage.free, {"tipo": "libre"}),
+                    Observation(round(100 * usage.used / usage.total, 1), {"tipo": "uso_pct"})]
         except OSError:
             return []
 
-    medidor.create_observable_gauge(
+    meter.create_observable_gauge(
         "monitor.disco", description="Disco de la app: bytes libres (tipo=libre) y % usado (tipo=uso_pct)",
-        callbacks=[disco])
+        callbacks=[disk])
 
     try:
         import psutil
     except ImportError:
         return
-    proceso = psutil.Process()
-    proceso.cpu_percent(None)   # la primera lectura siempre da 0
+    process = psutil.Process()
+    process.cpu_percent(None)   # the first reading is always 0
 
-    def recursos(_):
+    def process_resources(_):
         try:
-            with proceso.oneshot():
-                return [Observation(proceso.memory_info().rss, {"tipo": "memoria"}),
-                        Observation(proceso.cpu_percent(None), {"tipo": "cpu_pct"}),
-                        Observation(proceso.num_threads(), {"tipo": "hilos"})]
+            with process.oneshot():
+                return [Observation(process.memory_info().rss, {"tipo": "memoria"}),
+                        Observation(process.cpu_percent(None), {"tipo": "cpu_pct"}),
+                        Observation(process.num_threads(), {"tipo": "hilos"})]
         except Exception:  # noqa: BLE001
             return []
 
-    def host(_):
+    def host_resources(_):
         try:
             return [Observation(psutil.virtual_memory().percent, {"tipo": "memoria_pct"}),
                     Observation(psutil.cpu_percent(None), {"tipo": "cpu_pct"})]
         except Exception:  # noqa: BLE001
             return []
 
-    medidor.create_observable_gauge(
-        "monitor.proceso", description="Proceso: memoria (bytes), cpu_pct e hilos", callbacks=[recursos])
-    medidor.create_observable_gauge(
-        "monitor.host", description="Máquina: memoria_pct y cpu_pct", callbacks=[host])
+    meter.create_observable_gauge(
+        "monitor.proceso", description="Proceso: memoria (bytes), cpu_pct e hilos", callbacks=[process_resources])
+    meter.create_observable_gauge(
+        "monitor.host", description="Máquina: memoria_pct y cpu_pct", callbacks=[host_resources])
 
 
-def _instrumentar(app, excluir, host_destino):
-    instrumentado = []
+def _instrument(app, excluded, backend_host):
+    instrumented = []
     if app is not None:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         FastAPIInstrumentor.instrument_app(
             app,
-            excluded_urls=",".join([*_EXCLUIR_SIEMPRE, *excluir]),
+            excluded_urls=",".join([*_ALWAYS_EXCLUDED, *excluded]),
             exclude_spans=["receive", "send"],
-            server_request_hook=_marca_de_la_request,
+            server_request_hook=_server_request_hook,
         )
-        instrumentado.append("fastapi")
-    # Clientes que haya en la app: HTTP saliente (IA, planillas, APIs) y
-    # Postgres. Sin la librería o sin su instrumentación, se saltea.
-    requests_opciones = {"request_hook": _sin_query_saliente}
-    if host_destino:
-        requests_opciones["excluded_urls"] = re.escape(host_destino)
-    for libreria, modulo, clase, opciones in (
+        instrumented.append("fastapi")
+    # Clients present in the app: outbound HTTP (AI, spreadsheets, APIs) and
+    # Postgres. Without the library or its instrumentation, it's skipped.
+    requests_options = {"request_hook": _strip_outbound_query}
+    if backend_host:
+        requests_options["excluded_urls"] = re.escape(backend_host)
+    for library, module, class_name, options in (
         ("httpx", "opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor",
-         {"request_hook": _sin_query_saliente, "async_request_hook": _sin_query_saliente_async}),
-        ("requests", "opentelemetry.instrumentation.requests", "RequestsInstrumentor", requests_opciones),
+         {"request_hook": _strip_outbound_query, "async_request_hook": _strip_outbound_query_async}),
+        ("requests", "opentelemetry.instrumentation.requests", "RequestsInstrumentor", requests_options),
         ("psycopg2", "opentelemetry.instrumentation.psycopg2", "Psycopg2Instrumentor",
          {"enable_commenter": False}),
         ("psycopg", "opentelemetry.instrumentation.psycopg", "PsycopgInstrumentor",
          {"enable_commenter": False}),
     ):
-        if importlib.util.find_spec(libreria) is None:
+        if importlib.util.find_spec(library) is None:
             continue
         try:
-            getattr(importlib.import_module(modulo), clase)().instrument(**opciones)
-            instrumentado.append(libreria)
+            getattr(importlib.import_module(module), class_name)().instrument(**options)
+            instrumented.append(library)
         except ImportError:
             pass
         except Exception as exc:  # noqa: BLE001
-            print(f"[monitor] no se pudo instrumentar {libreria}: {exc!r}", file=sys.stderr)
-    _estado["instrumentado"] = instrumentado
+            print(f"[monitor] no se pudo instrumentar {library}: {exc!r}", file=sys.stderr)
+    _state["instrumentado"] = instrumented
 
 
-def _sin_query_saliente(span, request):
-    """Las llamadas HTTP salientes se registran sin la query: ahí suelen viajar
-    tokens y sesiones (SGA, por ejemplo, pone el token de sesión en la URL)."""
+def _strip_outbound_query(span, request):
+    """Outbound HTTP calls are recorded without the query: tokens and sessions
+    usually travel there (SGA, for example, puts the session token in the URL)."""
     try:
         if span is None or not span.is_recording():
             return
@@ -619,117 +637,116 @@ def _sin_query_saliente(span, request):
         pass
 
 
-async def _sin_query_saliente_async(span, request):
-    _sin_query_saliente(span, request)
+async def _strip_outbound_query_async(span, request):
+    _strip_outbound_query(span, request)
 
 
-# Parámetros de la query cuyo valor se guarda: marca, fechas, paginado. El
-# resto viaja como "…": en la query de una búsqueda van nombres, documentos
-# o dominios, y a veces tokens (ej. ?q=<titular>&documento=<dni> en la API de
-# planes de ahorro).
-_VISIBLES = {"marca", "desde", "hasta", "periodo", "fecha", "mes", "anio", "vista", "job", "tipo",
-             "completo", "refrescar", "page", "size", "limit", "orden", "formato", "lista"}
+# Query parameters whose value is kept: brand, dates, paging. The rest goes
+# as "…": a search query carries names, documents or domains, and sometimes
+# tokens (e.g. ?q=<holder>&documento=<dni> in the savings-plan API).
+_VISIBLE_PARAMS = {"marca", "desde", "hasta", "periodo", "fecha", "mes", "anio", "vista", "job", "tipo",
+                   "completo", "refrescar", "page", "size", "limit", "orden", "formato", "lista"}
 
 
-def _query_segura(consulta: str) -> str:
-    partes = []
-    for par in consulta.split("&"):
-        clave, igual, _ = par.partition("=")
-        partes.append(par if not igual or unquote(clave).lower() in _VISIBLES else f"{clave}=…")
-    return "&".join(partes)
+def _safe_query(query: str) -> str:
+    parts = []
+    for pair in query.split("&"):
+        key, equals, _ = pair.partition("=")
+        parts.append(pair if not equals or unquote(key).lower() in _VISIBLE_PARAMS else f"{key}=…")
+    return "&".join(parts)
 
 
-def _marca_de_la_request(span, scope):
-    """Las apps reciben la marca del hub en ?marca=: queda en la traza para
-    poder filtrar errores y demoras por marca. De paso, de la query solo
-    quedan los valores de los parámetros inofensivos (ver _VISIBLES)."""
+def _server_request_hook(span, scope):
+    """The apps get the brand from the hub in ?marca=: it goes on the trace so
+    errors and latency can be filtered by brand. Also, only the values of the
+    harmless query parameters are kept (see _VISIBLE_PARAMS)."""
     try:
         if span is None or not span.is_recording():
             return
-        consulta = (scope.get("query_string") or b"").decode("latin-1")
-        if not consulta:
+        query = (scope.get("query_string") or b"").decode("latin-1")
+        if not query:
             return
-        segura = _query_segura(consulta)
-        if segura != consulta:
-            span.set_attribute("url.query", segura)
-        m = re.search(r"(?:^|&)marca=([^&]*)", consulta)
+        safe = _safe_query(query)
+        if safe != query:
+            span.set_attribute("url.query", safe)
+        m = re.search(r"(?:^|&)marca=([^&]*)", query)
         if m and m.group(1):
-            span.set_attribute("marca", _recortar(unquote(m.group(1).replace("+", " ")), 120))
+            span.set_attribute("marca", _truncate(unquote(m.group(1).replace("+", " ")), 120))
     except Exception:  # noqa: BLE001
         pass
 
 
-def _enganchar_excepciones():
-    """Errores que nadie atrapa: en hilos (jobs, lectores de casillas) y los
-    que tiran abajo el proceso. Se registran y después sigue el comportamiento
-    de siempre."""
-    hook_hilos = threading.excepthook
+def _hook_uncaught_exceptions():
+    """Errors nobody catches: in threads (jobs, mailbox readers) and the ones
+    that bring the process down. They are recorded and then the usual behavior
+    follows."""
+    thread_hook = threading.excepthook
 
-    def en_hilo(args):
+    def on_thread_exception(args):
         if args.exc_type is not SystemExit:
             registrar_error(args.exc_value, origen="hilo",
                             hilo=getattr(args.thread, "name", "") or "")
-        hook_hilos(args)
+        thread_hook(args)
 
-    threading.excepthook = en_hilo
-    hook_proceso = sys.excepthook
+    threading.excepthook = on_thread_exception
+    process_hook = sys.excepthook
 
-    def en_proceso(tipo, valor, tb):
-        if not issubclass(tipo, KeyboardInterrupt):
-            registrar_error(valor, origen="proceso", fatal=True)
-            _cerrar()
-        hook_proceso(tipo, valor, tb)
+    def on_process_exception(exc_type, exc_value, tb):
+        if not issubclass(exc_type, KeyboardInterrupt):
+            registrar_error(exc_value, origen="proceso", fatal=True)
+            _shutdown()
+        process_hook(exc_type, exc_value, tb)
 
-    sys.excepthook = en_proceso
+    sys.excepthook = on_process_exception
 
 
-def _cerrar():
-    """Vacía lo pendiente antes de salir (atexit o caída del proceso)."""
-    while _proveedores:
-        proveedor = _proveedores.pop()
+def _shutdown():
+    """Flushes what's pending before exiting (atexit or process crash)."""
+    while _providers:
+        provider = _providers.pop()
         try:
-            proveedor.shutdown()
+            provider.shutdown()
         except Exception:  # noqa: BLE001
             pass
 
 
-# --------------------------------------------------------------- API pública
+# ---------------------------------------------------------------- public API
 def envolver_asgi(app, excluir=()):
-    """Para apps ASGI que no son FastAPI (Starlette pelado, el servidor MCP):
-    devuelve la app envuelta con el middleware de OpenTelemetry, que mide cada
-    request igual que en las apps FastAPI. Sin telemetría, devuelve la misma."""
-    if not _estado["activo"]:
+    """For ASGI apps that aren't FastAPI (plain Starlette, the MCP server):
+    returns the app wrapped in OpenTelemetry's middleware, which measures every
+    request like in the FastAPI apps. Without telemetry, returns the same app."""
+    if not _state["activo"]:
         return app
     try:
         from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
     except ImportError:
         return app
 
-    def nombre(scope):
-        # rutas fijas en estas apps (/mcp, /salud): el path es la ruta
-        ruta = scope.get("path") or "/"
-        return f"{scope.get('method', 'HTTP')} {ruta}", {"http.route": ruta}
+    def span_details(scope):
+        # fixed routes in these apps (/mcp, /salud): the path is the route
+        route = scope.get("path") or "/"
+        return f"{scope.get('method', 'HTTP')} {route}", {"http.route": route}
 
-    _estado.setdefault("instrumentado", []).append("asgi")
-    return OpenTelemetryMiddleware(app, excluded_urls=",".join([*_EXCLUIR_SIEMPRE, *excluir]),
-                                   default_span_details=nombre, server_request_hook=_marca_de_la_request,
+    _state.setdefault("instrumentado", []).append("asgi")
+    return OpenTelemetryMiddleware(app, excluded_urls=",".join([*_ALWAYS_EXCLUDED, *excluir]),
+                                   default_span_details=span_details, server_request_hook=_server_request_hook,
                                    exclude_spans=["receive", "send"])
 
 
 def activa() -> bool:
-    return bool(_estado["activo"])
+    return bool(_state["activo"])
 
 
 def estado() -> dict:
-    """Para /api/diagnostico: qué ve el proceso, sin exponer la clave."""
-    clave = os.environ.get("NEW_RELIC_LICENSE_KEY") or ""
+    """For /api/diagnostico: what the process sees, without exposing the key."""
+    key = os.environ.get("NEW_RELIC_LICENSE_KEY") or ""
     return {
-        **{k: v for k, v in _estado.items()},
+        **{k: v for k, v in _state.items()},
         "modulo": VERSION_MODULO,
         "NEW_RELIC_LICENSE_KEY": {
-            "presente": bool(clave.strip()),
-            "longitud": len(clave),
-            "espacios_al_borde": clave != clave.strip(),
+            "presente": bool(key.strip()),
+            "longitud": len(key),
+            "espacios_al_borde": key != key.strip(),
         },
         "MONITOR_GRUPO_presente": bool(os.environ.get("MONITOR_GRUPO", "").strip()),
     }
@@ -737,93 +754,93 @@ def estado() -> dict:
 
 @contextmanager
 def tramo(nombre: str, *, tipo: str = "interno", ignorar=(), sin_detalle: bool = False, **atributos):
-    """Mide un bloque como un tramo de la traza actual (o una traza nueva).
-    Si el bloque lanza una excepción, queda registrada y se relanza.
-    tipo: "interno" | "cliente" (llamada a otro sistema: FBS, IA, APIs).
-    ignorar: excepciones esperadas que no cuentan como error del tramo.
-    sin_detalle: no trazar lo de adentro (consultas, HTTP): para procesos que
-    hacen miles de operaciones y solo interesan enteros (duración, error)."""
-    if not _estado["activo"] or _tracer is None:
-        yield _TRAMO_NULO
+    """Measures a block as a span of the current trace (or a new trace).
+    If the block raises an exception, it is recorded and re-raised.
+    tipo: "interno" | "cliente" (call to another system: FBS, AI, APIs).
+    ignorar: expected exceptions that don't count as an error of the span.
+    sin_detalle: don't trace what's inside (queries, HTTP): for processes that
+    do thousands of operations and only matter as a whole (duration, error)."""
+    if not _state["activo"] or _tracer is None:
+        yield _NULL_SPAN
         return
     from contextlib import nullcontext
     from opentelemetry.trace import SpanKind, Status, StatusCode
-    silencio = nullcontext()
+    silence = nullcontext()
     if sin_detalle:
         try:
             from opentelemetry.instrumentation.utils import suppress_instrumentation
-            silencio = suppress_instrumentation()
+            silence = suppress_instrumentation()
         except ImportError:
             pass
     kind = SpanKind.CLIENT if tipo == "cliente" else SpanKind.INTERNAL
-    with _tracer.start_as_current_span(nombre, kind=kind, attributes=_limpiar(atributos),
+    with _tracer.start_as_current_span(nombre, kind=kind, attributes=_clean_attributes(atributos),
                                        record_exception=False, set_status_on_exception=False) as span:
-        with silencio:
+        with silence:
             try:
                 yield span
             except Exception as exc:
                 if not isinstance(exc, tuple(ignorar)):
                     span.record_exception(exc)
-                    span.set_status(Status(StatusCode.ERROR, _recortar(f"{type(exc).__name__}: {exc}", 300)))
+                    span.set_status(Status(StatusCode.ERROR, _truncate(f"{type(exc).__name__}: {exc}", 300)))
                 raise
 
 
 def anotar(**atributos):
-    """Suma atributos al tramo en curso (la request o el tramo abierto)."""
-    if not _estado["activo"]:
+    """Adds attributes to the current span (the request or the open span)."""
+    if not _state["activo"]:
         return
     try:
         from opentelemetry import trace
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attributes(_limpiar(atributos))
+            span.set_attributes(_clean_attributes(atributos))
     except Exception:  # noqa: BLE001
         pass
 
 
 def registrar_error(exc: BaseException = None, mensaje: str = None, *, log: bool = True, **contexto):
-    """Registra un error que la app manejó (o no): queda en la traza con su
-    stack, suma a la métrica monitor.errores y sale como log de error.
-    Sin excepción explícita toma la que se está manejando (dentro de un except).
-    log=False cuando la app ya lo dejó en su log (log.exception): no se duplica."""
+    """Records an error the app handled (or didn't): it goes on the trace with
+    its stack, adds to the monitor.errores metric and goes out as an error log.
+    Without an explicit exception it takes the one being handled (inside an except).
+    log=False when the app already logged it (log.exception): no duplicate."""
     if exc is None:
         exc = sys.exc_info()[1]
-    if exc is None or not _estado["activo"]:
+    if exc is None or not _state["activo"]:
         return
     try:
         from opentelemetry import trace
         from opentelemetry.trace import Status, StatusCode
-        atributos = _limpiar(contexto)
-        origen = str(contexto.get("origen") or "app")
-        if _contador_errores is not None:
-            _contador_errores.add(1, {"origen": origen, "error.type": type(exc).__name__})
-        descripcion = _recortar(f"{type(exc).__name__}: {exc}", 300)
+        attributes = _clean_attributes(contexto)
+        origin = str(contexto.get("origen") or "app")
+        if _error_counter is not None:
+            _error_counter.add(1, {"origen": origin, "error.type": type(exc).__name__})
+        description = _truncate(f"{type(exc).__name__}: {exc}", 300)
 
-        def anotar(span):
-            span.record_exception(exc, attributes=atributos)
-            span.set_status(Status(StatusCode.ERROR, descripcion))
-            # dentro del tramo, así el log queda enlazado a la traza del error
+        def annotate(span):
+            span.record_exception(exc, attributes=attributes)
+            span.set_status(Status(StatusCode.ERROR, description))
+            # inside the span, so the log is linked to the error's trace
             if log:
-                _log.error(mensaje or descripcion, exc_info=(type(exc), exc, exc.__traceback__),
-                           extra={"monitor": {**atributos, "error.type": type(exc).__name__}})
+                _log.error(mensaje or description, exc_info=(type(exc), exc, exc.__traceback__),
+                           extra={"monitor": {**attributes, "error.type": type(exc).__name__}})
 
-        actual = trace.get_current_span()
-        if actual.is_recording():
-            anotar(actual)
+        current = trace.get_current_span()
+        if current.is_recording():
+            annotate(current)
         else:
-            with _tracer.start_as_current_span(f"error {origen}", attributes=atributos,
+            with _tracer.start_as_current_span(f"error {origin}", attributes=attributes,
                                                record_exception=False,
-                                               set_status_on_exception=False) as nuevo:
-                anotar(nuevo)
-    except Exception:  # noqa: BLE001 — el monitoreo nunca rompe la app
+                                               set_status_on_exception=False) as new_span:
+                annotate(new_span)
+    except Exception:  # noqa: BLE001 — monitoring never breaks the app
         pass
 
 
 def evento(mensaje: str, nivel: int = logging.INFO, **atributos):
-    """Deja un evento de negocio o de ciclo de vida como log (con atributos)."""
-    if not _estado["activo"]:
+    """Records a business or lifecycle event as a log (with attributes)."""
+    if not _state["activo"]:
         return
     try:
-        _log.log(nivel, mensaje, extra={"monitor": _limpiar(atributos)})
+        _log.log(nivel, mensaje, extra={"monitor": _clean_attributes(atributos)})
     except Exception:  # noqa: BLE001
         pass

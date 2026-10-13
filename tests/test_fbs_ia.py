@@ -5,7 +5,7 @@ import pytest
 from starlette.testclient import TestClient
 
 import app as app_mod
-from engine import cuentas as cuentas_mod
+from engine import accounts as cuentas_mod
 from engine import fbs_sql, presupuesto_ia
 from engine import seguridad as seg
 
@@ -21,10 +21,10 @@ def aislado(monkeypatch, tmp_path):
               "FBS_SQL_HOSTS_PERMITIDOS", "FBS_SQL_PERMITIR_LOGIN_ESCRITURA",
               "IA_TOKENS_DIA", "IA_MODELO", "IA_MODELO_ANALISIS", "DEMO_MODE"):
         monkeypatch.delenv(v, raising=False)
-    monkeypatch.setattr(fbs_sql, "RUTA_CONF", str(tmp_path / "fbs_sql.json"))
-    monkeypatch.setattr(fbs_sql, "_DATOS", str(tmp_path))
+    monkeypatch.setattr(fbs_sql, "CONFIG_PATH", str(tmp_path / "fbs_sql.json"))
+    monkeypatch.setattr(fbs_sql, "_DATA", str(tmp_path))
     monkeypatch.setattr(presupuesto_ia, "RUTA", str(tmp_path / "ia_presupuesto.json"))
-    fbs_sql._LOGINS_VERIFICADOS.clear()
+    fbs_sql._VERIFIED_LOGINS.clear()
 
 
 # ---- solo lectura -----------------------------------------------------------
@@ -32,9 +32,9 @@ def aislado(monkeypatch, tmp_path):
 @pytest.mark.parametrize("q", [
     "SELECT 1", "select a from t where x='a;b' -- ok",
     "WITH x AS (SELECT 1 a) SELECT * FROM x", "SELECT [update] FROM t",
-    fbs_sql.QUERY_EJEMPLO, fbs_sql._query_detmov([("E", 1), ("O", 2)])])
+    fbs_sql.SAMPLE_QUERY, fbs_sql._query_detmov([("E", 1), ("O", 2)])])
 def test_consultas_validas(q):
-    fbs_sql._validar_solo_lectura(q)
+    fbs_sql._validate_read_only(q)
 
 
 @pytest.mark.parametrize("q", [
@@ -48,18 +48,18 @@ def test_consultas_validas(q):
     "", "   ", "BEGIN TRAN SELECT 1", "SELECT * FROM OPENROWSET('x')"])
 def test_consultas_rechazadas(q):
     with pytest.raises(ValueError):
-        fbs_sql._validar_solo_lectura(q)
+        fbs_sql._validate_read_only(q)
 
 
 def test_login_con_escritura_se_rechaza(monkeypatch):
     conf = {"servidor": "192.168.1.5", "puerto": 1433, "base": "b", "usuario": "u"}
-    monkeypatch.setattr(fbs_sql, "_consultar_driver",
+    monkeypatch.setattr(fbs_sql, "_query_with_driver",
                         lambda c, q, p: [{"sysadmin": 1, "db_owner": 1,
                                           "db_datawriter": 0, "db_ddladmin": 0}])
     with pytest.raises(ValueError, match="solo lectura"):
-        fbs_sql._consultar(conf, "SELECT 1", {})
+        fbs_sql._query(conf, "SELECT 1", {})
     monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA", "1")
-    fbs_sql._verificar_login_solo_lectura(conf)      # excepción consciente
+    fbs_sql._check_read_only_login(conf)      # excepción consciente
 
 
 def test_login_solo_lectura_pasa_y_se_cachea(monkeypatch):
@@ -71,9 +71,9 @@ def test_login_solo_lectura_pasa_y_se_cachea(monkeypatch):
         if "IS_SRVROLEMEMBER" in q:
             return [{"sysadmin": 0, "db_owner": 0, "db_datawriter": 0, "db_ddladmin": 0}]
         return [{"uno": 1}]
-    monkeypatch.setattr(fbs_sql, "_consultar_driver", falso)
-    fbs_sql._consultar(conf, "SELECT 1", {})
-    fbs_sql._consultar(conf, "SELECT 1", {})
+    monkeypatch.setattr(fbs_sql, "_query_with_driver", falso)
+    fbs_sql._query(conf, "SELECT 1", {})
+    fbs_sql._query(conf, "SELECT 1", {})
     assert sum("IS_SRVROLEMEMBER" in q for q in llamadas) == 1
 
 
@@ -83,7 +83,7 @@ def test_login_solo_lectura_pasa_y_se_cachea(monkeypatch):
     ("192.168.1.10", 1433), ("10.0.0.5", 14330), ("100.100.1.1", 1433),
     ("172.16.0.9\\SQLEXPRESS", 1433)])
 def test_destino_privado_ok(srv, puerto):
-    fbs_sql.validar_destino(srv, puerto)
+    fbs_sql.validate_destination(srv, puerto)
 
 
 @pytest.mark.parametrize("srv,puerto", [
@@ -94,39 +94,39 @@ def test_destino_privado_ok(srv, puerto):
     ("192.168.1.10\\ins;tancia", 1433)])
 def test_destino_invalido(srv, puerto):
     with pytest.raises(ValueError):
-        fbs_sql.validar_destino(srv, puerto)
+        fbs_sql.validate_destination(srv, puerto)
 
 
 def test_destino_publico_con_lista_permitida(monkeypatch):
     monkeypatch.setenv("FBS_SQL_HOSTS_PERMITIDOS", "8.8.8.8, 127.0.0.0/8")
-    fbs_sql.validar_destino("8.8.8.8", 1433)
-    fbs_sql.validar_destino("127.0.0.1", 14330)
+    fbs_sql.validate_destination("8.8.8.8", 1433)
+    fbs_sql.validate_destination("127.0.0.1", 14330)
     monkeypatch.setenv("FBS_SQL_HOSTS_PERMITIDOS", "169.254.169.254")
     with pytest.raises(ValueError):                 # link-local nunca, ni en la lista
-        fbs_sql.validar_destino("169.254.169.254", 1433)
+        fbs_sql.validate_destination("169.254.169.254", 1433)
 
 
 def test_guardar_conf_destino(monkeypatch):
     base = {"servidor": "192.168.1.10", "puerto": 1433, "base": "fbs", "usuario": "u",
             "clave": "secreta", "query": "SELECT 1"}
-    fbs_sql.guardar_conf(base)
-    assert fbs_sql.cargar_conf()["clave"] == "secreta"
+    fbs_sql.save_config(base)
+    assert fbs_sql.load_config()["clave"] == "secreta"
     # sin permiso de destino: cambiar el servidor se rechaza, la query se acepta
     with pytest.raises(PermissionError):
-        fbs_sql.guardar_conf({"servidor": "10.9.9.9"}, permitir_destino=False)
-    fbs_sql.guardar_conf({**base, "clave": "", "query": "SELECT 2"}, permitir_destino=False)
-    assert fbs_sql.cargar_conf()["query"] == "SELECT 2"
+        fbs_sql.save_config({"servidor": "10.9.9.9"}, allow_destination=False)
+    fbs_sql.save_config({**base, "clave": "", "query": "SELECT 2"}, allow_destination=False)
+    assert fbs_sql.load_config()["query"] == "SELECT 2"
     # cambiar de servidor sin clave nueva borra la clave guardada
-    fbs_sql.guardar_conf({"servidor": "10.9.9.9"})
-    c = fbs_sql.cargar_conf()
+    fbs_sql.save_config({"servidor": "10.9.9.9"})
+    c = fbs_sql.load_config()
     assert c["servidor"] == "10.9.9.9" and c["clave"] == ""
     # destino inválido
     with pytest.raises(ValueError):
-        fbs_sql.guardar_conf({"servidor": "8.8.8.8"})
+        fbs_sql.save_config({"servidor": "8.8.8.8"})
     # destino fijado por el entorno
     monkeypatch.setenv("FBS_SQL_SERVIDOR", "192.168.1.10")
     with pytest.raises(PermissionError):
-        fbs_sql.guardar_conf({"servidor": "10.1.1.1"})
+        fbs_sql.save_config({"servidor": "10.1.1.1"})
 
 
 def test_api_fbs_destino_requiere_local_o_editable(monkeypatch):
@@ -142,9 +142,9 @@ def test_api_fbs_destino_requiere_local_o_editable(monkeypatch):
 
 
 def test_migracion_no_exporta_la_conexion_fbs():
-    assert not app_mod._migrable("fbs_sql.json")
-    assert not app_mod._migrable("ia_presupuesto.json")
-    assert app_mod._migrable("equivalencias.json")
+    assert not app_mod._migratable("fbs_sql.json")
+    assert not app_mod._migratable("ia_presupuesto.json")
+    assert app_mod._migratable("equivalencias.json")
 
 
 # ---- presupuesto de IA ------------------------------------------------------
@@ -185,11 +185,11 @@ def test_conciliar_responde_429_sin_presupuesto(monkeypatch):
 def test_analizar_responde_429(monkeypatch):
     monkeypatch.setenv("IA_TOKENS_DIA", "10")
     presupuesto_ia.registrar(10, 0)
-    monkeypatch.setattr(app_mod, "_obtener", lambda j: {
+    monkeypatch.setattr(app_mod, "_get_job", lambda j: {
         "e_sin_banco": [{"id": "E#1", "referencia": "x", "comentario": "y"}],
         "o_pendientes_sin_banco": [], "banco_sin_contabilizar": []})
-    monkeypatch.setattr(app_mod.ai_assist, "disponible", lambda: True)
-    monkeypatch.setattr(app_mod.analisis_mod, "cargar", lambda: [])
+    monkeypatch.setattr(app_mod.ai_assist, "available", lambda: True)
+    monkeypatch.setattr(app_mod.analysis, "load", lambda: [])
     c = TestClient(app_mod.app, client=LOCAL, follow_redirects=False)
     r = c.post("/api/analizar/abc", json={"id_mayor": "E#1"})
     assert r.status_code == 429
@@ -201,20 +201,20 @@ def test_modelo_solo_por_config_del_servidor(monkeypatch):
     assert presupuesto_ia.modelo_matching() == "claude-haiku-4-5"
     import inspect
     # ningún endpoint recibe el modelo desde el pedido
-    assert "modelo" not in inspect.getsource(app_mod.api_conciliar)
-    assert "modelo" not in inspect.getsource(app_mod.api_analizar)
+    assert "modelo" not in inspect.getsource(app_mod.api_reconcile)
+    assert "modelo" not in inspect.getsource(app_mod.api_analyze)
 
 
 # ---- cuentas fuera del código -----------------------------------------------
 
 def test_semilla_de_cuentas_fuera_del_codigo(monkeypatch, tmp_path):
     import inspect
-    assert "SEMILLA = [" not in inspect.getsource(cuentas_mod)
-    monkeypatch.setattr(cuentas_mod, "RUTA_SEMILLA", str(tmp_path / "no_existe.json"))
-    assert cuentas_mod._leer_semilla() == []
+    assert "SEED = [" not in inspect.getsource(cuentas_mod)
+    monkeypatch.setattr(cuentas_mod, "SEED_PATH", str(tmp_path / "no_existe.json"))
+    assert cuentas_mod._read_seed() == []
     ruta = tmp_path / "s.json"
     ruta.write_text(json.dumps([{"empresa": "E", "banco": "macro", "numero": "1", "moneda": "ARS"}]))
-    monkeypatch.setattr(cuentas_mod, "RUTA_SEMILLA", str(ruta))
-    assert cuentas_mod._leer_semilla() == [("E", "macro", "1", "ARS")]
+    monkeypatch.setattr(cuentas_mod, "SEED_PATH", str(ruta))
+    assert cuentas_mod._read_seed() == [("E", "macro", "1", "ARS")]
     ruta.write_text("{roto")
-    assert cuentas_mod._leer_semilla() == []
+    assert cuentas_mod._read_seed() == []

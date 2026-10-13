@@ -1,64 +1,66 @@
-# Ambiente de demo (conciliador-bancario)
+# Demo environment (conciliador-bancario)
 
-Mismo código que el de la empresa (rama `fbs-sql`); el ambiente de demo es un
-servicio de Railway con `DEMO_MODE=true` como única diferencia. Sin esa
-variable, el comportamiento es exactamente el de siempre.
+Same code as the company's (branch `fbs-sql`); the demo environment is a
+Railway service whose only difference is `DEMO_MODE=true`. Without that
+variable, the behavior is exactly the usual one.
 
-## Qué activa DEMO_MODE
+## What DEMO_MODE turns on
 
-- **FBS simulado** (`engine/simulacion.py`): no hay SQL Server. Las cuentas son
-  las del hub de demo (`cuentas_bancarias` con conexión FBS e IDs E/O, las
-  siembra `hub-grupo/scripts/seed-demo.js` con las marcas que se eligen al
-  preparar la demo) y "Traer E y O del FBS" devuelve los asientos de la
-  simulación en lugar de consultar `DetMov`. "Probar conexión" da OK.
-- **Extractos generados**: `/diario` y `/` muestran el bloque "Extractos de la
-  demo": se elige una cuenta (o todas las de la marca) y un período, y se
-  descarga el extracto **en el formato del home banking de su banco**
-  (Santander/Río `.xls` de texto, BBVA `.xls`, Macro `.xls`, Ciudad `.csv`), o
-  se carga con un clic en la zona de extractos. Sale de la misma simulación
-  que el mayor: lo que se sube y lo que trae el FBS cuentan la misma historia.
-- `POST /api/demo/reset`: limpia la memoria de conciliados, el arrastre y el
-  historial (jobs y tableros). La simulación no guarda nada.
-- Header `X-Robots-Tag: noindex, nofollow` en todas las respuestas.
-- Fuera de `DEMO_MODE`, ninguna de estas rutas ni UI existen.
+- **Simulated FBS** (`engine/simulacion.py`): there is no SQL Server. The
+  accounts are the demo hub's (`cuentas_bancarias` with an FBS connection and
+  E/O ids, seeded by `hub-grupo/scripts/seed-demo.js` with the brands chosen
+  when the demo is prepared) and "Traer E y O del FBS" returns the
+  simulation's entries instead of querying `DetMov`. "Probar conexión" says OK.
+- **Generated statements**: `/diario` and `/` show the "Extractos de la demo"
+  block: pick an account (or all of the brand's) and a period, and the
+  statement downloads **in the home banking format of its bank**
+  (Santander/Río text `.xls`, BBVA `.xls`, Macro `.xls`, Ciudad `.csv`), or
+  loads with one click into the statements area. It comes from the same
+  simulation as the ledger: what is uploaded and what FBS returns tell the
+  same story.
+- `POST /api/demo/reset`: clears the matched memory, the carry-over and the
+  history (jobs and boards). The simulation stores nothing.
+- `X-Robots-Tag: noindex, nofollow` header on every response.
+- Outside `DEMO_MODE`, none of these routes or UI exist.
 
-## La simulación
+## The simulation
 
-Determinística: cada operación nace de una semilla (cuenta + día), así el
-mismo día da siempre lo mismo y las fechas siempre son las de esta semana.
-Por cuenta y día hábil:
+Deterministic: each operation is born from a seed (account + day), so the
+same day always gives the same result and the dates are always this week's.
+Per account and business day:
 
-| Caso | Banco | FBS | Dónde se ve |
+| Case | Bank | FBS | Where it shows |
 |---|---|---|---|
-| Cobros por transferencia (señas, saldos de unidades) | crédito con CUIT y número de transferencia | recibo en O y su confirmación en E | Conciliados (E) |
-| Un cobro todavía sin confirmar | crédito | sólo el alta en O | Pendientes de confirmar (O) |
-| Un cobro con diferencia chica (el cliente descontó la comisión) | crédito por un poco menos | recibo por el total | Conciliados, "importe aproximado" |
-| Uno de cada tres días, un cobro que nadie registró | crédito | nada | Banco sin contabilizar |
-| Depósitos en efectivo, liquidaciones de tarjetas, pagos a proveedores y a la terminal, VEPs de AFIP, cheques de pago diferido | sí | sí, el mismo día | Conciliados |
-| Depósito de cheques 48 hs / cheque común emitido | acredita o debita días después | el día del depósito o la emisión | Se resuelve con el arrastre |
-| Haberes (4° día hábil del mes) | débito | nada (el asiento de sueldos es de fin de mes) | Haberes sin contabilizar |
-| Un pago anulado | nada | asiento y contraasiento en E | Contraasientos |
-| Comisiones, IVA, Ley 25.413, SIRCREB | débitos | la nota de débito del mes, el último día hábil | Gastos bancarios (en la mensual cierran contra la ND) |
+| Collections by transfer (deposits, unit balances) | credit with CUIT and transfer number | receipt in O and its confirmation in E | Reconciled (E) |
+| A collection not confirmed yet | credit | only the O entry | Pending confirmation (O) |
+| A collection with a small difference (the customer deducted the fee) | credit for a bit less | receipt for the total | Reconciled, "approximate amount" |
+| One day out of three, a collection nobody recorded | credit | nothing | Bank not booked |
+| Cash deposits, card settlements, payments to suppliers and to the manufacturer, AFIP VEPs, deferred-payment cheques | yes | yes, the same day | Reconciled |
+| 48-hour cheque deposit / regular cheque issued | credited or debited days later | on the day of the deposit or issue | Solved by the carry-over |
+| Payroll (4th business day of the month) | debit | nothing (the payroll entry is booked at month end) | Payroll not booked |
+| A cancelled payment | nothing | entry and reversal in E | Reversals |
+| Fees, VAT, Law 25.413, SIRCREB | debits | the month's debit note, on the last business day | Bank fees (in the monthly mode they close against the debit note) |
 
-La cuenta principal de cada marca (la primera en pesos) mueve más que las
-otras. Las cuentas en dólares tienen pocas operaciones.
+Each brand's main account (the first one in pesos) moves more than the
+others. The dollar accounts have few operations.
 
-## Recorrido sugerido
+## Suggested walkthrough
 
-- **Diario**: elegir "Hoy" y "Todas las cuentas" → "Cargar en la zona de
-  abajo" → "Identificar archivos" → "Traer E y O del FBS" → "Conciliar el día".
-  Para mostrar el arrastre: primero el día hábil anterior y después hoy.
-- **Mensual**: "Mes anterior" sobre la cuenta principal → "Cargar extracto y
-  mayor" → "Conciliar": casi todo cruza y los gastos cierran contra la nota de
-  débito.
+- **Daily**: pick "Hoy" and "Todas las cuentas" → "Cargar en la zona de
+  abajo" → "Identificar archivos" → "Traer E y O del FBS" → "Conciliar el
+  día". To show the carry-over: first the previous business day and then
+  today.
+- **Monthly**: "Mes anterior" on the main account → "Cargar extracto y
+  mayor" → "Conciliar": almost everything matches and the fees close against
+  the debit note.
 
-## Crear el servicio en Railway
+## Creating the service on Railway
 
-1. Servicio desde este repo, rama **`fbs-sql`** (la que usa la empresa). Se
-   construye con el `Dockerfile`, que además instala `requirements-demo.txt`
-   (`xlwt`, para los `.xls` de BBVA y Macro).
-2. Variables: `DEMO_MODE=true` y `DATABASE_URL` del Postgres **de la demo** (el
-   mismo del hub de demo, nunca el de producción).
-3. Se abre desde el hub de demo, igual que en la empresa: el hub lo publica
-   en `/app/conciliador-bancario/` con `HUB_PROXY_CONCILIADOR_BANCARIO` = la
-   URL de este servicio.
+1. A service from this repo, branch **`fbs-sql`** (the one the company
+   uses). It builds with the `Dockerfile`, which also installs
+   `requirements-demo.txt` (`xlwt`, for the BBVA and Macro `.xls` files).
+2. Variables: `DEMO_MODE=true` and the `DATABASE_URL` of the **demo**
+   Postgres (the demo hub's, never production's).
+3. It opens from the demo hub, same as at the company: the hub publishes it
+   at `/app/conciliador-bancario/` with `HUB_PROXY_CONCILIADOR_BANCARIO` = this
+   service's URL.

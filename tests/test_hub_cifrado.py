@@ -93,11 +93,11 @@ def test_la_conexion_usa_la_clave_descifrada(monkeypatch):
     monkeypatch.setitem(sys.modules, "pymssql", falso)
     conf = {"servidor": "127.0.0.1", "puerto": 1433, "base": "b", "usuario": "u",
             "clave": V["casos"][0]["cifrado_actual"]}
-    assert mod._conectar(conf) == "con"
+    assert mod._connect_pymssql(conf) == "con"
     assert visto["password"] == V["casos"][0]["claro"]
     assert conf["clave"].startswith("v1:")                   # el dict en memoria sigue cifrado
     visto.clear()
-    mod._conectar({**conf, "clave": "plana"})
+    mod._connect_pymssql({**conf, "clave": "plana"})
     assert visto["password"] == "plana"
 
 
@@ -106,6 +106,6 @@ def test_la_config_publica_no_expone_la_clave(monkeypatch):
     cif = V["casos"][0]["cifrado_actual"]
     cfg = {"cuenta_id": "x-1-ars", "etiqueta": "X", "conexion_nombre": "C", "empresa": "",
            "conexion": {"servidor": "s", "puerto": 1433, "base": "b", "usuario": "u", "clave": cif}}
-    monkeypatch.setattr(fbs_sql, "cuentas_fbs", lambda: [cfg])
-    salida = json.dumps(fbs_sql.publica(""), ensure_ascii=False)
+    monkeypatch.setattr(fbs_sql, "hub_fbs_accounts", lambda: [cfg])
+    salida = json.dumps(fbs_sql.public_config(""), ensure_ascii=False)
     assert cif not in salida and V["casos"][0]["claro"] not in salida

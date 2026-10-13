@@ -1,29 +1,29 @@
 # -*- coding: utf-8 -*-
-"""Motor de conciliación bancaria.
+"""Bank reconciliation engine.
 
-Lógica (según el flujo del sistema contable FES):
-  - La cuenta O (operativa/transitoria) recibe por defecto las órdenes de pago
-    y recibos. Al confirmarse un movimiento se hace la contrapartida en O y el
-    asiento pasa a la cuenta E, que debería reflejar el extracto bancario.
-  - Conciliar = extracto vs cuenta E; lo que no está en E se busca en la O
-    (movimientos pendientes de confirmación).
+Logic (following the flow of the FES accounting system):
+  - Account O (operative/transitory) receives payment orders and receipts by
+    default. When a movement is confirmed, the counter-entry is made in O and
+    the entry moves to account E, which should mirror the bank statement.
+  - Reconciling = statement vs account E; what isn't in E is looked up in O
+    (movements pending confirmation).
 
-Convención de signos:
-  crédito del banco (entra plata)  <->  Debe del mayor
-  débito del banco  (sale plata)   <->  Haber del mayor
+Sign convention:
+  bank credit (money in)   <->  ledger Debe (debit)
+  bank debit  (money out)  <->  ledger Haber (credit)
 """
 import re
 from collections import defaultdict
 
-# Palabras clave de gastos/impuestos bancarios que usualmente no se registran
-# asiento por asiento en el mayor.
-# Ojo con los términos cortos: sin límite de palabra, "iva " matchea
-# "cooperatIVA de seguros" y "com " matchea "teleCOM" (pasó con pagos a
-# proveedores reales que cayeron como gastos).
-GASTO_RE = re.compile(
-    # (?<![a-z])sirc cubre "SIRCREB" (Santander) y el abreviado "REG REC SIRC"
-    # del BBVA/Francés; 25413 suelto cubre el "DBCR 25413 S/DB" del Macro;
-    # "inter." cubre los intereses abreviados ("INTER.ADEL.CC S/ACUERD")
+# Keywords of bank fees/taxes that are usually not recorded entry by entry in
+# the ledger.
+# Careful with short terms: without a word boundary, "iva " matches
+# "cooperatIVA de seguros" and "com " matches "teleCOM" (it happened with
+# payments to real suppliers that ended up as fees).
+FEE_RE = re.compile(
+    # (?<![a-z])sirc covers "SIRCREB" (Santander) and the abbreviated "REG REC
+    # SIRC" of BBVA/Francés; a bare 25413 covers Macro's "DBCR 25413 S/DB";
+    # "inter." covers abbreviated interest ("INTER.ADEL.CC S/ACUERD")
     r'comision|(?<![a-z])iva(?![a-z])|impuesto|(?<![a-z])sirc|percepcion|iibb|'
     r'ley ?2[57]\.?[47]?\d*|(?<!\d)25\.?413(?!\d)|mantenimiento|sellados|'
     r'intereses|(?<![a-z])inter\.|(?<![a-z])com\.? ',
@@ -32,510 +32,509 @@ GASTO_RE = re.compile(
 
 NUM_RE = re.compile(r'\d{5,}')
 
-# Ventana para los cruces "a ciegas": mismo importe, sin comprobante ni una
-# sola palabra en común. Más allá de esto es más probable que sean dos
-# operaciones distintas del mismo monto que la misma.
-TOL_CIEGO_DIAS = 10
+# Window for "blind" matches: same amount, no voucher and not a single word
+# in common. Beyond it, two different operations of the same amount are more
+# likely than the same one.
+BLIND_TOLERANCE_DAYS = 10
 
-# --- Nota de débito mensual de gastos bancarios -----------------------------
-# Los gastos no se contabilizan día por día: se agrupan en una sola nota de
-# débito mensual, separando comisiones gravadas al 21%, intereses al 10,5%
-# (cada grupo con su IVA) y los conceptos no gravados (ley 25.413, SIRCREB,
-# percepciones).
-CATEGORIAS_GASTO = [
+# --- Monthly debit note of bank fees ------------------------------------------
+# Fees are not booked day by day: they are grouped into a single monthly
+# debit note, separating commissions taxed at 21%, interest at 10.5% (each
+# group with its VAT) and the untaxed concepts (law 25.413, SIRCREB,
+# perceptions).
+FEE_CATEGORIES = [
     ("IVA 10,5%", re.compile(r'iva\s*10[.,]?5', re.I)),
     ("IVA 21%", re.compile(r'iva', re.I)),
     ("Impuesto ley 25.413", re.compile(r'ley\s*25\.?413|(?<!\d)25\.?413(?!\d)', re.I)),
     ("SIRCREB", re.compile(r'(?<![a-z])sirc', re.I)),
-    ("Percepciones IIBB", re.compile(r'iibb|percep', re.I)),   # "percep" abreviado incluido
+    ("Percepciones IIBB", re.compile(r'iibb|percep', re.I)),   # abbreviated "percep" included
 ]
-# comisiones e intereses pueden estar gravados al 21% o al 10,5% (feedback del
-# cliente): si el concepto trae la alícuota en el texto se respeta; si no, el
-# default histórico (comisiones -> 21%, intereses -> 10,5%)
-COMISION_RE = re.compile(r'comision|mantenimiento|sellado|com\.? ', re.I)
-INTERES_RE = re.compile(r'inter[eé]s|(?<![a-z])inter\.', re.I)
-TASA_105_RE = re.compile(r'10[.,]5')
-TASA_21_RE = re.compile(r'(?<![\d.,])21(?![\d.,])')
-ORDEN_CATEGORIAS = [
+# commissions and interest can be taxed at 21% or 10.5% (client feedback): if
+# the concept carries the rate in its text it is respected; otherwise the
+# historical default (commissions -> 21%, interest -> 10.5%)
+COMMISSION_RE = re.compile(r'comision|mantenimiento|sellado|com\.? ', re.I)
+INTEREST_RE = re.compile(r'inter[eé]s|(?<![a-z])inter\.', re.I)
+RATE_105_RE = re.compile(r'10[.,]5')
+RATE_21_RE = re.compile(r'(?<![\d.,])21(?![\d.,])')
+CATEGORY_ORDER = [
     "Comisiones (grav. 21%)", "Intereses saldo deudor (grav. 21%)", "IVA 21%",
     "Comisiones (grav. 10,5%)", "Intereses saldo deudor (grav. 10,5%)", "IVA 10,5%",
     "Impuesto ley 25.413", "SIRCREB", "Percepciones IIBB", "Otros",
 ]
-ND_RE = re.compile(r'gastos?\s*banc', re.I)
-NC_RE = re.compile(r'impuestos\s+liq|nota\s+de\s+cr[eé]dito|\bNC-', re.I)
-MESES = {1: 'ENE', 2: 'FEB', 3: 'MAR', 4: 'ABR', 5: 'MAY', 6: 'JUN',
-         7: 'JUL', 8: 'AGO', 9: 'SEP', 10: 'OCT', 11: 'NOV', 12: 'DIC'}
-MES_TXT_RE = re.compile(
+DEBIT_NOTE_RE = re.compile(r'gastos?\s*banc', re.I)
+CREDIT_NOTE_RE = re.compile(r'impuestos\s+liq|nota\s+de\s+cr[eé]dito|\bNC-', re.I)
+MONTHS = {1: 'ENE', 2: 'FEB', 3: 'MAR', 4: 'ABR', 5: 'MAY', 6: 'JUN',
+          7: 'JUL', 8: 'AGO', 9: 'SEP', 10: 'OCT', 11: 'NOV', 12: 'DIC'}
+MONTH_TEXT_RE = re.compile(
     r'\b(ENE(?:RO)?|FEB(?:RERO)?|MAR(?:ZO)?|ABR(?:IL)?|MAY(?:O)?|JUN(?:IO)?|'
     r'JUL(?:IO)?|AGO(?:STO)?|SEP(?:TIEMBRE)?|OCT(?:UBRE)?|NOV(?:IEMBRE)?|DIC(?:IEMBRE)?)\b',
     re.I)
 
 
-def _categoria_gasto(descripcion: str) -> str:
-    d = descripcion or ""
-    for nombre, rx in CATEGORIAS_GASTO:
+def _fee_category(description: str) -> str:
+    d = description or ""
+    for name, rx in FEE_CATEGORIES:
         if rx.search(d):
-            return nombre
-    if INTERES_RE.search(d):
-        if TASA_21_RE.search(d) and not TASA_105_RE.search(d):
+            return name
+    if INTEREST_RE.search(d):
+        if RATE_21_RE.search(d) and not RATE_105_RE.search(d):
             return "Intereses saldo deudor (grav. 21%)"
         return "Intereses saldo deudor (grav. 10,5%)"
-    if COMISION_RE.search(d):
-        if TASA_105_RE.search(d):
+    if COMMISSION_RE.search(d):
+        if RATE_105_RE.search(d):
             return "Comisiones (grav. 10,5%)"
         return "Comisiones (grav. 21%)"
     return "Otros"
 
 
-def _mes_de_asiento(a) -> str | None:
-    """Mes (p.ej. 'ENE') al que corresponde un asiento de ND del mayor."""
-    m = MES_TXT_RE.search(f"{a.referencia} {a.comentario}")
+def _entry_month(a) -> str | None:
+    """Month (e.g. 'ENE') a ledger debit-note entry belongs to."""
+    m = MONTH_TEXT_RE.search(f"{a.reference} {a.comment}")
     if m:
         return m.group(1)[:3].upper()
-    return MESES.get(a.fecha.month) if a.fecha else None
+    return MONTHS.get(a.date.month) if a.date else None
 
 
-def resumen_nota_debito(gastos, asientos_libres):
-    """Agrupa los gastos bancarios por período de extracto y los compara con
-    las notas de débito mensuales registradas en el mayor.
+def debit_note_summary(fees, free_entries):
+    """Groups the bank fees by statement period and compares them with the
+    monthly debit notes recorded in the ledger.
 
-    Devuelve (periodos, ids_asientos_usados)."""
-    por_archivo = defaultdict(list)
-    for g in gastos:
-        por_archivo[g.archivo].append(g)
+    Returns (periods, used_entry_ids)."""
+    by_file = defaultdict(list)
+    for g in fees:
+        by_file[g.file].append(g)
 
-    # candidatos del mayor: ND (haber) y NC de impuestos (debe)
-    nds = [a for a in asientos_libres if a.haber and ND_RE.search(f"{a.referencia} {a.comentario}")]
-    ncs = [a for a in asientos_libres if a.debe and NC_RE.search(f"{a.referencia} {a.comentario}")]
+    # ledger candidates: debit notes (credit side) and tax credit notes (debit side)
+    debit_notes = [a for a in free_entries if a.credit and DEBIT_NOTE_RE.search(f"{a.reference} {a.comment}")]
+    credit_notes = [a for a in free_entries if a.debit and CREDIT_NOTE_RE.search(f"{a.reference} {a.comment}")]
 
-    periodos = []
-    usados = set()
-    for archivo in sorted(por_archivo):
-        items = por_archivo[archivo]
-        fechas = [g.fecha for g in items if g.fecha]
-        hasta = max(fechas) if fechas else None
-        mes = MESES.get(hasta.month) if hasta else None
-        etiqueta = f"{mes}/{hasta.strftime('%y')}" if hasta else archivo
+    periods = []
+    used = set()
+    for file in sorted(by_file):
+        items = by_file[file]
+        dates = [g.date for g in items if g.date]
+        until = max(dates) if dates else None
+        month = MONTHS.get(until.month) if until else None
+        label = f"{month}/{until.strftime('%y')}" if until else file
 
         cats = defaultdict(lambda: {"cantidad": 0, "importe": 0.0})
-        conceptos = defaultdict(lambda: {"cantidad": 0, "importe": 0.0})
+        concepts = defaultdict(lambda: {"cantidad": 0, "importe": 0.0})
         for g in items:
-            neto = g.debito - g.credito
-            c = _categoria_gasto(g.descripcion)
+            net = g.debit - g.credit
+            c = _fee_category(g.description)
             cats[c]["cantidad"] += 1
-            cats[c]["importe"] += neto
-            conceptos[g.descripcion.strip()]["cantidad"] += 1
-            conceptos[g.descripcion.strip()]["importe"] += neto
+            cats[c]["importe"] += net
+            concepts[g.description.strip()]["cantidad"] += 1
+            concepts[g.description.strip()]["importe"] += net
 
-        filas_cat = []
-        for nombre in ORDEN_CATEGORIAS:
-            if nombre not in cats:
+        category_rows = []
+        for name in CATEGORY_ORDER:
+            if name not in cats:
                 continue
-            fila = {"categoria": nombre,
-                    "cantidad": cats[nombre]["cantidad"],
-                    "importe": round(cats[nombre]["importe"], 2)}
-            if nombre == "IVA 21%" and "Comisiones (grav. 21%)" in cats:
-                fila["iva_esperado"] = round(0.21 * cats["Comisiones (grav. 21%)"]["importe"], 2)
-            if nombre == "IVA 10,5%" and "Intereses saldo deudor (grav. 10,5%)" in cats:
-                fila["iva_esperado"] = round(0.105 * cats["Intereses saldo deudor (grav. 10,5%)"]["importe"], 2)
-            filas_cat.append(fila)
+            row = {"categoria": name,
+                   "cantidad": cats[name]["cantidad"],
+                   "importe": round(cats[name]["importe"], 2)}
+            if name == "IVA 21%" and "Comisiones (grav. 21%)" in cats:
+                row["iva_esperado"] = round(0.21 * cats["Comisiones (grav. 21%)"]["importe"], 2)
+            if name == "IVA 10,5%" and "Intereses saldo deudor (grav. 10,5%)" in cats:
+                row["iva_esperado"] = round(0.105 * cats["Intereses saldo deudor (grav. 10,5%)"]["importe"], 2)
+            category_rows.append(row)
 
-        total_extracto = round(sum(f["importe"] for f in filas_cat), 2)
+        statement_total = round(sum(f["importe"] for f in category_rows), 2)
 
-        # asientos del mayor correspondientes a este mes
-        asientos_periodo = [a for a in nds if _mes_de_asiento(a) == mes]
-        # NCs del mes siguiente al período también corresponden (se liquidan después)
-        asientos_nc = [a for a in ncs
-                       if a.fecha and hasta and 0 <= (a.fecha - hasta).days <= 40]
-        total_mayor = round(sum(a.haber for a in asientos_periodo)
-                            - sum(a.debe for a in asientos_nc), 2)
-        for a in asientos_periodo + asientos_nc:
-            usados.add(a.id)
+        # ledger entries of this month
+        period_entries = [a for a in debit_notes if _entry_month(a) == month]
+        # credit notes of the month after the period also belong (they are settled later)
+        credit_note_entries = [a for a in credit_notes
+                               if a.date and until and 0 <= (a.date - until).days <= 40]
+        ledger_total = round(sum(a.credit for a in period_entries)
+                             - sum(a.debit for a in credit_note_entries), 2)
+        for a in period_entries + credit_note_entries:
+            used.add(a.id)
 
-        periodos.append({
-            "periodo": etiqueta,
-            "archivo": archivo,
+        periods.append({
+            "periodo": label,
+            "archivo": file,
             "movimientos": len(items),
-            "categorias": filas_cat,
+            "categorias": category_rows,
             "conceptos": sorted(
                 [{"descripcion": k, **v, "importe": round(v["importe"], 2)}
-                 for k, v in conceptos.items()],
+                 for k, v in concepts.items()],
                 key=lambda x: -abs(x["importe"])),
-            "total_extracto": total_extracto,
-            "asientos_mayor": asientos_periodo + asientos_nc,
-            "total_mayor": total_mayor if (asientos_periodo or asientos_nc) else None,
-            "diferencia": round(total_extracto - total_mayor, 2)
-                          if (asientos_periodo or asientos_nc) else None,
+            "total_extracto": statement_total,
+            "asientos_mayor": period_entries + credit_note_entries,
+            "total_mayor": ledger_total if (period_entries or credit_note_entries) else None,
+            "diferencia": round(statement_total - ledger_total, 2)
+                          if (period_entries or credit_note_entries) else None,
         })
-    return periodos, usados
+    return periods, used
 
 
-# --- Tolerancia de importe -------------------------------------------------
-# Diferencias chicas entre banco y mayor (comisión descontada en la misma
-# transferencia, redondeos de liquidación). Solo se acepta el par si el
-# candidato es ÚNICO en ambos sentidos dentro de la tolerancia.
-TOL_ABS = 100.0     # piso: ±$100
-TOL_PCT = 0.001     # 0,1% del importe
-TOL_TOPE = 2000.0   # techo absoluto
-TOL_DIAS = 45
+# --- Amount tolerance ---------------------------------------------------------
+# Small differences between bank and ledger (a commission deducted from the
+# same transfer, settlement rounding). The pair is only accepted if the
+# candidate is UNIQUE in both directions within the tolerance.
+TOL_ABS = 100.0     # floor: ±$100
+TOL_PCT = 0.001     # 0.1% of the amount
+TOL_CAP = 2000.0    # absolute ceiling
+TOL_DAYS = 45
 
 
-def _tolerancia(importe: float) -> float:
-    return min(max(TOL_ABS, importe * TOL_PCT), TOL_TOPE)
+def _tolerance(amount: float) -> float:
+    return min(max(TOL_ABS, amount * TOL_PCT), TOL_CAP)
 
 
-def match_tolerancia(banco_libres, asiento_libres):
-    """Matches 1 a 1 con diferencia chica de importe. Devuelve
-    (pares, ids_banco_usados, ids_mayor_usados)."""
+def match_with_tolerance(free_bank, free_entries):
+    """1 to 1 matches with a small amount difference. Returns
+    (pairs, used_bank_ids, used_ledger_ids)."""
     import bisect
 
-    por_lado_a = {"credito": [], "debito": []}
-    for a in asiento_libres:
-        lado_banco = 'credito' if a.lado == 'debe' else 'debito'
-        por_lado_a[lado_banco].append(a)
-    por_lado_b = {"credito": [], "debito": []}
-    for m in banco_libres:
-        por_lado_b[m.lado].append(m)
-    for d in (por_lado_a, por_lado_b):
-        for lista in d.values():
-            lista.sort(key=lambda x: x.importe)
-    imps_a = {k: [a.importe for a in v] for k, v in por_lado_a.items()}
-    imps_b = {k: [m.importe for m in v] for k, v in por_lado_b.items()}
+    entries_by_side = {"credito": [], "debito": []}
+    for a in free_entries:
+        bank_side = 'credito' if a.side == 'debe' else 'debito'
+        entries_by_side[bank_side].append(a)
+    bank_by_side = {"credito": [], "debito": []}
+    for m in free_bank:
+        bank_by_side[m.side].append(m)
+    for d in (entries_by_side, bank_by_side):
+        for items in d.values():
+            items.sort(key=lambda x: x.amount)
+    amounts_a = {k: [a.amount for a in v] for k, v in entries_by_side.items()}
+    amounts_b = {k: [m.amount for m in v] for k, v in bank_by_side.items()}
 
-    def cerca(f1, f2):
-        return f1 and f2 and abs((f1 - f2).days) <= TOL_DIAS
+    def near(f1, f2):
+        return f1 and f2 and abs((f1 - f2).days) <= TOL_DAYS
 
-    def candidatos(importe, fecha, lista, imps):
-        tol = _tolerancia(importe)
+    def candidates(amount, day, items, amounts):
+        tol = _tolerance(amount)
         out = []
-        i = bisect.bisect_left(imps, importe - tol)
-        while i < len(lista) and imps[i] <= importe + tol:
-            x = lista[i]
-            if abs(x.importe - importe) > 0.005 and cerca(fecha, x.fecha):
+        i = bisect.bisect_left(amounts, amount - tol)
+        while i < len(items) and amounts[i] <= amount + tol:
+            x = items[i]
+            if abs(x.amount - amount) > 0.005 and near(day, x.date):
                 out.append(x)
             i += 1
         return out
 
-    pares, usados_b, usados_a = [], set(), set()
-    for m in banco_libres:
-        cands = candidatos(m.importe, m.fecha, por_lado_a[m.lado], imps_a[m.lado])
-        if len(cands) != 1 or cands[0].id in usados_a:
+    pairs, used_b, used_a = [], set(), set()
+    for m in free_bank:
+        cands = candidates(m.amount, m.date, entries_by_side[m.side], amounts_a[m.side])
+        if len(cands) != 1 or cands[0].id in used_a:
             continue
         a = cands[0]
-        # el asiento también debe tener a este movimiento como único candidato
-        reversos = candidatos(a.importe, a.fecha, por_lado_b[m.lado], imps_b[m.lado])
-        if len(reversos) != 1 or reversos[0].id != m.id:
+        # the entry must also have this movement as its only candidate
+        reverse = candidates(a.amount, a.date, bank_by_side[m.side], amounts_b[m.side])
+        if len(reverse) != 1 or reverse[0].id != m.id:
             continue
-        dif = round(m.importe - a.importe, 2)
-        pares.append({"banco": m, "asiento": a,
-                      "metodo": f"importe aproximado (dif $ {dif:+,.2f})"})
-        usados_b.add(m.id)
-        usados_a.add(a.id)
-    return pares, usados_b, usados_a
+        diff = round(m.amount - a.amount, 2)
+        pairs.append({"banco": m, "asiento": a,
+                      "metodo": f"importe aproximado (dif $ {diff:+,.2f})"})
+        used_b.add(m.id)
+        used_a.add(a.id)
+    return pairs, used_b, used_a
 
 
-PALABRA_RE = re.compile(r'[a-zñ]{4,}')
-# palabras que aparecen en casi todos los textos y no distinguen nada
-VACIAS = {'banco', 'santander', 'frances', 'galicia', 'macro', 'ciudad', 'cuenta',
-          'corriente', 'pesos', 'transferencia', 'realizada', 'recibida', 'pago',
-          'pagos', 'terceros', 'varios', 'fecha', 'importe', 'movimiento'}
+WORD_RE = re.compile(r'[a-zñ]{4,}')
+# words that appear in almost every text and tell nothing apart
+FILLER_WORDS = {'banco', 'santander', 'frances', 'galicia', 'macro', 'ciudad', 'cuenta',
+                'corriente', 'pesos', 'transferencia', 'realizada', 'recibida', 'pago',
+                'pagos', 'terceros', 'varios', 'fecha', 'importe', 'movimiento'}
 
 
-def _palabras(texto: str) -> set[str]:
-    """Palabras significativas de un texto, sin acentos ni relleno."""
-    t = (texto or '').lower()
+def _words(text: str) -> set[str]:
+    """Meaningful words of a text, without accents or filler."""
+    t = (text or '').lower()
     for a, b in (('á', 'a'), ('é', 'e'), ('í', 'i'), ('ó', 'o'), ('ú', 'u'), ('ü', 'u')):
         t = t.replace(a, b)
-    return set(PALABRA_RE.findall(t)) - VACIAS
+    return set(WORD_RE.findall(t)) - FILLER_WORDS
 
 
-def _afinidad(m, a) -> int:
-    """Cuánto se parecen los textos de un movimiento y un asiento (palabras en
-    común). Solo se usa para DESEMPATAR entre candidatos que ya coinciden en
-    importe y fecha: el mayor del FBS casi nunca repite el texto del banco,
-    así que exigirlo perdería cruces buenos, pero cuando dos candidatos empatan
-    gana el que además comparte el nombre o el concepto."""
-    return len(_palabras(f"{m.descripcion} {m.detalle}")
-               & _palabras(f"{a.referencia} {a.comentario}"))
+def _affinity(m, a) -> int:
+    """How similar the texts of a movement and an entry are (words in
+    common). Only used to BREAK TIES between candidates that already agree on
+    amount and date: the FBS ledger almost never repeats the bank's text, so
+    requiring it would lose good matches, but when two candidates tie the one
+    that also shares the name or the concept wins."""
+    return len(_words(f"{m.description} {m.detail}")
+               & _words(f"{a.reference} {a.comment}"))
 
 
-def _numeros(texto: str) -> set[str]:
-    """Extrae números de referencia (5+ dígitos) de un texto."""
-    return {n.lstrip('0') for n in NUM_RE.findall(texto or '') if n.lstrip('0')}
+def _numbers(text: str) -> set[str]:
+    """Extracts reference numbers (5+ digits) from a text."""
+    return {n.lstrip('0') for n in NUM_RE.findall(text or '') if n.lstrip('0')}
 
 
-def _clave_rm(texto: str) -> str | None:
-    m = re.search(r'RM-?\s*(\d+)', texto or '', re.IGNORECASE)
+def _rm_key(text: str) -> str | None:
+    m = re.search(r'RM-?\s*(\d+)', text or '', re.IGNORECASE)
     return m.group(1).lstrip('0') if m else None
 
 
-def netear_contraasientos(asientos):
-    """Detecta pares asiento + contraasiento dentro de un mismo residual del
-    mayor: misma clave (RM o referencia), mismo importe, lados opuestos.
-    Son movimientos anulados que nunca van a aparecer en el extracto.
+def net_reversals(entries):
+    """Finds entry + reversal pairs inside the same ledger residual: same key
+    (RM or reference), same amount, opposite sides. They are cancelled
+    movements that will never show up in the statement.
 
-    Devuelve (restantes, pares) donde pares es [{debe, haber}]."""
-    debe = defaultdict(list)
-    haber = defaultdict(list)
-    for a in asientos:
-        clave = (_clave_rm(a.comentario) or a.referencia.strip().upper(), round(a.importe, 2))
-        (debe if a.lado == 'debe' else haber)[clave].append(a)
+    Returns (remaining, pairs) where pairs is [{debe, haber}]."""
+    debit = defaultdict(list)
+    credit = defaultdict(list)
+    for a in entries:
+        key = (_rm_key(a.comment) or a.reference.strip().upper(), round(a.amount, 2))
+        (debit if a.side == 'debe' else credit)[key].append(a)
 
-    pares, cancelados = [], set()
-    for clave, lista_d in debe.items():
-        lista_h = haber.get(clave, [])
-        for k in range(min(len(lista_d), len(lista_h))):
-            pares.append({"debe": lista_d[k], "haber": lista_h[k]})
-            cancelados.add(lista_d[k].id)
-            cancelados.add(lista_h[k].id)
-    restantes = [a for a in asientos if a.id not in cancelados]
-    return restantes, pares
+    pairs, cancelled = [], set()
+    for key, debit_list in debit.items():
+        credit_list = credit.get(key, [])
+        for k in range(min(len(debit_list), len(credit_list))):
+            pairs.append({"debe": debit_list[k], "haber": credit_list[k]})
+            cancelled.add(debit_list[k].id)
+            cancelled.add(credit_list[k].id)
+    remaining = [a for a in entries if a.id not in cancelled]
+    return remaining, pairs
 
 
-def netear_cuenta_o(asientos_o):
-    """Cancela dentro de la O los pares confirmados (asiento + contrapartida).
+def net_o_account(o_entries):
+    """Cancels inside O the confirmed pairs (entry + counter-entry).
 
-    Un movimiento confirmado aparece en O dos veces: una en cada lado, con el
-    mismo importe y el mismo comprobante (RM / referencia). Lo que queda sin
-    cancelar son los movimientos pendientes de confirmación.
+    A confirmed movement appears twice in O: once on each side, with the same
+    amount and the same voucher (RM / reference). What is left uncancelled are
+    the movements pending confirmation.
     """
-    debe = defaultdict(list)
-    haber = defaultdict(list)
-    for a in asientos_o:
-        clave = (_clave_rm(a.comentario) or a.referencia.strip().upper(), round(a.importe, 2))
-        (debe if a.lado == 'debe' else haber)[clave].append(a)
+    debit = defaultdict(list)
+    credit = defaultdict(list)
+    for a in o_entries:
+        key = (_rm_key(a.comment) or a.reference.strip().upper(), round(a.amount, 2))
+        (debit if a.side == 'debe' else credit)[key].append(a)
 
-    cancelados = set()
-    for clave, lista_d in debe.items():
-        lista_h = haber.get(clave, [])
-        n = min(len(lista_d), len(lista_h))
+    cancelled = set()
+    for key, debit_list in debit.items():
+        credit_list = credit.get(key, [])
+        n = min(len(debit_list), len(credit_list))
         for k in range(n):
-            cancelados.add(lista_d[k].id)
-            cancelados.add(lista_h[k].id)
-    pendientes = [a for a in asientos_o if a.id not in cancelados]
-    return pendientes, cancelados
+            cancelled.add(debit_list[k].id)
+            cancelled.add(credit_list[k].id)
+    pending = [a for a in o_entries if a.id not in cancelled]
+    return pending, cancelled
 
 
-def _match_pases(movs_banco, asientos, tolerancia_dias=45):
-    """Concilia movimientos del banco contra asientos del mayor.
+def _match_passes(bank_movs, entries, tolerance_days=45):
+    """Matches bank movements against ledger entries.
 
-    Devuelve (matches, banco_sin_match, asientos_sin_match) donde matches es
-    una lista de dicts {banco, asiento, metodo}.
+    Returns (matches, unmatched_bank, unmatched_entries) where matches is a
+    list of dicts {banco, asiento, metodo}.
     """
     matches = []
-    banco_libres = list(movs_banco)
-    asiento_libres = list(asientos)
+    free_bank = list(bank_movs)
+    free_entries = list(entries)
 
-    def indexar(asientos_):
+    def index(entries_):
         idx = defaultdict(list)
-        for a in asientos_:
-            lado_banco = 'credito' if a.lado == 'debe' else 'debito'
-            idx[(lado_banco, round(a.importe, 2))].append(a)
+        for a in entries_:
+            bank_side = 'credito' if a.side == 'debe' else 'debito'
+            idx[(bank_side, round(a.amount, 2))].append(a)
         return idx
 
-    # --- Pase 1: importe + número de referencia compartido -----------------
-    idx = indexar(asiento_libres)
-    usados_a, usados_b = set(), set()
-    for m in banco_libres:
-        candidatos = idx.get((m.lado, round(m.importe, 2)), [])
-        texto_b = f"{m.comprobante or ''} {m.descripcion} {m.detalle}"
-        nums_b = _numeros(texto_b)
+    # --- Pass 1: amount + shared reference number ----------------------------
+    idx = index(free_entries)
+    used_a, used_b = set(), set()
+    for m in free_bank:
+        candidates = idx.get((m.side, round(m.amount, 2)), [])
+        text_b = f"{m.voucher or ''} {m.description} {m.detail}"
+        nums_b = _numbers(text_b)
         if not nums_b:
             continue
-        for a in candidatos:
-            if a.id in usados_a:
+        for a in candidates:
+            if a.id in used_a:
                 continue
-            nums_a = _numeros(f"{a.referencia} {a.comentario}")
+            nums_a = _numbers(f"{a.reference} {a.comment}")
             if nums_b & nums_a:
                 matches.append({"banco": m, "asiento": a, "metodo": "importe+referencia"})
-                usados_a.add(a.id)
-                usados_b.add(m.id)
+                used_a.add(a.id)
+                used_b.add(m.id)
                 break
-    banco_libres = [m for m in banco_libres if m.id not in usados_b]
-    asiento_libres = [a for a in asiento_libres if a.id not in usados_a]
+    free_bank = [m for m in free_bank if m.id not in used_b]
+    free_entries = [a for a in free_entries if a.id not in used_a]
 
-    # --- Pase 2: importe único (un solo candidato de cada lado) ------------
-    idx = indexar(asiento_libres)
+    # --- Pass 2: unique amount (a single candidate on each side) -------------
+    idx = index(free_entries)
     idx_b = defaultdict(list)
-    for m in banco_libres:
-        idx_b[(m.lado, round(m.importe, 2))].append(m)
-    usados_a, usados_b = set(), set()
-    for clave, lista_b in idx_b.items():
-        lista_a = idx.get(clave, [])
-        if len(lista_b) == 1 and len(lista_a) == 1:
-            m, a = lista_b[0], lista_a[0]
-            if m.fecha and a.fecha and abs((m.fecha - a.fecha).days) > tolerancia_dias:
+    for m in free_bank:
+        idx_b[(m.side, round(m.amount, 2))].append(m)
+    used_a, used_b = set(), set()
+    for key, list_b in idx_b.items():
+        list_a = idx.get(key, [])
+        if len(list_b) == 1 and len(list_a) == 1:
+            m, a = list_b[0], list_a[0]
+            if m.date and a.date and abs((m.date - a.date).days) > tolerance_days:
                 continue
             matches.append({"banco": m, "asiento": a, "metodo": "importe único"})
-            usados_b.add(m.id)
-            usados_a.add(a.id)
-    banco_libres = [m for m in banco_libres if m.id not in usados_b]
-    asiento_libres = [a for a in asiento_libres if a.id not in usados_a]
+            used_b.add(m.id)
+            used_a.add(a.id)
+    free_bank = [m for m in free_bank if m.id not in used_b]
+    free_entries = [a for a in free_entries if a.id not in used_a]
 
-    # --- Pase 3: mismo importe, asignación por fecha más cercana -----------
-    idx = indexar(asiento_libres)
-    usados_a, usados_b = set(), set()
-    por_clave = defaultdict(list)
-    for m in banco_libres:
-        por_clave[(m.lado, round(m.importe, 2))].append(m)
-    for clave, lista_b in por_clave.items():
-        lista_a = [a for a in idx.get(clave, [])]
-        if not lista_a:
+    # --- Pass 3: same amount, assigned by the closest date -------------------
+    idx = index(free_entries)
+    used_a, used_b = set(), set()
+    by_key = defaultdict(list)
+    for m in free_bank:
+        by_key[(m.side, round(m.amount, 2))].append(m)
+    for key, list_b in by_key.items():
+        list_a = [a for a in idx.get(key, [])]
+        if not list_a:
             continue
-        # greedy por menor distancia de fechas; entre empates gana el que
-        # comparte palabras (nombre del beneficiario, concepto) con el asiento
-        pares = []
-        for m in lista_b:
-            for a in lista_a:
-                if m.fecha and a.fecha:
-                    d = abs((m.fecha - a.fecha).days)
+        # greedy by the smallest date distance; among ties wins the one that
+        # shares words (payee name, concept) with the entry
+        pairs = []
+        for m in list_b:
+            for a in list_a:
+                if m.date and a.date:
+                    d = abs((m.date - a.date).days)
                 else:
                     d = 9999
-                af = _afinidad(m, a)
-                # sin comprobante ni texto en común el cruce es a ciegas: ahí
-                # la ventana se achica. Con 45 días terminaba cruzando un pago
-                # con un asiento ajeno del mismo importe de dos semanas antes
-                # (feedback del cliente) y consumiéndolo para siempre.
-                if d <= (tolerancia_dias if af else TOL_CIEGO_DIAS):
-                    pares.append((d, -af, m, a))
-        pares.sort(key=lambda p: (p[0], p[1], p[2].id, p[3].id))
-        for d, menos_af, m, a in pares:
-            if m.id in usados_b or a.id in usados_a:
+                af = _affinity(m, a)
+                # with no voucher or text in common the match is blind: the
+                # window shrinks there. With 45 days it ended up matching a
+                # payment with someone else's entry of the same amount from
+                # two weeks before (client feedback) and consuming it forever.
+                if d <= (tolerance_days if af else BLIND_TOLERANCE_DAYS):
+                    pairs.append((d, -af, m, a))
+        pairs.sort(key=lambda p: (p[0], p[1], p[2].id, p[3].id))
+        for d, minus_af, m, a in pairs:
+            if m.id in used_b or a.id in used_a:
                 continue
-            # aviso honesto: acá no hubo comprobante en común, solo importe y
-            # fecha. Es el cruce que conviene revisar a mano.
-            detalle = "" if menos_af else " · sin comprobante ni texto en común"
+            # honest warning: there was no voucher in common here, only amount
+            # and date. It's the match worth reviewing by hand.
+            detail = "" if minus_af else " · sin comprobante ni texto en común"
             matches.append({"banco": m, "asiento": a,
-                            "metodo": f"importe+fecha (±{d}d){detalle}"})
-            usados_b.add(m.id)
-            usados_a.add(a.id)
-    banco_libres = [m for m in banco_libres if m.id not in usados_b]
-    asiento_libres = [a for a in asiento_libres if a.id not in usados_a]
+                            "metodo": f"importe+fecha (±{d}d){detail}"})
+            used_b.add(m.id)
+            used_a.add(a.id)
+    free_bank = [m for m in free_bank if m.id not in used_b]
+    free_entries = [a for a in free_entries if a.id not in used_a]
 
-    return matches, banco_libres, asiento_libres
+    return matches, free_bank, free_entries
 
 
-def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
-              equivalencias=None, terminos_gasto=None, excepciones_gasto=None):
-    """Ejecuta la conciliación completa. Devuelve un dict serializable."""
-    from engine import reglas as reglas_mod
-    from engine import equivalencias as eq_mod
-    from engine import gastos_conf
+def reconcile(bank_movs, e_entries, o_entries, learned_rules=None,
+              equivalence_pairs=None, user_fee_terms=None, fee_exceptions=None):
+    """Runs the full reconciliation. Returns a serializable dict."""
+    from engine import rules
+    from engine import equivalences
+    from engine import fee_terms
 
-    pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
+    o_pending, o_cancelled = net_o_account(o_entries)
 
-    # 1) extracto vs cuenta E
-    matches_e, banco_sin_e, e_sin_banco = _match_pases(movs_banco, asientos_e)
+    # 1) statement vs account E
+    matches_e, bank_without_e, e_without_bank = _match_passes(bank_movs, e_entries)
 
-    # 2) lo que no está en E se busca en la O pendiente de confirmación
-    matches_o, banco_sin_nada, o_pend_sin_banco = _match_pases(banco_sin_e, pendientes_o)
+    # 2) what isn't in E is looked up in the O pending confirmation
+    matches_o, bank_unmatched, o_pending_without_bank = _match_passes(bank_without_e, o_pending)
 
-    # 2b) reglas aprendidas de conciliaciones manuales anteriores
-    pares_regla, usados_b, usados_a = reglas_mod.aplicar(
-        banco_sin_nada, e_sin_banco + o_pend_sin_banco, reglas_aprendidas or [])
-    reglas_aplicadas = len(pares_regla)
-    if pares_regla:
-        banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
-        e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
-        o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
-        for p in pares_regla:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+    # 2b) rules learned from previous manual reconciliations
+    rule_pairs, used_b, used_a = rules.apply(
+        bank_unmatched, e_without_bank + o_pending_without_bank, learned_rules or [])
+    rules_applied = len(rule_pairs)
+    if rule_pairs:
+        bank_unmatched = [m for m in bank_unmatched if m.id not in used_b]
+        e_without_bank = [a for a in e_without_bank if a.id not in used_a]
+        o_pending_without_bank = [a for a in o_pending_without_bank if a.id not in used_a]
+        for p in rule_pairs:
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
-    # 2c) diccionario de equivalencias de vocabulario (p. ej. haberes ≈ sueldos)
-    pares_eq, usados_b, usados_a = eq_mod.aplicar(
-        banco_sin_nada, e_sin_banco + o_pend_sin_banco, equivalencias or [])
-    equivalencias_aplicadas = len({p["banco"].id for p in pares_eq})
-    if pares_eq:
-        banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
-        e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
-        o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
-        for p in pares_eq:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+    # 2c) vocabulary equivalences (e.g. haberes ≈ sueldos)
+    eq_pairs, used_b, used_a = equivalences.apply(
+        bank_unmatched, e_without_bank + o_pending_without_bank, equivalence_pairs or [])
+    equivalences_applied = len({p["banco"].id for p in eq_pairs})
+    if eq_pairs:
+        bank_unmatched = [m for m in bank_unmatched if m.id not in used_b]
+        e_without_bank = [a for a in e_without_bank if a.id not in used_a]
+        o_pending_without_bank = [a for a in o_pending_without_bank if a.id not in used_a]
+        for p in eq_pairs:
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
-    # 2d) tolerancia estricta de importe (comisiones/redondeos), sin ambigüedad
-    pares_tol, usados_b, usados_a = match_tolerancia(
-        banco_sin_nada, e_sin_banco + o_pend_sin_banco)
-    aproximados = len(pares_tol)
-    if pares_tol:
-        banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
-        e_sin_banco = [a for a in e_sin_banco if a.id not in usados_a]
-        o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in usados_a]
-        for p in pares_tol:
-            (matches_e if p["asiento"].hoja == 'E' else matches_o).append(p)
+    # 2d) strict amount tolerance (commissions/rounding), without ambiguity
+    tol_pairs, used_b, used_a = match_with_tolerance(
+        bank_unmatched, e_without_bank + o_pending_without_bank)
+    approximate = len(tol_pairs)
+    if tol_pairs:
+        bank_unmatched = [m for m in bank_unmatched if m.id not in used_b]
+        e_without_bank = [a for a in e_without_bank if a.id not in used_a]
+        o_pending_without_bank = [a for a in o_pending_without_bank if a.id not in used_a]
+        for p in tol_pairs:
+            (matches_e if p["asiento"].sheet == 'E' else matches_o).append(p)
 
-    # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario).
-    # Un movimiento reclasificado a mano trae _forzar_gasto (True/False) y esa
-    # decisión pisa a los detectores — así la ND mensual también sale bien.
-    gastos_bancarios, sin_contabilizar = [], []
-    for m in banco_sin_nada:
-        forzado = getattr(m, "_forzar_gasto", None)
-        if forzado is not None:
-            # decisión manual sobre ESTE movimiento: pisa todo
-            es_gasto = forzado
-        elif gastos_conf.es_gasto(m.descripcion, excepciones_gasto):
-            # concepto aprendido como "nunca es gasto": pisa a los detectores
-            es_gasto = False
+    # 3) classify the bank leftovers (built-in pattern + the user's fee terms).
+    # A movement reclassified by hand carries _force_fee (True/False) and that
+    # decision overrides the detectors — so the monthly debit note is right too.
+    bank_fees, unbooked = [], []
+    for m in bank_unmatched:
+        forced = getattr(m, "_force_fee", None)
+        if forced is not None:
+            # a manual decision about THIS movement: overrides everything
+            is_fee = forced
+        elif fee_terms.is_fee(m.description, fee_exceptions):
+            # concept learned as "never a fee": overrides the detectors
+            is_fee = False
         else:
-            es_gasto = bool(GASTO_RE.search(m.descripcion)
-                            or gastos_conf.es_gasto(m.descripcion, terminos_gasto))
-        (gastos_bancarios if es_gasto else sin_contabilizar).append(m)
+            is_fee = bool(FEE_RE.search(m.description)
+                          or fee_terms.is_fee(m.description, user_fee_terms))
+        (bank_fees if is_fee else unbooked).append(m)
 
-    # 4) nota de débito mensual: agrupar gastos por período y cruzar contra
-    #    los asientos "GASTOS BANCARIOS" del mayor
-    nota_debito, ids_nd = resumen_nota_debito(
-        gastos_bancarios, e_sin_banco + o_pend_sin_banco)
-    e_sin_banco = [a for a in e_sin_banco if a.id not in ids_nd]
-    o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in ids_nd]
+    # 4) monthly debit note: group fees by period and match them against the
+    #    ledger's "GASTOS BANCARIOS" entries
+    debit_note, debit_note_ids = debit_note_summary(
+        bank_fees, e_without_bank + o_pending_without_bank)
+    e_without_bank = [a for a in e_without_bank if a.id not in debit_note_ids]
+    o_pending_without_bank = [a for a in o_pending_without_bank if a.id not in debit_note_ids]
 
-    # 5) contraasientos: pares anulados dentro del residual del mayor (asiento
-    #    y su contrapartida que nunca van a tener movimiento en el banco)
-    e_sin_banco, contraasientos = netear_contraasientos(e_sin_banco)
+    # 5) reversals: cancelled pairs inside the ledger residual (an entry and
+    #    its counter-entry that will never have a bank movement)
+    e_without_bank, reversals = net_reversals(e_without_bank)
 
     def tot(ms):
-        return round(sum(x.importe for x in ms), 2)
+        return round(sum(x.amount for x in ms), 2)
 
     def tot_a(as_):
-        return round(sum(x.importe for x in as_), 2)
+        return round(sum(x.amount for x in as_), 2)
 
-    # % explicado: además de los conciliados, los gastos bancarios cuyo período
-    # cruzó contra una nota de débito del mayor están justificados aunque no
-    # tengan asiento 1 a 1.
-    gastos_explicados = sum(p["movimientos"] for p in nota_debito
-                            if p["total_mayor"] is not None)
-    explicados = len(matches_e) + len(matches_o) + gastos_explicados
+    # % explained: besides the matched ones, the bank fees whose period
+    # matched a ledger debit note are justified even without a 1 to 1 entry.
+    fees_explained = sum(p["movimientos"] for p in debit_note
+                         if p["total_mayor"] is not None)
+    explained = len(matches_e) + len(matches_o) + fees_explained
 
     return {
-        "nota_debito": nota_debito,
-        "contraasientos": contraasientos,
+        "nota_debito": debit_note,
+        "contraasientos": reversals,
         "matches_e": matches_e,
         "matches_o": matches_o,
-        "banco_sin_contabilizar": sin_contabilizar,
-        "gastos_bancarios": gastos_bancarios,
-        "e_sin_banco": e_sin_banco,
-        "o_pendientes_sin_banco": o_pend_sin_banco,
-        "o_cancelados": len(cancelados_o),
-        "o_pendientes_total": len(pendientes_o),
+        "banco_sin_contabilizar": unbooked,
+        "gastos_bancarios": bank_fees,
+        "e_sin_banco": e_without_bank,
+        "o_pendientes_sin_banco": o_pending_without_bank,
+        "o_cancelados": len(o_cancelled),
+        "o_pendientes_total": len(o_pending),
         "resumen": {
-            "movimientos_banco": len(movs_banco),
+            "movimientos_banco": len(bank_movs),
             "conciliados_e": len(matches_e),
             "en_o_pendientes_confirmar": len(matches_o),
-            "reglas_aplicadas": reglas_aplicadas,
-            "equivalencias_aplicadas": equivalencias_aplicadas,
-            "aproximados": aproximados,
-            "gastos_explicados": gastos_explicados,
-            "contraasientos": len(contraasientos),
-            "gastos_bancarios": {"cantidad": len(gastos_bancarios), "importe": tot(gastos_bancarios)},
-            "banco_sin_contabilizar": {"cantidad": len(sin_contabilizar), "importe": tot(sin_contabilizar)},
-            "e_sin_banco": {"cantidad": len(e_sin_banco), "importe": tot_a(e_sin_banco)},
-            "o_pendientes_sin_banco": {"cantidad": len(o_pend_sin_banco), "importe": tot_a(o_pend_sin_banco)},
+            "reglas_aplicadas": rules_applied,
+            "equivalencias_aplicadas": equivalences_applied,
+            "aproximados": approximate,
+            "gastos_explicados": fees_explained,
+            "contraasientos": len(reversals),
+            "gastos_bancarios": {"cantidad": len(bank_fees), "importe": tot(bank_fees)},
+            "banco_sin_contabilizar": {"cantidad": len(unbooked), "importe": tot(unbooked)},
+            "e_sin_banco": {"cantidad": len(e_without_bank), "importe": tot_a(e_without_bank)},
+            "o_pendientes_sin_banco": {"cantidad": len(o_pending_without_bank), "importe": tot_a(o_pending_without_bank)},
             "porcentaje_conciliado": round(
-                100.0 * (len(matches_e) + len(matches_o)) / max(1, len(movs_banco)), 1),
+                100.0 * (len(matches_e) + len(matches_o)) / max(1, len(bank_movs)), 1),
             "porcentaje_explicado": round(
-                min(100.0, 100.0 * explicados / max(1, len(movs_banco))), 1),
+                min(100.0, 100.0 * explained / max(1, len(bank_movs))), 1),
             "nota_debito": {
-                "periodos": len(nota_debito),
+                "periodos": len(debit_note),
                 "diferencia_total": round(
-                    sum(p["diferencia"] for p in nota_debito
+                    sum(p["diferencia"] for p in debit_note
                         if p["diferencia"] is not None), 2),
             },
         },

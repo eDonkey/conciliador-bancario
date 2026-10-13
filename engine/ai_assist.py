@@ -1,38 +1,38 @@
 # -*- coding: utf-8 -*-
-"""Asistencia con IA (Claude) para los casos que la conciliación determinística
-no pudo resolver: diferencias de importe (comisiones descontadas), agrupaciones
-(varios movimientos del banco = un asiento, o viceversa) y coincidencias por
-descripción/beneficiario.
+"""AI assistance (Claude) for the cases the deterministic reconciliation
+couldn't solve: amount differences (deducted commissions), groupings (several
+bank movements = one entry, or the other way around) and matches by
+description/payee.
 
-Requiere ANTHROPIC_API_KEY en el entorno (o sesión de `ant auth login`).
+Needs ANTHROPIC_API_KEY in the environment (or an `ant auth login` session).
 """
 import json
 import os
 
 from engine import presupuesto_ia
 
-# Sonnet 5 ($2/$10 por MTok, ~60% más barato que Opus) alcanza de sobra para
-# proponer emparejamientos; cada tanda cuesta ~$0,05-0,10. El modelo se define
-# SOLO en la configuración del servidor (IA_MODELO), nunca desde el navegador.
+# Sonnet 5 ($2/$10 per MTok, ~60% cheaper than Opus) is more than enough to
+# propose pairings; each batch costs ~$0.05-0.10. The model is set ONLY in the
+# server configuration (IA_MODELO), never from the browser.
 MODEL = presupuesto_ia.modelo_matching()
-MAX_BANCO = 80     # límites por llamada para no exceder contexto
-MAX_MAYOR = 400
+MAX_BANK = 80      # per-call limits so the context isn't exceeded
+MAX_LEDGER = 400
 
-RUTA_CLAVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "datos", "anthropic_key.txt")
+KEY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "datos", "anthropic_key.txt")
 
 
-def _cargar_clave() -> bool:
-    """Busca credenciales: variable de entorno o datos/anthropic_key.txt."""
+def _load_key() -> bool:
+    """Looks for credentials: environment variable or datos/anthropic_key.txt."""
     if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
         return True
-    if os.path.exists(RUTA_CLAVE):
+    if os.path.exists(KEY_FILE):
         try:
-            clave = open(RUTA_CLAVE, encoding="utf-8").read().strip()
+            key = open(KEY_FILE, encoding="utf-8").read().strip()
         except OSError:
             return False
-        if clave:
-            os.environ["ANTHROPIC_API_KEY"] = clave
+        if key:
+            os.environ["ANTHROPIC_API_KEY"] = key
             return True
     return False
 
@@ -75,114 +75,114 @@ Indicá confianza "alta" solo si los importes cierran exactamente o hay un núme
 de referencia compartido."""
 
 
-def disponible() -> bool:
-    if _cargar_clave():
+def available() -> bool:
+    if _load_key():
         return True
-    # perfil de `ant auth login`
+    # `ant auth login` profile
     cfg = os.path.join(os.path.expanduser("~"), ".config", "anthropic")
     appdata = os.path.join(os.environ.get("APPDATA", ""), "Anthropic")
     return os.path.isdir(cfg) or os.path.isdir(appdata)
 
 
-def _fila_banco(m):
+def _bank_row(m):
     return {
-        "id": m.id, "fecha": m.fecha.isoformat() if m.fecha else None,
-        "lado": m.lado, "importe": m.importe,
-        "texto": f"{m.comprobante or ''} {m.descripcion} {m.detalle}".strip(),
+        "id": m.id, "fecha": m.date.isoformat() if m.date else None,
+        "lado": m.side, "importe": m.amount,
+        "texto": f"{m.voucher or ''} {m.description} {m.detail}".strip(),
     }
 
 
-def _fila_mayor(a):
+def _ledger_row(a):
     return {
-        "id": a.id, "hoja": a.hoja,
-        "fecha": a.fecha.isoformat() if a.fecha else None,
-        "lado": a.lado, "importe": a.importe,
-        "texto": f"{a.referencia} {a.comentario}".strip(),
+        "id": a.id, "hoja": a.sheet,
+        "fecha": a.date.isoformat() if a.date else None,
+        "lado": a.side, "importe": a.amount,
+        "texto": f"{a.reference} {a.comment}".strip(),
     }
 
 
-def cantidad_tandas(movs_banco) -> int:
-    return max(1, -(-len(movs_banco) // MAX_BANCO))  # ceil
+def batch_count(bank_movs) -> int:
+    return max(1, -(-len(bank_movs) // MAX_BANK))  # ceil
 
 
-def _bloque_glosario(glosario) -> str:
-    """Texto del diccionario de equivalencias para incluir en el prompt."""
-    if not glosario:
+def _glossary_block(glossary) -> str:
+    """Text of the equivalences dictionary to include in the prompt."""
+    if not glossary:
         return ""
-    lineas = "\n".join(f'- "{p["extracto"]}" (extracto) ≈ "{p["sistema"]}" (sistema)'
-                       for p in glosario)
+    lines = "\n".join(f'- "{p["extracto"]}" (extracto) ≈ "{p["sistema"]}" (sistema)'
+                      for p in glossary)
     return ("\n\nGLOSARIO DE EQUIVALENCIAS definido por el cliente — el mismo "
             "concepto tiene distinto nombre en el extracto y en el sistema "
-            "contable; usalo para vincular movimientos:\n" + lineas)
+            "contable; usalo para vincular movimientos:\n" + lines)
 
 
-def simular_sugerencias(movs_banco, asientos_mayor, progreso=None, glosario=None):
-    """Modo simulación: genera sugerencias de prueba SIN llamar a la API.
-    Emula la latencia por tandas para poder probar la interfaz de progreso."""
+def simulate_suggestions(bank_movs, ledger_entries, progress=None, glossary=None):
+    """Simulation mode: produces test suggestions WITHOUT calling the API.
+    Emulates the per-batch latency so the progress UI can be tested."""
     import time
 
-    if not movs_banco or not asientos_mayor:
+    if not bank_movs or not ledger_entries:
         return []
-    tandas = min(3, cantidad_tandas(movs_banco))
-    for t in range(tandas):
-        if progreso:
-            progreso(t + 1, tandas)
+    batches = min(3, batch_count(bank_movs))
+    for t in range(batches):
+        if progress:
+            progress(t + 1, batches)
         time.sleep(4)
 
-    sugerencias = []
-    confianzas = ["alta", "media", "baja"]
-    usados = set()
-    for i, m in enumerate(movs_banco[:12]):
-        candidato = None
-        for a in asientos_mayor:
-            if a.id in usados:
+    suggestions = []
+    confidences = ["alta", "media", "baja"]
+    used = set()
+    for i, m in enumerate(bank_movs[:12]):
+        candidate = None
+        for a in ledger_entries:
+            if a.id in used:
                 continue
-            lado_ok = (m.lado == "credito") == (a.lado == "debe")
-            if lado_ok:
-                if candidato is None or abs(a.importe - m.importe) < abs(candidato.importe - m.importe):
-                    candidato = a
-        if candidato is None:
+            side_ok = (m.side == "credito") == (a.side == "debe")
+            if side_ok:
+                if candidate is None or abs(a.amount - m.amount) < abs(candidate.amount - m.amount):
+                    candidate = a
+        if candidate is None:
             continue
-        usados.add(candidato.id)
-        sugerencias.append({
+        used.add(candidate.id)
+        suggestions.append({
             "ids_banco": [m.id],
-            "ids_mayor": [candidato.id],
-            "confianza": confianzas[i % 3],
+            "ids_mayor": [candidate.id],
+            "confianza": confidences[i % 3],
             "motivo": f"SIMULACIÓN (sin IA): par de prueba por cercanía de importe "
-                      f"(${m.importe:,.2f} vs ${candidato.importe:,.2f}).",
+                      f"(${m.amount:,.2f} vs ${candidate.amount:,.2f}).",
         })
-    return sugerencias
+    return suggestions
 
 
-def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
-    """Pide a Claude sugerencias de conciliación. Devuelve lista de dicts.
-    `progreso(tanda, total)` se invoca al comenzar cada tanda."""
+def suggest_matches(bank_movs, ledger_entries, progress=None, glossary=None):
+    """Asks Claude for reconciliation suggestions. Returns a list of dicts.
+    `progress(batch, total)` is called when each batch starts."""
     import anthropic
 
-    if not movs_banco or not asientos_mayor:
+    if not bank_movs or not ledger_entries:
         return []
 
-    _cargar_clave()
-    client = anthropic.Anthropic(timeout=120, max_retries=2)   # tope por tanda
-    sugerencias = []
-    total_tandas = cantidad_tandas(movs_banco)
+    _load_key()
+    client = anthropic.Anthropic(timeout=120, max_retries=2)   # cap per batch
+    suggestions = []
+    total_batches = batch_count(bank_movs)
 
-    for i in range(0, len(movs_banco), MAX_BANCO):
-        if progreso:
-            progreso(i // MAX_BANCO + 1, total_tandas)
-        presupuesto_ia.verificar()      # tope diario: PresupuestoExcedido
-        lote_banco = movs_banco[i:i + MAX_BANCO]
-        lote_mayor = asientos_mayor[:MAX_MAYOR]
+    for i in range(0, len(bank_movs), MAX_BANK):
+        if progress:
+            progress(i // MAX_BANK + 1, total_batches)
+        presupuesto_ia.verificar()      # daily cap: PresupuestoExcedido
+        bank_batch = bank_movs[i:i + MAX_BANK]
+        ledger_batch = ledger_entries[:MAX_LEDGER]
         prompt = (
             "MOVIMIENTOS DEL BANCO SIN CONCILIAR:\n"
-            + json.dumps([_fila_banco(m) for m in lote_banco], ensure_ascii=False)
+            + json.dumps([_bank_row(m) for m in bank_batch], ensure_ascii=False)
             + "\n\nASIENTOS DEL MAYOR SIN CONTRAPARTIDA:\n"
-            + json.dumps([_fila_mayor(a) for a in lote_mayor], ensure_ascii=False)
-            + _bloque_glosario(glosario)
+            + json.dumps([_ledger_row(a) for a in ledger_batch], ensure_ascii=False)
+            + _glossary_block(glossary)
         )
         try:
-            # Con fallback del lado del servidor: si un clasificador de seguridad
-            # rechaza el pedido, la API lo reintenta con otro modelo.
+            # With the server-side fallback: if a safety classifier rejects the
+            # request, the API retries it with another model.
             response = client.beta.messages.create(
                 model=MODEL,
                 max_tokens=8000,
@@ -193,7 +193,7 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
                 extra_body={"fallbacks": "default"},
             )
         except anthropic.BadRequestError:
-            # SDK/organización sin soporte del beta de fallbacks: llamada normal
+            # SDK/organization without the fallbacks beta: a normal call
             response = client.messages.create(
                 model=MODEL,
                 max_tokens=8000,
@@ -201,15 +201,15 @@ def sugerir_matches(movs_banco, asientos_mayor, progreso=None, glosario=None):
                 output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
                 messages=[{"role": "user", "content": prompt}],
             )
-        from engine import ia_log
-        ia_log.registrar("matching", MODEL, getattr(response, "usage", None))
+        from engine import ai_usage
+        ai_usage.record("matching", MODEL, getattr(response, "usage", None))
         if response.stop_reason == "refusal":
             continue
-        texto = next((b.text for b in response.content if b.type == "text"), "")
+        text = next((b.text for b in response.content if b.type == "text"), "")
         try:
-            data = json.loads(texto)
-            sugerencias.extend(data.get("sugerencias", []))
+            data = json.loads(text)
+            suggestions.extend(data.get("sugerencias", []))
         except (json.JSONDecodeError, AttributeError):
             continue
 
-    return sugerencias
+    return suggestions

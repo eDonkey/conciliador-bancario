@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Conciliador bancario — servidor web.
+"""Bank reconciler — web server.
 
-Uso:
+Usage:
     python -m uvicorn app:app --port 8765
-o simplemente:
+or simply:
     python app.py
 """
 import hashlib
@@ -24,168 +24,167 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from parsers.santander_pdf import parse_extracto
-from parsers.mayor_xlsx import parse_mayor
-from engine.matcher import conciliar
+from parsers.santander_pdf import parse_statement
+from parsers.ledger_xlsx import parse_ledger
+from engine.matcher import reconcile
 from engine import ai_assist
 from engine import fbs_sql
-from engine import ia_log
-from engine import reglas as reglas_mod
-from engine import equivalencias as eq_mod
-from engine import gastos_conf
-from engine import cuentas as cuentas_mod
-from engine import analisis as analisis_mod
+from engine import ai_usage
+from engine import rules as rules_mod
+from engine import equivalences
+from engine import fee_terms
+from engine import accounts as accounts_mod
+from engine import analysis
 from engine import telemetria
 from engine import acceso
 from engine import presupuesto_ia
 from engine import seguridad
-from parsers import diarios
+from parsers import daily_files
 
-# sin /docs ni /openapi.json: el mapa de la API no se publica
+# no /docs or /openapi.json: the API map is not published
 app = FastAPI(title="Conciliador bancario",
               docs_url=None, redoc_url=None, openapi_url=None)
-# monitoreo (New Relic): el polling de progreso no se traza, es ruido
+# monitoring (New Relic): the progress polling is not traced, it's noise
 telemetria.iniciar(app, "conciliador", puerto=8765, excluir=[r"/api/progreso/"])
-# autenticación obligatoria (APP_PASSWORD + sesión firmada); sin APP_PASSWORD
-# solo se atiende a la propia máquina. Ver engine/seguridad.py y AUDIT.md.
+# mandatory authentication (APP_PASSWORD + signed session); without APP_PASSWORD
+# only the machine itself is served. See engine/seguridad.py and AUDIT.md.
 acceso.instalar(app)
 
 
 @app.middleware("http")
-async def _cabeceras_seguridad(request, call_next):
+async def _security_headers(request, call_next):
     resp = await call_next(request)
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
     return resp
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATOS_DIR = os.path.join(BASE_DIR, "datos")
-os.makedirs(DATOS_DIR, exist_ok=True)
-RESULTADOS = {}  # job_id -> resultado serializado
-PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
-STAGING = {}     # staging_id -> archivos parseados del modo diario
+DATA_DIR = os.path.join(BASE_DIR, "datos")
+os.makedirs(DATA_DIR, exist_ok=True)
+RESULTS = {}     # job_id -> serialized result
+PROGRESS = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
+STAGING = {}     # staging_id -> parsed files of the daily mode
 
-# Ambiente de demo: el FBS está simulado (engine/simulacion.py) y la demo
-# genera los extractos de cada cuenta del hub con el formato de su banco, a
-# partir de la misma simulación. Sin esta variable el comportamiento es
-# exactamente el de producción.
-DEMO_MODE = fbs_sql.simulado()
+# Demo environment: the FBS is simulated (engine/simulacion.py) and the demo
+# generates the statements of each hub account in its bank's format, from the
+# same simulation. Without this variable the behavior is exactly production's.
+DEMO_MODE = fbs_sql.simulated()
 
 
-def _bloqueado_en_demo():
-    """La demo no exporta ni importa los datos del servicio. Devuelve la
-    respuesta 404 si corresponde."""
+def _blocked_in_demo():
+    """The demo doesn't export or import the service's data. Returns the 404
+    response when that applies."""
     if DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible en la demo"})
     return None
 
 
-LISTAS_BANCO = ["banco_sin_contabilizar", "gastos_bancarios"]
-LISTAS_MAYOR = ["e_sin_banco", "o_pendientes_sin_banco"]
+BANK_LISTS = ["banco_sin_contabilizar", "gastos_bancarios"]
+LEDGER_LISTS = ["e_sin_banco", "o_pendientes_sin_banco"]
 
 
-# Los ids de job (12) y de corrida diaria (10) son hex de uuid4. Se validan
-# antes de armar una ruta: un id con "..\" (Windows) o un job_id del cuerpo
-# con "../" leía y pisaba archivos .json fuera de datos/.
-_JOB_VALIDO_RE = re.compile(r"^[0-9a-f]{12}$")
-_GRUPO_VALIDO_RE = re.compile(r"^[0-9a-f]{10}$")
+# Job ids (12) and daily run ids (10) are uuid4 hex. They are validated
+# before a path is built: an id with "..\" (Windows) or a job_id in the body
+# with "../" read and overwrote .json files outside datos/.
+_VALID_JOB_RE = re.compile(r"^[0-9a-f]{12}$")
+_VALID_RUN_RE = re.compile(r"^[0-9a-f]{10}$")
 
 
-def _ruta_grupo(grupo_id) -> str | None:
-    """Ruta del tablero de una corrida diaria; None si el id no es válido."""
-    if not isinstance(grupo_id, str) or not _GRUPO_VALIDO_RE.match(grupo_id):
+def _run_path(run_id) -> str | None:
+    """Path of a daily run's board; None if the id is not valid."""
+    if not isinstance(run_id, str) or not _VALID_RUN_RE.match(run_id):
         return None
-    return os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
+    return os.path.join(DATA_DIR, f"grupo_{run_id}.json")
 
 
-def _guardar(job_id):
-    if not _JOB_VALIDO_RE.match(job_id):
+def _save_job(job_id):
+    if not _VALID_JOB_RE.match(job_id):
         raise ValueError(f"id de job inválido: {job_id!r}")
-    with open(os.path.join(DATOS_DIR, f"{job_id}.json"), "w", encoding="utf-8") as f:
-        json.dump(RESULTADOS[job_id], f, ensure_ascii=False)
+    with open(os.path.join(DATA_DIR, f"{job_id}.json"), "w", encoding="utf-8") as f:
+        json.dump(RESULTS[job_id], f, ensure_ascii=False)
 
 
-def _obtener(job_id):
-    if not isinstance(job_id, str) or not _JOB_VALIDO_RE.match(job_id):
+def _get_job(job_id):
+    if not isinstance(job_id, str) or not _VALID_JOB_RE.match(job_id):
         return None
-    if job_id not in RESULTADOS:
-        ruta = os.path.join(DATOS_DIR, f"{job_id}.json")
-        if os.path.exists(ruta):
-            with open(ruta, encoding="utf-8") as f:
-                RESULTADOS[job_id] = json.load(f)
-    return RESULTADOS.get(job_id)
+    if job_id not in RESULTS:
+        path = os.path.join(DATA_DIR, f"{job_id}.json")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                RESULTS[job_id] = json.load(f)
+    return RESULTS.get(job_id)
 
 
-TERMINOS_HABERES = ("haber", "sueldo", "nomina")   # "pago haberes",
-# "acred. sueldos", "acreditación (de) nómina", etc. — sin acentos ni mayúsc.
+PAYROLL_TERMS = ("haber", "sueldo", "nomina")   # "pago haberes",
+# "acred. sueldos", "acreditación (de) nómina", etc. — without accents or capitals.
 
 
-def _es_haberes(m: dict) -> bool:
+def _is_payroll(m: dict) -> bool:
     import unicodedata
-    texto = f'{m.get("descripcion") or ""} {m.get("detalle") or ""}'
-    plano = unicodedata.normalize("NFD", texto.lower())
-    plano = "".join(c for c in plano if not unicodedata.combining(c))
-    return any(t in plano for t in TERMINOS_HABERES)
+    text = f'{m.get("descripcion") or ""} {m.get("detalle") or ""}'
+    plain = unicodedata.normalize("NFD", text.lower())
+    plain = "".join(c for c in plain if not unicodedata.combining(c))
+    return any(t in plain for t in PAYROLL_TERMS)
 
 
-def _recalcular_resumen(datos):
-    # haberes (pagos de sueldos del extracto) se etiquetan para mostrarlos en
-    # su propia solapa/hoja: la persona arma con eso el asiento de sueldos en
-    # el FBS y en la corrida siguiente cruzan solos. Una reclasificación
-    # manual guardada pisa al detector.
-    overrides = _overrides_reclas()
-    for m in datos.get("banco_sin_contabilizar", []):
-        ov = overrides.get(_clave_mov_dict(m)) if overrides else None
+def _recompute_summary(data):
+    # payroll (salary payments of the statement) is tagged to show it in its
+    # own tab/sheet: the person builds the payroll entry in FBS from it and on
+    # the next run they match by themselves. A saved manual reclassification
+    # overrides the detector.
+    overrides = _reclassification_overrides()
+    for m in data.get("banco_sin_contabilizar", []):
+        ov = overrides.get(_movement_key(m)) if overrides else None
         if ov == "haberes_sin_contabilizar":
             m["es_haberes"] = True
         elif ov == "banco_sin_contabilizar":
             m["es_haberes"] = False
         else:
-            m["es_haberes"] = _es_haberes(m)
-    # "ya lo cargué en el FBS": marca de control del operador. Vive por clave
-    # de movimiento, así sigue al movimiento cuando se arrastra al día
-    # siguiente o se reprocesa el período.
-    cargados = _cargados_fbs()
-    for lista in LISTAS_BANCO:
-        for m in datos.get(lista, []):
-            info = cargados.get(_clave_mov_dict(m))
+            m["es_haberes"] = _is_payroll(m)
+    # "I already loaded it in FBS": the operator's control mark. It lives by
+    # movement key, so it follows the movement when it is carried over to the
+    # next day or the period is reprocessed.
+    loaded = _loaded_in_fbs()
+    for list_name in BANK_LISTS:
+        for m in data.get(list_name, []):
+            info = loaded.get(_movement_key(m))
             m["cargado_fbs"] = info["fecha"] if info else None
-    r = datos["resumen"]
-    def imp_b(x):
+    r = data["resumen"]
+    def bank_amount(x):
         return x["credito"] or x["debito"]
 
-    def imp_m(x):
+    def ledger_amount(x):
         return x["debe"] or x["haber"]
-    for lista in LISTAS_BANCO:
-        r[lista] = {"cantidad": len(datos[lista]),
-                    "importe": round(sum(imp_b(x) for x in datos[lista]), 2)}
-    habs = [x for x in datos["banco_sin_contabilizar"] if x.get("es_haberes")]
-    resto = [x for x in datos["banco_sin_contabilizar"] if not x.get("es_haberes")]
-    r["haberes_sin_contabilizar"] = {"cantidad": len(habs),
-                                     "importe": round(sum(imp_b(x) for x in habs), 2)}
-    r["banco_sin_contabilizar"] = {"cantidad": len(resto),
-                                   "importe": round(sum(imp_b(x) for x in resto), 2)}
-    # control de carga: cuántos de los pendientes ya se cargaron en el FBS
-    r["cargados_fbs"] = sum(1 for lista in LISTAS_BANCO
-                            for x in datos.get(lista, []) if x.get("cargado_fbs"))
-    r["cargados_fbs_pendientes"] = len(habs) + len(resto) - sum(
-        1 for x in datos["banco_sin_contabilizar"] if x.get("cargado_fbs"))
-    for lista in LISTAS_MAYOR:
-        r[lista] = {"cantidad": len(datos[lista]),
-                    "importe": round(sum(imp_m(x) for x in datos[lista]), 2)}
-    r["conciliados_manual"] = len(datos.get("conciliados_manual", []))
-    movs_manual = sum(len(m["banco"]) for m in datos.get("conciliados_manual", []))
-    conciliados = r["conciliados_e"] + r["en_o_pendientes_confirmar"] + movs_manual
+    for list_name in BANK_LISTS:
+        r[list_name] = {"cantidad": len(data[list_name]),
+                        "importe": round(sum(bank_amount(x) for x in data[list_name]), 2)}
+    payroll = [x for x in data["banco_sin_contabilizar"] if x.get("es_haberes")]
+    rest = [x for x in data["banco_sin_contabilizar"] if not x.get("es_haberes")]
+    r["haberes_sin_contabilizar"] = {"cantidad": len(payroll),
+                                     "importe": round(sum(bank_amount(x) for x in payroll), 2)}
+    r["banco_sin_contabilizar"] = {"cantidad": len(rest),
+                                   "importe": round(sum(bank_amount(x) for x in rest), 2)}
+    # loading control: how many of the pending ones were already loaded in FBS
+    r["cargados_fbs"] = sum(1 for list_name in BANK_LISTS
+                            for x in data.get(list_name, []) if x.get("cargado_fbs"))
+    r["cargados_fbs_pendientes"] = len(payroll) + len(rest) - sum(
+        1 for x in data["banco_sin_contabilizar"] if x.get("cargado_fbs"))
+    for list_name in LEDGER_LISTS:
+        r[list_name] = {"cantidad": len(data[list_name]),
+                        "importe": round(sum(ledger_amount(x) for x in data[list_name]), 2)}
+    r["conciliados_manual"] = len(data.get("conciliados_manual", []))
+    manual_movs = sum(len(m["banco"]) for m in data.get("conciliados_manual", []))
+    matched = r["conciliados_e"] + r["en_o_pendientes_confirmar"] + manual_movs
     r["porcentaje_conciliado"] = round(
-        100.0 * conciliados / max(1, r["movimientos_banco"]), 1)
-    gastos_expl = sum(p.get("movimientos", 0) for p in datos.get("nota_debito", [])
-                      if p.get("total_mayor") is not None)
-    r["gastos_explicados"] = gastos_expl
+        100.0 * matched / max(1, r["movimientos_banco"]), 1)
+    fees_explained = sum(p.get("movimientos", 0) for p in data.get("nota_debito", [])
+                         if p.get("total_mayor") is not None)
+    r["gastos_explicados"] = fees_explained
     r["porcentaje_explicado"] = round(
-        min(100.0, 100.0 * (conciliados + gastos_expl) / max(1, r["movimientos_banco"])), 1)
+        min(100.0, 100.0 * (matched + fees_explained) / max(1, r["movimientos_banco"])), 1)
 
 
-def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
+def _serialize(result, statements, ai_suggestions, ai_state):
     def match_dict(m):
         return {"banco": m["banco"].to_dict(), "asiento": m["asiento"].to_dict(),
                 "metodo": m["metodo"]}
@@ -194,33 +193,33 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
         "extractos": [
             {k: (v.isoformat() if hasattr(v, "isoformat") else v)
              for k, v in e.items() if k != "movimientos"}
-            for e in extractos
+            for e in statements
         ],
-        "resumen": resultado["resumen"],
-        "o_cancelados": resultado["o_cancelados"],
-        "o_pendientes_total": resultado["o_pendientes_total"],
-        "conciliados_e": [match_dict(m) for m in resultado["matches_e"]],
+        "resumen": result["resumen"],
+        "o_cancelados": result["o_cancelados"],
+        "o_pendientes_total": result["o_pendientes_total"],
+        "conciliados_e": [match_dict(m) for m in result["matches_e"]],
         "conciliados_o": [dict(match_dict(m), confirmado=False)
-                          for m in resultado["matches_o"]],
-        "banco_sin_contabilizar": [m.to_dict() for m in resultado["banco_sin_contabilizar"]],
-        "gastos_bancarios": [m.to_dict() for m in resultado["gastos_bancarios"]],
-        "e_sin_banco": [a.to_dict() for a in resultado["e_sin_banco"]],
-        "o_pendientes_sin_banco": [a.to_dict() for a in resultado["o_pendientes_sin_banco"]],
+                          for m in result["matches_o"]],
+        "banco_sin_contabilizar": [m.to_dict() for m in result["banco_sin_contabilizar"]],
+        "gastos_bancarios": [m.to_dict() for m in result["gastos_bancarios"]],
+        "e_sin_banco": [a.to_dict() for a in result["e_sin_banco"]],
+        "o_pendientes_sin_banco": [a.to_dict() for a in result["o_pendientes_sin_banco"]],
         "nota_debito": [
             {**p, "asientos_mayor": [a.to_dict() for a in p["asientos_mayor"]]}
-            for p in resultado["nota_debito"]
+            for p in result["nota_debito"]
         ],
         "contraasientos": [
             {"debe": p["debe"].to_dict(), "haber": p["haber"].to_dict()}
-            for p in resultado["contraasientos"]
+            for p in result["contraasientos"]
         ],
         "excluidos_mayor": [],
-        "ia": {"estado": ia_estado, "sugerencias": ia_sugerencias},
+        "ia": {"estado": ai_state, "sugerencias": ai_suggestions},
     }
 
 
 @app.post("/api/conciliar")
-async def api_conciliar(
+async def api_reconcile(
     extractos: list[UploadFile] = File(...),
     mayor: UploadFile | None = File(None),
     usar_ia: str = Form("no"),
@@ -229,347 +228,347 @@ async def api_conciliar(
     fbs_desde: str = Form(""),
     fbs_hasta: str = Form(""),
 ):
-    """Recibe los archivos, arranca el procesamiento en segundo plano y
-    devuelve el job_id de inmediato. El mayor puede venir como Excel subido
-    o directo del FBS (fbs_cuenta + fbs_desde + fbs_hasta, config del hub).
-    El avance se consulta en /api/progreso."""
+    """Receives the files, starts the processing in the background and
+    returns the job_id right away. The ledger can come as an uploaded Excel
+    or straight from FBS (fbs_cuenta + fbs_desde + fbs_hasta, hub config).
+    Progress is read from /api/progreso."""
     if usar_ia == "si":
         try:
             presupuesto_ia.verificar()
         except presupuesto_ia.PresupuestoExcedido as exc:
             return JSONResponse(status_code=429, content={"error": str(exc)})
-    archivos = [(up.filename, await up.read()) for up in extractos]
-    data_mayor = await mayor.read() if mayor else b""
-    if not data_mayor and not fbs_cuenta:
+    files = [(up.filename, await up.read()) for up in extractos]
+    ledger_data = await mayor.read() if mayor else b""
+    if not ledger_data and not fbs_cuenta:
         return JSONResponse(status_code=422, content={
             "error": "Subí el Excel del mayor o elegí una cuenta del FBS "
                      "con su rango de fechas."})
-    fbs_mayor = ({"cuenta": fbs_cuenta, "desde": fbs_desde, "hasta": fbs_hasta}
-                 if not data_mayor else None)
+    fbs_ledger = ({"cuenta": fbs_cuenta, "desde": fbs_desde, "hasta": fbs_hasta}
+                  if not ledger_data else None)
 
     job_id = uuid.uuid4().hex[:12]
-    total_mb = (sum(len(b) for _, b in archivos) + len(data_mayor)) / 1_000_000
-    est_base = 10 + total_mb * 14   # parseo + cruce, calibrado con datos reales
-    PROGRESO[job_id] = {"estado": "procesando", "fase": "Preparando el análisis",
-                        "porcentaje": 2, "eta_seg": round(est_base),
+    total_mb = (sum(len(b) for _, b in files) + len(ledger_data)) / 1_000_000
+    base_estimate = 10 + total_mb * 14   # parsing + matching, calibrated with real data
+    PROGRESS[job_id] = {"estado": "procesando", "fase": "Preparando el análisis",
+                        "porcentaje": 2, "eta_seg": round(base_estimate),
                         "inicio": time.time()}
-    threading.Thread(target=_procesar_job_medido,
-                     args=(job_id, archivos, data_mayor, usar_ia, est_base,
-                           marca, fbs_mayor),
+    threading.Thread(target=_process_job_measured,
+                     args=(job_id, files, ledger_data, usar_ia, base_estimate,
+                           marca, fbs_ledger),
                      daemon=True).start()
     return {"job_id": job_id, "estado": "procesando"}
 
 
-def _procesar_job_medido(job_id, archivos, data_mayor, usar_ia, est_base,
-                         marca="", fbs_mayor=None):
-    """_procesar_job como un tramo del monitoreo: duración y errores de cada
-    conciliación mensual (corre en un hilo, fuera de cualquier request)."""
-    with telemetria.tramo("conciliacion mensual", job=job_id, marca=marca or None,
-                          extractos=len(archivos),
-                          mayor="fbs" if fbs_mayor else "excel"):
-        _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca,
-                      fbs_mayor)
+def _process_job_measured(job_id, files, ledger_data, use_ai, base_estimate,
+                          brand="", fbs_ledger=None):
+    """_process_job as a monitoring span: duration and errors of each monthly
+    reconciliation (it runs in a thread, outside any request)."""
+    with telemetria.tramo("conciliacion mensual", job=job_id, marca=brand or None,
+                          extractos=len(files),
+                          mayor="fbs" if fbs_ledger else "excel"):
+        _process_job(job_id, files, ledger_data, use_ai, base_estimate, brand,
+                     fbs_ledger)
 
 
-def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
-                  fbs_mayor=None):
-    inicio = PROGRESO[job_id]["inicio"]
+def _process_job(job_id, files, ledger_data, use_ai, base_estimate, brand="",
+                 fbs_ledger=None):
+    started = PROGRESS[job_id]["inicio"]
 
-    def prog(fase, pct, eta=None):
+    def prog(phase, pct, eta=None):
         if eta is None:
-            eta = max(3, est_base - (time.time() - inicio))
-        PROGRESO[job_id] = {"estado": "procesando", "fase": fase,
+            eta = max(3, base_estimate - (time.time() - started))
+        PROGRESS[job_id] = {"estado": "procesando", "fase": phase,
                             "porcentaje": round(pct), "eta_seg": round(eta),
-                            "inicio": inicio}
+                            "inicio": started}
 
     try:
-        # --- parsear extractos: PDF (Santander) o XLS/XLSX/CSV/TXT de
-        # cualquiera de los bancos del grupo (mismos parsers del modo diario;
-        # solo se reusa el CÓDIGO de parseo — los datos del diario, su memoria
-        # y su arrastre no intervienen en la conciliación mensual) -----------
-        parseados = []
-        n = len(archivos)
-        for i, (nombre, data) in enumerate(archivos):
-            prog(f"Leyendo extracto {i + 1} de {n}: {nombre}", 5 + 30 * i / n)
-            if data[:5] == b'%PDF-' or nombre.lower().endswith(".pdf"):
+        # --- parse statements: PDF (Santander) or XLS/XLSX/CSV/TXT of any of
+        # the group's banks (the daily mode's parsers; only the parsing CODE
+        # is reused — the daily data, its memory and its carry-over play no
+        # part in the monthly reconciliation) -----------------------------------
+        parsed = []
+        n = len(files)
+        for i, (name, data) in enumerate(files):
+            prog(f"Leyendo extracto {i + 1} de {n}: {name}", 5 + 30 * i / n)
+            if data[:5] == b'%PDF-' or name.lower().endswith(".pdf"):
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                     tmp.write(data)
-                    ruta = tmp.name
+                    path = tmp.name
                 try:
-                    parseados.append(parse_extracto(ruta, nombre))
+                    parsed.append(parse_statement(path, name))
                 finally:
-                    os.unlink(ruta)
+                    os.unlink(path)
                 continue
-            info = diarios.identificar(nombre, data)
+            info = daily_files.identify(name, data)
             if info.get("tipo") == "fbs":
-                PROGRESO[job_id] = {"estado": "error", "mensaje":
-                    f'"{nombre}" es un reporte del FBS (Consulta del Mayor): '
+                PROGRESS[job_id] = {"estado": "error", "mensaje":
+                    f'"{name}" es un reporte del FBS (Consulta del Mayor): '
                     "va en el campo del libro mayor, no en el de extractos."}
                 return
             if info.get("tipo") != "extracto":
-                PROGRESO[job_id] = {"estado": "error", "mensaje":
-                    f'No pude leer "{nombre}" como extracto bancario '
+                PROGRESS[job_id] = {"estado": "error", "mensaje":
+                    f'No pude leer "{name}" como extracto bancario '
                     f'({info.get("error", "formato no reconocido")}). '
                     "Se aceptan PDF, XLS/XLSX y CSV de los bancos del grupo."}
                 return
-            # ids únicos entre archivos, misma convención que el parser de PDF
+            # ids unique across files, same convention as the PDF parser
             for j, m in enumerate(info["movimientos"], 1):
-                m.id = f"{nombre}#{j}"
-            parseados.append({"archivo": nombre, "titular": None,
-                              "cuenta": info.get("cuenta"),
-                              "banco": info.get("banco"),
-                              "desde": info.get("desde"), "hasta": info.get("hasta"),
-                              "saldo_inicial": None, "saldo_final": None,
-                              "movimientos": info["movimientos"]})
-        parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
-        movs = [m for e in parseados for m in e["movimientos"]]
+                m.id = f"{name}#{j}"
+            parsed.append({"archivo": name, "titular": None,
+                           "cuenta": info.get("cuenta"),
+                           "banco": info.get("banco"),
+                           "desde": info.get("desde"), "hasta": info.get("hasta"),
+                           "saldo_inicial": None, "saldo_final": None,
+                           "movimientos": info["movimientos"]})
+        parsed.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
+        movs = [m for e in parsed for m in e["movimientos"]]
 
-        # --- parsear mayor (Excel subido o directo del FBS) ---------------
-        mayor_origen = {"tipo": "archivo"}
-        if fbs_mayor:
+        # --- parse the ledger (uploaded Excel or straight from FBS) -------------
+        ledger_source = {"tipo": "archivo"}
+        if fbs_ledger:
             prog("Trayendo el mayor E y O directo del FBS", 38)
             try:
-                d1 = date.fromisoformat(fbs_mayor["desde"] or "")
-                d2 = date.fromisoformat(fbs_mayor["hasta"] or "")
+                d1 = date.fromisoformat(fbs_ledger["desde"] or "")
+                d2 = date.fromisoformat(fbs_ledger["hasta"] or "")
                 if d1 > d2:
                     d1, d2 = d2, d1
-                infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
-                                      solo_cuentas=[fbs_mayor["cuenta"]])
+                infos = fbs_sql.fetch(d1.isoformat(), d2.isoformat(),
+                                      only_accounts=[fbs_ledger["cuenta"]])
             except ValueError as exc:
-                PROGRESO[job_id] = {"estado": "error",
+                PROGRESS[job_id] = {"estado": "error",
                                     "mensaje": f"Mayor desde el FBS: {exc}"}
                 return
-            mayor_parsed = {"hojas": [i["archivo"] for i in infos],
-                            "E": {"asientos": []}, "O": {"asientos": []}}
+            ledger = {"hojas": [i["archivo"] for i in infos],
+                      "E": {"asientos": []}, "O": {"asientos": []}}
             for i in infos:
-                mayor_parsed[i["hoja"]]["asientos"].extend(i["asientos"])
-            mayor_origen = {
-                "tipo": "fbs", "cuenta_id": fbs_mayor["cuenta"],
+                ledger[i["hoja"]]["asientos"].extend(i["asientos"])
+            ledger_source = {
+                "tipo": "fbs", "cuenta_id": fbs_ledger["cuenta"],
                 "desde": d1.isoformat(), "hasta": d2.isoformat(),
-                "asientos_e": len(mayor_parsed["E"]["asientos"]),
-                "asientos_o": len(mayor_parsed["O"]["asientos"])}
+                "asientos_e": len(ledger["E"]["asientos"]),
+                "asientos_o": len(ledger["O"]["asientos"])}
         else:
             prog("Leyendo el libro mayor", 38)
-            mayor_parsed = parse_mayor(data_mayor)
-            if "E" not in mayor_parsed or "O" not in mayor_parsed:
-                PROGRESO[job_id] = {"estado": "error", "mensaje":
+            ledger = parse_ledger(ledger_data)
+            if "E" not in ledger or "O" not in ledger:
+                PROGRESS[job_id] = {"estado": "error", "mensaje":
                     "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
-                    f"(hojas encontradas: {mayor_parsed['hojas']})"}
+                    f"(hojas encontradas: {ledger['hojas']})"}
                 return
 
-        # --- conciliar ----------------------------------------------------
+        # --- reconcile ------------------------------------------------------------
         prog("Cruzando el extracto contra el mayor", 46)
-        reglas = reglas_mod.cargar()
-        equivalencias = eq_mod.cargar()
-        terminos_gasto = gastos_conf.cargar()
-        _forzar_gastos_movs(movs)
-        resultado = conciliar(movs, mayor_parsed["E"]["asientos"],
-                              mayor_parsed["O"]["asientos"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias,
-                              terminos_gasto=terminos_gasto,
-                              excepciones_gasto=gastos_conf.cargar_excepciones())
+        rules = rules_mod.load()
+        equivalence_pairs = equivalences.load()
+        user_fee_terms = fee_terms.load()
+        _force_fee_flags(movs)
+        result = reconcile(movs, ledger["E"]["asientos"],
+                           ledger["O"]["asientos"], learned_rules=rules,
+                           equivalence_pairs=equivalence_pairs,
+                           user_fee_terms=user_fee_terms,
+                           fee_exceptions=fee_terms.load_exceptions())
 
-        # --- IA (real o simulada) sobre los residuales --------------------
-        ia_sugerencias, ia_estado = [], "desactivada"
-        if usar_ia in ("si", "simular"):
-            residual_mayor = (resultado["e_sin_banco"]
-                              + resultado["o_pendientes_sin_banco"])
-            # los gastos bancarios no van a la IA: ya los explica la ND mensual
-            residual_banco = resultado["banco_sin_contabilizar"]
-            seg_tanda = 4 if usar_ia == "simular" else 45
+        # --- AI (real or simulated) on the residuals ---------------------------
+        ai_suggestions, ai_state = [], "desactivada"
+        if use_ai in ("si", "simular"):
+            ledger_residual = (result["e_sin_banco"]
+                               + result["o_pendientes_sin_banco"])
+            # bank fees don't go to the AI: the monthly debit note explains them
+            bank_residual = result["banco_sin_contabilizar"]
+            secs_per_batch = 4 if use_ai == "simular" else 45
 
-            def prog_ia(tanda, total):
-                prog(f"Análisis con IA — tanda {tanda} de {total}",
-                     58 + 38 * (tanda - 1) / total,
-                     eta=(total - tanda + 1) * seg_tanda)
+            def ai_progress(batch, total):
+                prog(f"Análisis con IA — tanda {batch} de {total}",
+                     58 + 38 * (batch - 1) / total,
+                     eta=(total - batch + 1) * secs_per_batch)
 
-            if usar_ia == "simular":
-                ia_sugerencias = ai_assist.simular_sugerencias(
-                    residual_banco, residual_mayor, progreso=prog_ia,
-                    glosario=equivalencias)
-                ia_estado = "simulada"
-            elif not ai_assist.disponible():
-                ia_estado = "sin_credenciales"
+            if use_ai == "simular":
+                ai_suggestions = ai_assist.simulate_suggestions(
+                    bank_residual, ledger_residual, progress=ai_progress,
+                    glossary=equivalence_pairs)
+                ai_state = "simulada"
+            elif not ai_assist.available():
+                ai_state = "sin_credenciales"
             else:
                 try:
-                    ia_sugerencias = ai_assist.sugerir_matches(
-                        residual_banco, residual_mayor, progreso=prog_ia,
-                        glosario=equivalencias)
-                    ia_estado = "ok"
+                    ai_suggestions = ai_assist.suggest_matches(
+                        bank_residual, ledger_residual, progress=ai_progress,
+                        glossary=equivalence_pairs)
+                    ai_state = "ok"
                 except presupuesto_ia.PresupuestoExcedido as exc:
-                    ia_estado = f"error: {exc}"     # se sigue sin IA
-                except Exception as exc:  # noqa: BLE001 — mostrar el error
-                    ia_estado = f"error: {exc}"
+                    ai_state = f"error: {exc}"     # carries on without AI
+                except Exception as exc:  # noqa: BLE001 — show the error
+                    ai_state = f"error: {exc}"
                     telemetria.registrar_error(exc, origen="ia", job=job_id)
 
         prog("Preparando los resultados", 96, eta=4)
-        salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
-        salida["mayor_origen"] = mayor_origen
-        salida["marca"] = marca or None
-        if marca:
-            # aviso si un extracto parece de una cuenta de OTRA marca
-            todas = cuentas_mod.cargar()
-            avisos_marca = []
-            for e in parseados:
-                c = cuentas_mod.buscar_por_numero(
-                    todas, e.get("banco"), e.get("cuenta"))
-                if c and cuentas_mod.slug(marca) not in cuentas_mod.slug(c["empresa"]):
-                    avisos_marca.append(
+        out = _serialize(result, parsed, ai_suggestions, ai_state)
+        out["mayor_origen"] = ledger_source
+        out["marca"] = brand or None
+        if brand:
+            # warning when a statement looks like an account of ANOTHER brand
+            everything = accounts_mod.load()
+            brand_warnings = []
+            for e in parsed:
+                c = accounts_mod.find_by_number(
+                    everything, e.get("banco"), e.get("cuenta"))
+                if c and accounts_mod.slug(brand) not in accounts_mod.slug(c["empresa"]):
+                    brand_warnings.append(
                         f'"{e["archivo"]}" parece la cuenta {c["numero"]} de '
                         f'{c["empresa"]}, no de la marca de esta página.')
-            salida["avisos_marca"] = avisos_marca
-        # auditoría: qué modo de IA llegó en el pedido (para diagnosticar
-        # corridas en simulación no intencionales)
-        salida["ia"]["modo_pedido"] = usar_ia
-        salida["conciliados_manual"] = []
-        salida["resumen"]["conciliados_manual"] = 0
-        salida["resumen"]["reglas_disponibles"] = len(reglas)
-        salida["job_id"] = job_id
-        salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
-        _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
-        analisis_mod.anotar_residuales(salida)
-        RESULTADOS[job_id] = salida
-        _guardar(job_id)
-        PROGRESO[job_id] = {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
-                            "fase": "Conciliación terminada", "inicio": inicio}
-    except Exception as exc:  # noqa: BLE001 — que el error llegue a la UI
-        PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
-        telemetria.registrar_error(exc, origen="job", job=job_id, marca=marca or None)
+            out["avisos_marca"] = brand_warnings
+        # audit: which AI mode came in the request (to diagnose unintended
+        # simulated runs)
+        out["ia"]["modo_pedido"] = use_ai
+        out["conciliados_manual"] = []
+        out["resumen"]["conciliados_manual"] = 0
+        out["resumen"]["reglas_disponibles"] = len(rules)
+        out["job_id"] = job_id
+        out["cruces_vetados"] = _apply_vetoes(out)
+        _recompute_summary(out)   # tags payroll and splits its counters
+        analysis.annotate_residuals(out)
+        RESULTS[job_id] = out
+        _save_job(job_id)
+        PROGRESS[job_id] = {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
+                            "fase": "Conciliación terminada", "inicio": started}
+    except Exception as exc:  # noqa: BLE001 — the error must reach the UI
+        PROGRESS[job_id] = {"estado": "error", "mensaje": str(exc)}
+        telemetria.registrar_error(exc, origen="job", job=job_id, marca=brand or None)
 
 
 @app.get("/api/diagnostico")
-def api_diagnostico():
-    """Qué ve el servidor del entorno de IA, sin exponer secretos. Sirve para
-    verificar que la clave llegó al proceso (p. ej. tras un deploy)."""
-    clave = os.environ.get("ANTHROPIC_API_KEY") or ""
+def api_diagnostics():
+    """What the server sees of the AI environment, without exposing secrets.
+    Used to check that the key reached the process (e.g. after a deploy)."""
+    key = os.environ.get("ANTHROPIC_API_KEY") or ""
     token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
     return {
-        "ia_disponible": ai_assist.disponible(),
+        "ia_disponible": ai_assist.available(),
         "ia_presupuesto": presupuesto_ia.estado(),
         "ANTHROPIC_API_KEY": {
-            "presente": bool(clave.strip()),
-            "formato_esperado": clave.strip().startswith("sk-ant-"),
-            "espacios_al_borde": clave != clave.strip(),
-            "entre_comillas": clave.strip()[:1] in ('"', "'") if clave.strip() else False,
+            "presente": bool(key.strip()),
+            "formato_esperado": key.strip().startswith("sk-ant-"),
+            "espacios_al_borde": key != key.strip(),
+            "entre_comillas": key.strip()[:1] in ('"', "'") if key.strip() else False,
         },
         "ANTHROPIC_AUTH_TOKEN_presente": bool(token.strip()),
-        "archivo_clave_local": os.path.exists(ai_assist.RUTA_CLAVE),
-        # True si datos/ está montado como volumen persistente (Railway):
-        # sin esto, todo el aprendizaje se pierde en cada deploy
-        "datos_es_volumen": os.path.ismount(DATOS_DIR),
-        # estado de la conexión directa al FBS vía config del hub
-        "fbs_hub": fbs_sql.diagnostico(),
-        # gasto real de la app en la API (tokens y USD estimados por llamada):
-        # si la factura no coincide con esto, el consumo vino de otro lado
-        "ia_uso": ia_log.resumen(),
-        # monitoreo (New Relic): si está activo, con qué grupo y qué versión
+        "archivo_clave_local": os.path.exists(ai_assist.KEY_FILE),
+        # True if datos/ is mounted as a persistent volume (Railway):
+        # without it, all the learning is lost on every deploy
+        "datos_es_volumen": os.path.ismount(DATA_DIR),
+        # state of the direct FBS connection through the hub config
+        "fbs_hub": fbs_sql.diagnostics(),
+        # the app's real API spend (tokens and estimated USD per call):
+        # if the bill doesn't match this, the usage came from somewhere else
+        "ia_uso": ai_usage.summary(),
+        # monitoring (New Relic): whether it's on, with which group and version
         "monitor": telemetria.estado(),
     }
 
 
 @app.post("/api/analizar/{job_id}")
-def api_analizar(job_id: str, cuerpo: dict = Body(...)):
-    """Análisis con IA de un asiento pendiente: por qué quedó sin banco.
-    Cachea el resultado en el job para no repetir la llamada."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_analyze(job_id: str, body: dict = Body(...)):
+    """AI analysis of a pending entry: why it was left without a bank movement.
+    The result is cached in the job so the call isn't repeated."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    id_mayor = cuerpo.get("id_mayor")
-    asiento = next((x for lista in LISTAS_MAYOR for x in datos[lista]
-                    if x["id"] == id_mayor), None)
-    if not asiento:
+    ledger_id = body.get("id_mayor")
+    entry = next((x for list_name in LEDGER_LISTS for x in data[list_name]
+                  if x["id"] == ledger_id), None)
+    if not entry:
         return JSONResponse(status_code=404, content={"error": "Asiento no encontrado"})
 
-    cache = datos.setdefault("analisis", {})
-    if id_mayor in cache and not cuerpo.get("rehacer"):
-        return {"analisis": cache[id_mayor]}
+    cache = data.setdefault("analisis", {})
+    if ledger_id in cache and not body.get("rehacer"):
+        return {"analisis": cache[ledger_id]}
 
-    aprendidos = analisis_mod.cargar()
+    learned = analysis.load()
 
-    # si la firma ya tiene un veredicto del usuario, no se gasta IA: se
-    # devuelve directamente lo aprendido (regla o corrección)
-    firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
-    previo = analisis_mod.buscar(firma, aprendidos)
-    if previo and not cuerpo.get("rehacer"):
-        cache[id_mayor] = {
-            "texto": previo.get("correccion") or previo.get("explicacion", ""),
+    # if the signature already has a verdict from the user, no AI is spent:
+    # what was learned (rule or correction) is returned directly
+    signature = rules_mod.ledger_signature(entry.get("referencia"), entry.get("comentario"))
+    previous = analysis.find(signature, learned)
+    if previous and not body.get("rehacer"):
+        cache[ledger_id] = {
+            "texto": previous.get("correccion") or previous.get("explicacion", ""),
             "fecha": date.today().isoformat(),
-            "veredicto": previo["veredicto"],
-            "correccion": previo.get("correccion", ""),
+            "veredicto": previous["veredicto"],
+            "correccion": previous.get("correccion", ""),
             "origen": "aprendizaje",
         }
-        _guardar(job_id)
-        return {"analisis": cache[id_mayor]}
+        _save_job(job_id)
+        return {"analisis": cache[ledger_id]}
 
-    correcciones = [a for a in aprendidos if a["veredicto"] == "corregido"][:8]
+    corrections = [a for a in learned if a["veredicto"] == "corregido"][:8]
     try:
-        resultado = analisis_mod.analizar_asiento(
-            asiento, datos.get("banco_sin_contabilizar", []), correcciones,
-            cuenta=(datos.get("cuenta") or {}).get("etiqueta", ""),
-            simular=bool(cuerpo.get("simular")))
+        result = analysis.analyze_entry(
+            entry, data.get("banco_sin_contabilizar", []), corrections,
+            account=(data.get("cuenta") or {}).get("etiqueta", ""),
+            simulate=bool(body.get("simular")))
     except presupuesto_ia.PresupuestoExcedido as exc:
         return JSONResponse(status_code=429, content={"error": str(exc)})
 
-    cache[id_mayor] = {"texto": resultado["texto"], "fecha": date.today().isoformat(),
-                       "veredicto": None, "correccion": "",
-                       "origen": resultado["origen"]}
-    _guardar(job_id)
-    return {"analisis": cache[id_mayor]}
+    cache[ledger_id] = {"texto": result["texto"], "fecha": date.today().isoformat(),
+                        "veredicto": None, "correccion": "",
+                        "origen": result["origen"]}
+    _save_job(job_id)
+    return {"analisis": cache[ledger_id]}
 
 
 @app.post("/api/analizar/{job_id}/veredicto")
-def api_analizar_veredicto(job_id: str, cuerpo: dict = Body(...)):
-    """Confirmación del usuario sobre un análisis: Sí -> se convierte en
-    regla; No + explicación -> el sistema aprende la corrección."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_analysis_verdict(job_id: str, body: dict = Body(...)):
+    """The user's confirmation of an analysis: Yes -> it becomes a rule;
+    No + explanation -> the system learns the correction."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    id_mayor = cuerpo.get("id_mayor")
-    entrada = (datos.get("analisis") or {}).get(id_mayor)
-    if not entrada:
+    ledger_id = body.get("id_mayor")
+    analysis_entry = (data.get("analisis") or {}).get(ledger_id)
+    if not analysis_entry:
         return JSONResponse(status_code=409, content={
             "error": "Primero hay que correr el análisis de este asiento"})
-    ok = bool(cuerpo.get("ok"))
-    correccion = (cuerpo.get("correccion") or "").strip()
-    if not ok and not correccion:
+    ok = bool(body.get("ok"))
+    correction = (body.get("correccion") or "").strip()
+    if not ok and not correction:
         return JSONResponse(status_code=422, content={
             "error": "Contanos por qué el análisis no está bien, así el sistema aprende"})
 
-    asiento = next((x for lista in LISTAS_MAYOR for x in datos[lista]
-                    if x["id"] == id_mayor), None)
-    if asiento:
-        firma = reglas_mod.firma_mayor(asiento.get("referencia"), asiento.get("comentario"))
-        analisis_mod.aprender(firma, entrada["texto"], ok, correccion)
-        analisis_mod.anotar_residuales(datos)
-    entrada["veredicto"] = "ok" if ok else "corregido"
-    entrada["correccion"] = correccion
-    _guardar(job_id)
-    return {"analisis": entrada}
+    entry = next((x for list_name in LEDGER_LISTS for x in data[list_name]
+                  if x["id"] == ledger_id), None)
+    if entry:
+        signature = rules_mod.ledger_signature(entry.get("referencia"), entry.get("comentario"))
+        analysis.learn(signature, analysis_entry["texto"], ok, correction)
+        analysis.annotate_residuals(data)
+    analysis_entry["veredicto"] = "ok" if ok else "corregido"
+    analysis_entry["correccion"] = correction
+    _save_job(job_id)
+    return {"analisis": analysis_entry}
 
 
-ARCHIVO_MIGRABLE_RE = re.compile(r'^[\w.-]+\.json$')
-# nunca viajan por la API de migración: la conexión del FBS (con su clave y
-# el servidor destino) y los contadores internos de IA
-ARCHIVOS_NO_MIGRABLES = {"fbs_sql.json", "ia_presupuesto.json", "ia_uso_log.json"}
+MIGRATABLE_FILE_RE = re.compile(r'^[\w.-]+\.json$')
+# never travel through the migration API: the FBS connection (with its password
+# and the destination server) and the internal AI counters
+NOT_MIGRATABLE = {"fbs_sql.json", "ia_presupuesto.json", "ia_uso_log.json"}
 
 
-def _migrable(nombre: str) -> bool:
-    return bool(ARCHIVO_MIGRABLE_RE.match(nombre)) and nombre not in ARCHIVOS_NO_MIGRABLES
+def _migratable(name: str) -> bool:
+    return bool(MIGRATABLE_FILE_RE.match(name)) and name not in NOT_MIGRATABLE
 
 
 @app.get("/api/migracion/exportar")
-def api_migracion_exportar():
-    """Exporta todos los datos del servicio (aprendizajes, resultados,
-    tableros, cuentas) como un solo JSON. Nunca incluye credenciales."""
-    if bloqueo := _bloqueado_en_demo():
-        return bloqueo
+def api_migration_export():
+    """Exports all of the service's data (learning, results, boards,
+    accounts) as a single JSON. Never includes credentials."""
+    if blocked := _blocked_in_demo():
+        return blocked
     bundle = {}
-    for nombre in sorted(os.listdir(DATOS_DIR)):
-        if not _migrable(nombre):
+    for name in sorted(os.listdir(DATA_DIR)):
+        if not _migratable(name):
             continue
         try:
-            with open(os.path.join(DATOS_DIR, nombre), encoding="utf-8") as f:
-                bundle[nombre] = json.load(f)
+            with open(os.path.join(DATA_DIR, name), encoding="utf-8") as f:
+                bundle[name] = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
     return {"version": 1, "exportado": date.today().isoformat(),
@@ -577,82 +576,82 @@ def api_migracion_exportar():
 
 
 @app.post("/api/migracion/importar")
-def api_migracion_importar(cuerpo: dict = Body(...)):
-    """Importa un bundle exportado desde otro servicio. Como protección,
-    solo funciona sobre un servicio SIN conciliaciones diarias previas
-    (salvo {"forzar": true}), para no pisar datos productivos por error."""
-    if bloqueo := _bloqueado_en_demo():
-        return bloqueo
-    hay_grupos = any(n.startswith("grupo_") for n in os.listdir(DATOS_DIR))
-    if hay_grupos and not cuerpo.get("forzar"):
+def api_migration_import(body: dict = Body(...)):
+    """Imports a bundle exported from another service. As a safeguard, it only
+    works on a service WITHOUT previous daily runs (unless {"forzar": true}),
+    so production data isn't overwritten by mistake."""
+    if blocked := _blocked_in_demo():
+        return blocked
+    has_runs = any(n.startswith("grupo_") for n in os.listdir(DATA_DIR))
+    if has_runs and not body.get("forzar"):
         return JSONResponse(status_code=409, content={
             "error": "Este servicio ya tiene conciliaciones cargadas. "
                      "Para pisarlas igual hay que mandar forzar=true."})
-    archivos = cuerpo.get("archivos") or {}
-    escritos, ignorados = 0, []
-    for nombre, contenido in archivos.items():
-        if not _migrable(nombre):
-            ignorados.append(nombre)
+    files = body.get("archivos") or {}
+    written, ignored = 0, []
+    for name, content in files.items():
+        if not _migratable(name):
+            ignored.append(name)
             continue
-        with open(os.path.join(DATOS_DIR, nombre), "w", encoding="utf-8") as f:
-            json.dump(contenido, f, ensure_ascii=False)
-        escritos += 1
-    RESULTADOS.clear()   # invalidar el caché en memoria: releer del disco
-    return {"ok": True, "archivos_importados": escritos, "ignorados": ignorados,
-            "datos_es_volumen": os.path.ismount(DATOS_DIR)}
+        with open(os.path.join(DATA_DIR, name), "w", encoding="utf-8") as f:
+            json.dump(content, f, ensure_ascii=False)
+        written += 1
+    RESULTS.clear()   # invalidate the in-memory cache: read again from disk
+    return {"ok": True, "archivos_importados": written, "ignorados": ignored,
+            "datos_es_volumen": os.path.ismount(DATA_DIR)}
 
 
 @app.get("/api/equivalencias")
-def api_equivalencias():
-    """Diccionario de equivalencias de términos extracto ↔ sistema."""
-    return {"equivalencias": eq_mod.cargar()}
+def api_equivalences():
+    """Dictionary of statement ↔ system term equivalences."""
+    return {"equivalencias": equivalences.load()}
 
 
 @app.post("/api/equivalencias")
-def api_equivalencias_agregar(cuerpo: dict = Body(...)):
-    pares, error = eq_mod.agregar(cuerpo.get("extracto"), cuerpo.get("sistema"))
+def api_equivalences_add(body: dict = Body(...)):
+    pairs, error = equivalences.add(body.get("extracto"), body.get("sistema"))
     if error:
         return JSONResponse(status_code=422, content={"error": error})
-    return {"equivalencias": pares}
+    return {"equivalencias": pairs}
 
 
 @app.delete("/api/equivalencias/{eq_id}")
-def api_equivalencias_eliminar(eq_id: str):
-    return {"equivalencias": eq_mod.eliminar(eq_id)}
+def api_equivalences_remove(eq_id: str):
+    return {"equivalencias": equivalences.remove(eq_id)}
 
 
 @app.get("/api/cuentas")
-def api_cuentas(marca: str = ""):
-    """Cuentas bancarias del grupo con su etiqueta y mapeo FBS. Con ?marca=
-    se limita a esa marca (nombre completo o abreviado)."""
-    todas = cuentas_mod.cargar()
-    cuentas = cuentas_mod.filtrar_marca(todas, marca)
-    return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
-            "bancos": cuentas_mod.BANCOS, "marca": marca or None,
-            "marca_nombre": (sorted({c["empresa"] for c in cuentas})[0]
-                             if marca and cuentas else None),
-            # para explicar un filtro vacío sin tener que adivinar el nombre
-            "marcas_disponibles": cuentas_mod.marcas_con_cuentas(todas)}
+def api_accounts(marca: str = ""):
+    """The group's bank accounts with their label and FBS mapping. With
+    ?marca= it is limited to that brand (full or abbreviated name)."""
+    everything = accounts_mod.load()
+    accounts = accounts_mod.filter_brand(everything, marca)
+    return {"cuentas": [{**c, "etiqueta": accounts_mod.label(c)} for c in accounts],
+            "bancos": accounts_mod.BANKS, "marca": marca or None,
+            "marca_nombre": (sorted({c["empresa"] for c in accounts})[0]
+                             if marca and accounts else None),
+            # to explain an empty filter without having to guess the name
+            "marcas_disponibles": accounts_mod.brands_with_accounts(everything)}
 
 
-def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
-    """Fila del paso de identificación para un archivo (real o virtual) ya
-    parseado: detecta a qué cuenta bancaria corresponde."""
-    cuenta = None
-    if info.get("cuenta_id_config"):   # vínculo ya configurado en el hub
-        cuenta = next((c for c in cuentas
-                       if c["id"] == info["cuenta_id_config"]), None)
+def _summary_row(name: str, info: dict, accounts: list[dict]) -> dict:
+    """Row of the identification step for an already parsed (real or virtual)
+    file: finds which bank account it belongs to."""
+    account = None
+    if info.get("cuenta_id_config"):   # link already configured in the hub
+        account = next((c for c in accounts
+                        if c["id"] == info["cuenta_id_config"]), None)
     elif info["tipo"] == "extracto":
-        cuenta = cuentas_mod.buscar_por_numero(
-            cuentas, info.get("banco"), info.get("cuenta"), info.get("moneda"))
+        account = accounts_mod.find_by_number(
+            accounts, info.get("banco"), info.get("cuenta"), info.get("moneda"))
     elif info["tipo"] == "fbs":
         idents = list((info.get("codigos") or {}).values()) + [info.get("nombre_fbs")]
-        cuenta = next((c for c in (cuentas_mod.buscar_por_fbs(cuentas, i)
-                                   for i in idents if i) if c), None)
-        if cuenta is None:  # el nombre interno a veces trae el nro real
-            cuenta = cuentas_mod.buscar_por_nombre_fbs(cuentas, info.get("nombre_fbs"))
+        account = next((c for c in (accounts_mod.find_by_fbs(accounts, i)
+                                    for i in idents if i) if c), None)
+        if account is None:  # the internal name sometimes carries the real number
+            account = accounts_mod.find_by_fbs_name(accounts, info.get("nombre_fbs"))
     return {
-        "archivo": nombre, "tipo": info["tipo"],
+        "archivo": name, "tipo": info["tipo"],
         "banco": info.get("banco"), "moneda": info.get("moneda"),
         "cuenta_detectada": info.get("cuenta"),
         "hoja": info.get("hoja"), "codigo_fbs": info.get("codigo_fbs"),
@@ -660,110 +659,111 @@ def _fila_resumen(nombre: str, info: dict, cuentas: list[dict]) -> dict:
         "cantidad": info.get("cantidad", 0),
         "desde": info["desde"].isoformat() if info.get("desde") else None,
         "hasta": info["hasta"].isoformat() if info.get("hasta") else None,
-        "cuenta_id": cuenta["id"] if cuenta else None,
-        # asignada desde la config del hub: en la UI no se vuelve a elegir
-        "cuenta_fija": bool(info.get("cuenta_id_config") and cuenta),
+        "cuenta_id": account["id"] if account else None,
+        # assigned from the hub config: not chosen again in the UI
+        "cuenta_fija": bool(info.get("cuenta_id_config") and account),
         "error": info.get("error"),
     }
 
 
-def _staging_destino(staging_id: str, marca: str) -> tuple[str, dict]:
-    """Staging existente (para sumarle archivos) o uno nuevo."""
+def _staging_target(staging_id: str, brand: str) -> tuple[str, dict]:
+    """An existing staging (to add files to it) or a new one."""
     stag = STAGING.get(staging_id or "")
     if stag is None:
         staging_id = uuid.uuid4().hex[:10]
-        stag = {"archivos": {}, "resumen": [], "marca": marca or None}
+        stag = {"archivos": {}, "resumen": [], "marca": brand or None}
         STAGING[staging_id] = stag
     return staging_id, stag
 
 
-def _agregar_a_staging(stag: dict, nombre: str, info: dict, cuentas: list[dict]):
-    """Agrega (o reemplaza, si ya estaba) un archivo parseado al staging."""
-    stag["archivos"][nombre] = info
-    stag["resumen"] = [f for f in stag["resumen"] if f["archivo"] != nombre]
-    stag["resumen"].append(_fila_resumen(nombre, info, cuentas))
+def _add_to_staging(stag: dict, name: str, info: dict, accounts: list[dict]):
+    """Adds (or replaces, if it was there) a parsed file to the staging."""
+    stag["archivos"][name] = info
+    stag["resumen"] = [f for f in stag["resumen"] if f["archivo"] != name]
+    stag["resumen"].append(_summary_row(name, info, accounts))
 
 
 @app.post("/api/diario/identificar")
-async def api_diario_identificar(archivos: list[UploadFile] = File(...),
-                                 marca: str = "", staging: str = ""):
-    """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
-    deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
-    identificación solo asigna cuentas de esa marca; con ?staging= los
-    archivos se suman a una identificación previa (p. ej. al mayor ya traído
-    del FBS por SQL) en vez de empezar de cero."""
-    staging_id, stag = _staging_destino(staging, marca)
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
-                                        stag.get("marca") or marca)
+async def api_daily_identify(archivos: list[UploadFile] = File(...),
+                             marca: str = "", staging: str = ""):
+    """Daily mode, step 1: detects what each file is (bank/account/FBS) and
+    keeps the parsed data in memory for the reconciliation step. With ?marca=
+    the identification only assigns accounts of that brand; with ?staging=
+    the files are added to a previous identification (e.g. to the ledger
+    already pulled from FBS through SQL) instead of starting from scratch."""
+    staging_id, stag = _staging_target(staging, marca)
+    accounts = accounts_mod.filter_brand(accounts_mod.load(),
+                                         stag.get("marca") or marca)
     for up in archivos:
         data = await up.read()
-        info = diarios.identificar(up.filename, data)
-        _agregar_a_staging(stag, up.filename, info, cuentas)
+        info = daily_files.identify(up.filename, data)
+        _add_to_staging(stag, up.filename, info, accounts)
     return {"staging_id": staging_id, "archivos": stag["resumen"],
             "marca": stag.get("marca")}
 
 
 @app.get("/api/fbs-sql")
 def api_fbs_sql_get(marca: str = ""):
-    """Configuración de la conexión directa al FBS (sin la clave). Con
-    ?marca= las cuentas configuradas en el hub se limitan a esa marca."""
-    return fbs_sql.publica(marca)
+    """Config of the direct FBS connection (without the password). With
+    ?marca= the accounts configured in the hub are limited to that brand."""
+    return fbs_sql.public_config(marca)
 
 
 @app.post("/api/fbs-sql")
-def api_fbs_sql_post(request: Request, cuerpo: dict = Body(...)):
-    # cambiar a QUÉ servidor se conecta la app (y con qué clave) solo se
-    # permite desde la propia máquina o si el despliegue lo habilita
-    # explícitamente (FBS_SQL_EDITABLE=1); la query siempre se puede editar
+def api_fbs_sql_post(request: Request, body: dict = Body(...)):
+    # changing WHICH server the app connects to (and with which password) is
+    # only allowed from the machine itself or when the deployment enables it
+    # explicitly (FBS_SQL_EDITABLE=1); the query can always be edited
     editable = (seguridad.es_local(request)
                 or os.environ.get("FBS_SQL_EDITABLE", "").strip().lower() in ("1", "true", "on", "si"))
     try:
-        fbs_sql.guardar_conf(cuerpo, permitir_destino=editable)
+        fbs_sql.save_config(body, allow_destination=editable)
     except PermissionError as exc:
         return JSONResponse(status_code=403, content={"error": str(exc)})
-    except ValueError as exc:   # solo lectura / destino inválido
+    except ValueError as exc:   # read-only / invalid destination
         return JSONResponse(status_code=422, content={"error": str(exc)})
-    return fbs_sql.publica()
+    return fbs_sql.public_config()
 
 
 @app.post("/api/fbs-sql/probar")
-def api_fbs_sql_probar():
-    return fbs_sql.probar()
+def api_fbs_sql_test():
+    return fbs_sql.test_connection()
 
 
 @app.post("/api/diario/fbs-sql")
-def api_diario_fbs_sql(cuerpo: dict = Body(...)):
-    """Trae el mayor E y O directo del SQL Server del FBS para un rango de
-    fechas y lo suma al staging como si fueran reportes subidos: el resto del
-    flujo (mapeos, conciliación, memoria, arrastre) es idéntico."""
-    desde, hasta = cuerpo.get("desde"), cuerpo.get("hasta")
+def api_daily_fbs_sql(body: dict = Body(...)):
+    """Pulls ledger E and O straight from the FBS SQL Server for a date range
+    and adds it to the staging as if they were uploaded reports: the rest of
+    the flow (mappings, reconciliation, memory, carry-over) is the same."""
+    date_from, date_to = body.get("desde"), body.get("hasta")
     try:
-        d1, d2 = date.fromisoformat(desde or ""), date.fromisoformat(hasta or "")
+        d1, d2 = date.fromisoformat(date_from or ""), date.fromisoformat(date_to or "")
     except ValueError:
         return JSONResponse(status_code=422, content={
             "error": "Indicá el rango de fechas (desde y hasta)."})
     if d1 > d2:
         d1, d2 = d2, d1
     try:
-        infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
-                              marca=cuerpo.get("marca") or "",
-                              solo_cuentas=cuerpo.get("cuentas") or None)
+        infos = fbs_sql.fetch(d1.isoformat(), d2.isoformat(),
+                              brand=body.get("marca") or "",
+                              only_accounts=body.get("cuentas") or None)
     except ValueError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     if not infos:
         return JSONResponse(status_code=422, content={
             "error": "La query del FBS no devolvió asientos E/O en ese rango."})
-    marca = cuerpo.get("marca") or ""
-    staging_id, stag = _staging_destino(cuerpo.get("staging_id") or "", marca)
-    cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
-                                        stag.get("marca") or marca)
+    brand = body.get("marca") or ""
+    staging_id, stag = _staging_target(body.get("staging_id") or "", brand)
+    accounts = accounts_mod.filter_brand(accounts_mod.load(),
+                                         stag.get("marca") or brand)
     for info in infos:
-        _agregar_a_staging(stag, info["archivo"], info, cuentas)
-    # el rango PEDIDO (no el de los asientos que volvieron): es lo que después
-    # deja avisar "el mayor que trajiste no llega a las fechas del extracto"
-    ant = stag.get("rango_fbs")
-    stag["rango_fbs"] = [min(d1.isoformat(), ant[0]) if ant else d1.isoformat(),
-                         max(d2.isoformat(), ant[1]) if ant else d2.isoformat()]
+        _add_to_staging(stag, info["archivo"], info, accounts)
+    # the REQUESTED range (not the one of the entries that came back): it's
+    # what later allows warning "the ledger you pulled doesn't reach the
+    # statement's dates"
+    prev = stag.get("rango_fbs")
+    stag["rango_fbs"] = [min(d1.isoformat(), prev[0]) if prev else d1.isoformat(),
+                         max(d2.isoformat(), prev[1]) if prev else d2.isoformat()]
     return {"staging_id": staging_id, "archivos": stag["resumen"],
             "marca": stag.get("marca"),
             "fbs_sql": {"cuentas": len(infos),
@@ -771,11 +771,11 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
 
 
 @app.get("/api/diario/fbs-sql/excel/{staging_id}")
-def api_diario_fbs_excel(staging_id: str):
-    """Descarga lo traído del FBS como un Excel con el MISMO formato de los
-    reportes 'Consulta del Mayor' que antes se subían a mano (una hoja
-    '(E) (codigo)' / '(O) (codigo)' por cuenta): sirve de respaldo/auditoría
-    y hasta se puede volver a subir al conciliador."""
+def api_daily_fbs_excel(staging_id: str):
+    """Downloads what was pulled from FBS as an Excel with the SAME format as
+    the 'Consulta del Mayor' reports that used to be uploaded by hand (one
+    sheet '(E) (codigo)' / '(O) (codigo)' per account): it serves as a
+    backup/audit trail and can even be uploaded to the reconciler again."""
     stag = STAGING.get(staging_id)
     if not stag:
         return JSONResponse(status_code=404, content={
@@ -799,215 +799,214 @@ def api_diario_fbs_excel(staging_id: str):
         ws.append([])
         ws.append(["Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"])
         for a in i["asientos"]:
-            ws.append([a.asiento,
-                       datetime(a.fecha.year, a.fecha.month, a.fecha.day)
-                       if a.fecha else None,
-                       a.referencia, a.comentario, a.debe, a.haber])
+            ws.append([a.number,
+                       datetime(a.date.year, a.date.month, a.date.day)
+                       if a.date else None,
+                       a.reference, a.comment, a.debit, a.credit])
     buf = io.BytesIO()
     wb.save(buf)
-    nombre = f"FBS_directo_{date.today().isoformat()}.xlsx"
+    name = f"FBS_directo_{date.today().isoformat()}.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
-RUTA_ARRASTRE = os.path.join(DATOS_DIR, "arrastre_diario.json")
+CARRY_OVER_PATH = os.path.join(DATA_DIR, "arrastre_diario.json")
 
 
-def _cargar_arrastre() -> dict:
-    if os.path.exists(RUTA_ARRASTRE):
+def _load_carry_over() -> dict:
+    if os.path.exists(CARRY_OVER_PATH):
         try:
-            with open(RUTA_ARRASTRE, encoding="utf-8") as f:
+            with open(CARRY_OVER_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _guardar_arrastre(d: dict):
-    with open(RUTA_ARRASTRE, "w", encoding="utf-8") as f:
+def _save_carry_over(d: dict):
+    with open(CARRY_OVER_PATH, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
 
 
-def _fecha_iso(s):
+def _iso_date(s):
     from datetime import date as _d
     return _d.fromisoformat(s) if s else None
 
 
-def _reconstruir_mov(d, seq):
-    from parsers.santander_pdf import MovimientoBanco
-    archivo = d.get("archivo") or ""
-    if not archivo.startswith("(pendiente"):
-        archivo = f"(pendiente de días anteriores) {archivo}"
-    return MovimientoBanco(
-        id=f"P#{seq}", fecha=_fecha_iso(d.get("fecha")),
-        comprobante=d.get("comprobante"), descripcion=d.get("descripcion") or "",
-        detalle=d.get("detalle") or "", debito=d.get("debito") or 0.0,
-        credito=d.get("credito") or 0.0, saldo=d.get("saldo") or 0.0,
-        archivo=archivo, pagina=0)
+def _rebuild_movement(d, seq):
+    from parsers.santander_pdf import BankMovement
+    file = d.get("archivo") or ""
+    if not file.startswith("(pendiente"):
+        file = f"(pendiente de días anteriores) {file}"
+    return BankMovement(
+        id=f"P#{seq}", date=_iso_date(d.get("fecha")),
+        voucher=d.get("comprobante"), description=d.get("descripcion") or "",
+        detail=d.get("detalle") or "", debit=d.get("debito") or 0.0,
+        credit=d.get("credito") or 0.0, balance=d.get("saldo") or 0.0,
+        file=file, page=0)
 
 
-def _reconstruir_asiento(d, seq):
-    from parsers.mayor_xlsx import AsientoMayor
-    return AsientoMayor(
-        id=f"P{d.get('hoja', 'E')}#{seq}", hoja=d.get("hoja", "E"),
-        asiento=d.get("asiento"), fecha=_fecha_iso(d.get("fecha")),
-        referencia=d.get("referencia") or "", comentario=d.get("comentario") or "",
-        debe=d.get("debe") or 0.0, haber=d.get("haber") or 0.0)
+def _rebuild_entry(d, seq):
+    from parsers.ledger_xlsx import LedgerEntry
+    return LedgerEntry(
+        id=f"P{d.get('hoja', 'E')}#{seq}", sheet=d.get("hoja", "E"),
+        number=d.get("asiento"), date=_iso_date(d.get("fecha")),
+        reference=d.get("referencia") or "", comment=d.get("comentario") or "",
+        debit=d.get("debe") or 0.0, credit=d.get("haber") or 0.0)
 
 
-def _aplicar_arrastre(cid, movs, g, arrastre):
-    """Suma al cruce los residuales de la conciliación anterior de la cuenta:
-    movimientos del banco sin contabilizar y asientos FBS sin banco, salteando
-    los que ya vienen en los archivos de hoy. Devuelve (n_movs, n_asientos)."""
-    prev = _obtener(arrastre.get(cid) or "")
+def _apply_carry_over(cid, movs, g, carry_over):
+    """Adds to the matching the residuals of the account's previous
+    reconciliation: unbooked bank movements and FBS entries without a bank
+    movement, skipping those already in today's files. Returns (n_movs, n_entries)."""
+    prev = _get_job(carry_over.get(cid) or "")
     if not prev:
         return 0, 0
     seq = 0
-    claves_m = {(m.fecha, m.descripcion, round(m.credito - m.debito, 2), m.comprobante)
+    mov_keys = {(m.date, m.description, round(m.credit - m.debit, 2), m.voucher)
                 for m in movs}
     n_movs = 0
     for d in prev.get("banco_sin_contabilizar", []):
-        clave = (_fecha_iso(d.get("fecha")), d.get("descripcion") or "",
-                 round((d.get("credito") or 0) - (d.get("debito") or 0), 2),
-                 d.get("comprobante"))
-        if clave in claves_m:
+        key = (_iso_date(d.get("fecha")), d.get("descripcion") or "",
+               round((d.get("credito") or 0) - (d.get("debito") or 0), 2),
+               d.get("comprobante"))
+        if key in mov_keys:
             continue
         seq += 1
-        movs.append(_reconstruir_mov(d, seq))
+        movs.append(_rebuild_movement(d, seq))
         n_movs += 1
-    claves_a = {(a.hoja, str(a.asiento), a.fecha, round(a.debe, 2), round(a.haber, 2))
-                for a in g["e"] + g["o"]}
-    n_asientos = 0
-    for lista, dest in (("e_sin_banco", g["e"]), ("o_pendientes_sin_banco", g["o"])):
-        for d in prev.get(lista, []):
-            clave = (d.get("hoja", "E"), str(d.get("asiento")), _fecha_iso(d.get("fecha")),
-                     round(d.get("debe") or 0, 2), round(d.get("haber") or 0, 2))
-            if clave in claves_a:
+    entry_keys = {(a.sheet, str(a.number), a.date, round(a.debit, 2), round(a.credit, 2))
+                  for a in g["e"] + g["o"]}
+    n_entries = 0
+    for list_name, dest in (("e_sin_banco", g["e"]), ("o_pendientes_sin_banco", g["o"])):
+        for d in prev.get(list_name, []):
+            key = (d.get("hoja", "E"), str(d.get("asiento")), _iso_date(d.get("fecha")),
+                   round(d.get("debe") or 0, 2), round(d.get("haber") or 0, 2))
+            if key in entry_keys:
                 continue
             seq += 1
-            dest.append(_reconstruir_asiento(d, seq))
-            n_asientos += 1
-    return n_movs, n_asientos
+            dest.append(_rebuild_entry(d, seq))
+            n_entries += 1
+    return n_movs, n_entries
 
 
-# --- memoria de conciliados: los archivos acumulativos no duplican ----------
-# El cliente sube el extracto del día pero el mayor FBS acumulado (o a fin de
-# mes, todo junto). Sin esto, lo ya conciliado en corridas anteriores
-# reaparecía como "sin banco"/"sin asiento". La memoria guarda, por cuenta,
-# cuántas veces se consumió cada movimiento/asiento, y las corridas nuevas
-# omiten esas repeticiones.
-RUTA_MEMORIA = os.path.join(DATOS_DIR, "memoria_conciliados.json")
+# --- matched memory: cumulative files don't duplicate ---------------------------
+# The client uploads the day's statement but the cumulative FBS ledger (or, at
+# month end, everything together). Without this, what was already matched in
+# previous runs showed up again as "sin banco"/"sin asiento". The memory keeps,
+# per account, how many times each movement/entry was consumed, and new runs
+# skip those repetitions.
+MATCHED_MEMORY_PATH = os.path.join(DATA_DIR, "memoria_conciliados.json")
 
 
-def _cargar_memoria() -> dict:
-    if os.path.exists(RUTA_MEMORIA):
+def _load_memory() -> dict:
+    if os.path.exists(MATCHED_MEMORY_PATH):
         try:
-            with open(RUTA_MEMORIA, encoding="utf-8") as f:
+            with open(MATCHED_MEMORY_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _guardar_memoria(m: dict):
-    with open(RUTA_MEMORIA, "w", encoding="utf-8") as f:
+def _save_memory(m: dict):
+    with open(MATCHED_MEMORY_PATH, "w", encoding="utf-8") as f:
         json.dump(m, f, ensure_ascii=False)
 
 
-def _clave_mov_dict(d) -> str:
-    neto = (d.get("credito") or 0) - (d.get("debito") or 0)
-    return f'{d.get("fecha") or ""}|{d.get("descripcion") or ""}|{neto:.2f}|{d.get("comprobante") or ""}'
+def _movement_key(d) -> str:
+    net = (d.get("credito") or 0) - (d.get("debito") or 0)
+    return f'{d.get("fecha") or ""}|{d.get("descripcion") or ""}|{net:.2f}|{d.get("comprobante") or ""}'
 
 
-def _clave_mov_obj(m) -> str:
-    return (f'{m.fecha.isoformat() if m.fecha else ""}|{m.descripcion}|'
-            f'{m.credito - m.debito:.2f}|{m.comprobante or ""}')
+def _movement_key_obj(m) -> str:
+    return (f'{m.date.isoformat() if m.date else ""}|{m.description}|'
+            f'{m.credit - m.debit:.2f}|{m.voucher or ""}')
 
 
-def _clave_asiento_dict(d) -> str:
+def _entry_key(d) -> str:
     return (f'{d.get("hoja") or ""}|{d.get("asiento") or ""}|{d.get("fecha") or ""}|'
             f'{d.get("debe") or 0:.2f}|{d.get("haber") or 0:.2f}')
 
 
-def _clave_asiento_obj(a) -> str:
-    return (f'{a.hoja}|{a.asiento}|{a.fecha.isoformat() if a.fecha else ""}|'
-            f'{a.debe:.2f}|{a.haber:.2f}')
+def _entry_key_obj(a) -> str:
+    return (f'{a.sheet}|{a.number}|{a.date.isoformat() if a.date else ""}|'
+            f'{a.debit:.2f}|{a.credit:.2f}')
 
 
-# --- cruces vetados: pares banco<->asiento que el usuario marcó como "no
-# corresponde". El cruce se deshace y el par no se vuelve a proponer en
-# ninguna corrida futura (importante con el arrastre diario, que si no lo
-# rearmaría al día siguiente).
-RUTA_VETOS = os.path.join(DATOS_DIR, "cruces_vetados.json")
+# --- vetoed matches: bank<->entry pairs the user marked as "doesn't belong".
+# The match is undone and the pair is never proposed again in any future run
+# (important with the daily carry-over, which would rebuild it the next day).
+VETOES_PATH = os.path.join(DATA_DIR, "cruces_vetados.json")
 
 
-def _cargar_vetos() -> list:
-    if os.path.exists(RUTA_VETOS):
+def _load_vetoes() -> list:
+    if os.path.exists(VETOES_PATH):
         try:
-            with open(RUTA_VETOS, encoding="utf-8") as f:
+            with open(VETOES_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return []
     return []
 
 
-def _guardar_vetos(vetos: list):
-    unicos, vistos = [], set()
-    for v in vetos:
-        par = (v.get("mov"), v.get("asiento"))
-        if par not in vistos:
-            vistos.add(par)
-            unicos.append(v)
-    with open(RUTA_VETOS, "w", encoding="utf-8") as f:
-        json.dump(unicos, f, ensure_ascii=False, indent=1)
+def _save_vetoes(vetoes: list):
+    unique, seen = [], set()
+    for v in vetoes:
+        pair = (v.get("mov"), v.get("asiento"))
+        if pair not in seen:
+            seen.add(pair)
+            unique.append(v)
+    with open(VETOES_PATH, "w", encoding="utf-8") as f:
+        json.dump(unique, f, ensure_ascii=False, indent=1)
 
 
-def _anular_cruce_datos(datos, match, lista):
-    """Deshace un cruce en un job serializado: el movimiento vuelve a 'Banco
-    sin contabilizar' y el asiento a su lista de pendientes según la hoja."""
-    datos[lista] = [m for m in datos[lista] if m is not match]
+def _undo_match(data, match, list_name):
+    """Undoes a match in a serialized job: the movement goes back to 'Banco sin
+    contabilizar' and the entry to its pending list according to its sheet."""
+    data[list_name] = [m for m in data[list_name] if m is not match]
     b, a = match["banco"], match["asiento"]
-    datos["banco_sin_contabilizar"].append(b)
-    datos["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
-    destino = "o_pendientes_sin_banco" if a.get("hoja") == "O" else "e_sin_banco"
-    datos[destino].append(a)
-    datos[destino].sort(key=lambda x: x.get("fecha") or "")
-    r = datos["resumen"]
-    r["conciliados_e"] = len(datos["conciliados_e"])
-    r["en_o_pendientes_confirmar"] = len(datos["conciliados_o"])
-    r["o_confirmados"] = sum(1 for m in datos["conciliados_o"] if m.get("confirmado"))
-    _recalcular_resumen(datos)
-    return destino
+    data["banco_sin_contabilizar"].append(b)
+    data["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
+    target = "o_pendientes_sin_banco" if a.get("hoja") == "O" else "e_sin_banco"
+    data[target].append(a)
+    data[target].sort(key=lambda x: x.get("fecha") or "")
+    r = data["resumen"]
+    r["conciliados_e"] = len(data["conciliados_e"])
+    r["en_o_pendientes_confirmar"] = len(data["conciliados_o"])
+    r["o_confirmados"] = sum(1 for m in data["conciliados_o"] if m.get("confirmado"))
+    _recompute_summary(data)
+    return target
 
 
-def _aplicar_vetos_datos(datos) -> int:
-    """Desarma en un job recién generado los cruces que el usuario vetó en
-    corridas anteriores. Devuelve cuántos desarmó."""
-    vetos = {(v.get("mov"), v.get("asiento")) for v in _cargar_vetos()}
-    if not vetos:
+def _apply_vetoes(data) -> int:
+    """In a freshly generated job, undoes the matches the user vetoed in
+    previous runs. Returns how many it undid."""
+    vetoes = {(v.get("mov"), v.get("asiento")) for v in _load_vetoes()}
+    if not vetoes:
         return 0
     n = 0
-    for lista in ("conciliados_e", "conciliados_o"):
-        for match in list(datos.get(lista, [])):
-            par = (_clave_mov_dict(match["banco"]),
-                   _clave_asiento_dict(match["asiento"]))
-            if par in vetos:
-                _anular_cruce_datos(datos, match, lista)
+    for list_name in ("conciliados_e", "conciliados_o"):
+        for match in list(data.get(list_name, [])):
+            pair = (_movement_key(match["banco"]),
+                    _entry_key(match["asiento"]))
+            if pair in vetoes:
+                _undo_match(data, match, list_name)
                 n += 1
     return n
 
 
 def _veto_id(v) -> str:
-    """Los vetos viejos no traen id: se deriva del par para poder borrarlos."""
+    """Old vetoes have no id: it's derived from the pair so they can be deleted."""
     return v.get("id") or hashlib.sha1(
         f'{v.get("mov")}|{v.get("asiento")}'.encode("utf-8")).hexdigest()[:12]
 
 
-def _veto_legible(v) -> dict:
-    """Abre las claves 'fecha|descripcion|neto|comprobante' y
-    'hoja|asiento|fecha|debe|haber' para mostrarlas en la interfaz."""
+def _readable_veto(v) -> dict:
+    """Opens the keys 'fecha|descripcion|neto|comprobante' and
+    'hoja|asiento|fecha|debe|haber' to show them in the UI."""
     def num(s):
         try:
             return float(s)
@@ -1017,226 +1016,227 @@ def _veto_legible(v) -> dict:
     a = (v.get("asiento") or "").split("|")
     mov = {"fecha": m[0] if m else "", "descripcion": "|".join(m[1:-2]) if len(m) >= 4 else "",
            "neto": num(m[-2]) if len(m) >= 4 else None, "comprobante": m[-1] if len(m) >= 4 else ""}
-    asiento = {"hoja": a[0] if a else "", "asiento": "|".join(a[1:-3]) if len(a) >= 5 else "",
-               "fecha": a[-3] if len(a) >= 5 else "", "debe": num(a[-2]) if len(a) >= 5 else None,
-               "haber": num(a[-1]) if len(a) >= 5 else None}
+    entry = {"hoja": a[0] if a else "", "asiento": "|".join(a[1:-3]) if len(a) >= 5 else "",
+             "fecha": a[-3] if len(a) >= 5 else "", "debe": num(a[-2]) if len(a) >= 5 else None,
+             "haber": num(a[-1]) if len(a) >= 5 else None}
     return {"id": _veto_id(v), "metodo": v.get("metodo"), "job": v.get("job"),
-            "fecha": v.get("fecha"), "mov": mov, "asiento": asiento}
+            "fecha": v.get("fecha"), "mov": mov, "asiento": entry}
 
 
 @app.get("/api/vetos")
-def api_vetos_listar():
-    """Cruces anulados por el usuario (vetos): pares que ninguna corrida
-    vuelve a proponer, para que se puedan ver y revertir."""
-    return {"vetos": [_veto_legible(v) for v in _cargar_vetos()]}
+def api_vetoes_list():
+    """Matches cancelled by the user (vetoes): pairs no run proposes again,
+    so they can be seen and reverted."""
+    return {"vetos": [_readable_veto(v) for v in _load_vetoes()]}
 
 
 @app.delete("/api/vetos/{veto_id}")
-def api_vetos_borrar(veto_id: str):
-    """Saca un veto: el par puede volver a cruzarse en la próxima corrida.
-    No toca los resultados ya guardados."""
-    vetos = _cargar_vetos()
-    quedan = [v for v in vetos if _veto_id(v) != veto_id]
-    if len(quedan) == len(vetos):
+def api_vetoes_delete(veto_id: str):
+    """Removes a veto: the pair can be matched again in the next run.
+    It doesn't touch the results already saved."""
+    vetoes = _load_vetoes()
+    remaining = [v for v in vetoes if _veto_id(v) != veto_id]
+    if len(remaining) == len(vetoes):
         return JSONResponse(status_code=404, content={"error": "Cruce anulado no encontrado"})
-    _guardar_vetos(quedan)
-    return {"vetos": [_veto_legible(v) for v in quedan]}
+    _save_vetoes(remaining)
+    return {"vetos": [_readable_veto(v) for v in remaining]}
 
 
-# --- reclasificaciones manuales: el usuario mueve un movimiento del banco
-# entre "Banco sin contabilizar", "Gastos bancarios" y "Haberes", explicando
-# el porqué. La decisión persiste por clave y se respeta en toda corrida
-# futura (pisa al detector automático).
-RUTA_RECLAS = os.path.join(DATOS_DIR, "reclasificaciones.json")
-DESTINOS_RECLAS = ("banco_sin_contabilizar", "gastos_bancarios",
-                   "haberes_sin_contabilizar")
+# --- manual reclassifications: the user moves a bank movement between "Banco
+# sin contabilizar", "Gastos bancarios" and "Haberes", explaining why. The
+# decision persists by key and is respected in every future run (it overrides
+# the automatic detector).
+RECLASSIFICATIONS_PATH = os.path.join(DATA_DIR, "reclasificaciones.json")
+RECLASSIFICATION_TARGETS = ("banco_sin_contabilizar", "gastos_bancarios",
+                            "haberes_sin_contabilizar")
 
 
-def _cargar_reclas() -> list:
-    if os.path.exists(RUTA_RECLAS):
+def _load_reclassifications() -> list:
+    if os.path.exists(RECLASSIFICATIONS_PATH):
         try:
-            with open(RUTA_RECLAS, encoding="utf-8") as f:
+            with open(RECLASSIFICATIONS_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return []
     return []
 
 
-def _guardar_reclas(items: list):
-    with open(RUTA_RECLAS, "w", encoding="utf-8") as f:
+def _save_reclassifications(items: list):
+    with open(RECLASSIFICATIONS_PATH, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=1)
 
 
-def _overrides_reclas() -> dict:
-    """clave de movimiento -> destino elegido (la última decisión gana)."""
-    return {r["mov"]: r["destino"] for r in _cargar_reclas()
-            if r.get("destino") in DESTINOS_RECLAS}
+def _reclassification_overrides() -> dict:
+    """movement key -> chosen target (the last decision wins)."""
+    return {r["mov"]: r["destino"] for r in _load_reclassifications()
+            if r.get("destino") in RECLASSIFICATION_TARGETS}
 
 
-# --- "ya lo cargué en el FBS": marca de control del operador ----------------
-# El cajero carga los movimientos en el FBS salteado (algunos los tiene que
-# resolver con otra persona) y necesita tachar lo hecho, como venía haciendo
-# en Excel. La marca NO mueve el movimiento de solapa: solo pinta la fila,
-# para que al volver a mirar sepa qué le falta. Vive por clave de movimiento,
-# así lo acompaña cuando se arrastra al día siguiente o se reprocesa el mes.
-RUTA_CARGADOS = os.path.join(DATOS_DIR, "cargados_fbs.json")
+# --- "I already loaded it in FBS": the operator's control mark ------------------
+# The cashier loads the movements in FBS out of order (some must be sorted
+# out with someone else) and needs to tick off what's done, as they used to in
+# Excel. The mark does NOT move the movement to another tab: it only paints the
+# row, so when they look again they know what's left. It lives by movement
+# key, so it goes along when it's carried over to the next day or the month
+# is reprocessed.
+LOADED_IN_FBS_PATH = os.path.join(DATA_DIR, "cargados_fbs.json")
 
 
-def _cargados_fbs() -> dict:
-    """clave de movimiento -> {fecha, nota}."""
-    if os.path.exists(RUTA_CARGADOS):
+def _loaded_in_fbs() -> dict:
+    """movement key -> {fecha, nota}."""
+    if os.path.exists(LOADED_IN_FBS_PATH):
         try:
-            with open(RUTA_CARGADOS, encoding="utf-8") as f:
+            with open(LOADED_IN_FBS_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
     return {}
 
 
-def _guardar_cargados(d: dict):
-    with open(RUTA_CARGADOS, "w", encoding="utf-8") as f:
+def _save_loaded_in_fbs(d: dict):
+    with open(LOADED_IN_FBS_PATH, "w", encoding="utf-8") as f:
         json.dump(d, f, ensure_ascii=False, indent=1)
 
 
-def _forzar_gastos_movs(movs):
-    """Pre-cruce: marca en los movimientos las reclasificaciones guardadas,
-    para que el matcher (y la ND mensual) clasifique según lo decidido."""
-    overrides = _overrides_reclas()
+def _force_fee_flags(movs):
+    """Before matching: flags the saved reclassifications on the movements, so
+    the matcher (and the monthly debit note) classifies as decided."""
+    overrides = _reclassification_overrides()
     if not overrides:
         return
     for m in movs:
-        ov = overrides.get(_clave_mov_obj(m))
+        ov = overrides.get(_movement_key_obj(m))
         if ov == "gastos_bancarios":
-            m._forzar_gasto = True
+            m._force_fee = True
         elif ov in ("banco_sin_contabilizar", "haberes_sin_contabilizar"):
-            m._forzar_gasto = False
+            m._force_fee = False
 
 
-def _cosechar_consumidos(prev: dict):
-    """Claves de todo lo ya conciliado/explicado en un job, en su estado
-    ACTUAL (incluye lo conciliado a mano después de la corrida)."""
-    movs, asientos = {}, {}
+def _harvest_consumed(prev: dict):
+    """Keys of everything already matched/explained in a job, in its CURRENT
+    state (including what was matched by hand after the run)."""
+    movs, entries = {}, {}
 
     def add(d, k):
         d[k] = d.get(k, 0) + 1
 
     for m in prev.get("conciliados_e", []) + prev.get("conciliados_o", []):
-        add(movs, _clave_mov_dict(m["banco"]))
-        add(asientos, _clave_asiento_dict(m["asiento"]))
+        add(movs, _movement_key(m["banco"]))
+        add(entries, _entry_key(m["asiento"]))
     for m in prev.get("conciliados_manual", []):
         for b in m.get("banco", []):
-            add(movs, _clave_mov_dict(b))
+            add(movs, _movement_key(b))
         for a in m.get("mayor", []):
-            add(asientos, _clave_asiento_dict(a))
+            add(entries, _entry_key(a))
     for b in prev.get("gastos_bancarios", []):
-        add(movs, _clave_mov_dict(b))
+        add(movs, _movement_key(b))
     for p in prev.get("nota_debito", []):
         for a in p.get("asientos_mayor", []):
-            add(asientos, _clave_asiento_dict(a))
+            add(entries, _entry_key(a))
     for p in prev.get("contraasientos", []):
-        add(asientos, _clave_asiento_dict(p["debe"]))
-        add(asientos, _clave_asiento_dict(p["haber"]))
+        add(entries, _entry_key(p["debe"]))
+        add(entries, _entry_key(p["haber"]))
     for e in prev.get("excluidos_mayor", []):
         for a in e.get("mayor", []):
-            add(asientos, _clave_asiento_dict(a))
-    return movs, asientos
+            add(entries, _entry_key(a))
+    return movs, entries
 
 
-def _procesar_confirmaciones(prev, g):
-    """Cierra el ciclo O -> E entre corridas diarias.
+def _process_confirmations(prev, g):
+    """Closes the O -> E cycle between daily runs.
 
-    Los movimientos que en la corrida anterior quedaron "conciliados contra O,
-    pendientes de confirmar" se arrastran esperando su confirmación: si en los
-    archivos de hoy aparece su asiento en la cuenta E (ya se cargaron en FBS),
-    pasan DIRECTO a Conciliados (E) y se cancela la contrapartida que la
-    confirmación generó en O. Si todavía no se confirmaron, siguen figurando
-    como pendientes de confirmar.
+    The movements that in the previous run were left "matched against O,
+    pending confirmation" are carried over waiting for their confirmation: if
+    today's files have their entry in account E (they were loaded in FBS),
+    they go STRAIGHT to Conciliados (E) and the counter-entry the confirmation
+    created in O is cancelled. If they're not confirmed yet, they still show
+    as pending confirmation.
 
-    Devuelve (confirmados_e, pendientes_o_arrastrados, contrapartidas_canceladas)."""
+    Returns (confirmed_e, carried_o_pending, cancelled_counter_entries)."""
     from engine import matcher as matcher_mod
 
-    esperando = list((prev or {}).get("conciliados_o") or [])
-    if not esperando or not g["e"]:
-        return [], esperando, 0
+    waiting = list((prev or {}).get("conciliados_o") or [])
+    if not waiting or not g["e"]:
+        return [], waiting, 0
 
-    # La confirmación es ESTRICTA: en el FES, confirmar una orden replica en
-    # la cuenta E la referencia, el importe y el lado del asiento O original.
-    # Solo eso cuenta como confirmación — nada de "importe único" ni fechas
-    # cercanas, que confirmaban contra asientos ajenos del mismo importe
-    # (p. ej. una pata de una transferencia interna) y los consumían para
-    # siempre vía la memoria de conciliados.
-    def _claves(aso_ref, aso_com):
-        rm = matcher_mod._clave_rm(aso_com or "")
-        ref = (aso_ref or "").strip().upper()
+    # The confirmation is STRICT: in FES, confirming an order replicates in
+    # account E the reference, the amount and the side of the original O
+    # entry. Only that counts as a confirmation — no "unique amount" or close
+    # dates, which confirmed against someone else's entries of the same amount
+    # (e.g. one leg of an internal transfer) and consumed them forever through
+    # the matched memory.
+    def _keys(entry_ref, entry_comment):
+        rm = matcher_mod._rm_key(entry_comment or "")
+        ref = (entry_ref or "").strip().upper()
         return {c for c in (rm, ref) if c}
 
-    confirmados, idx_conf, canceladas = [], set(), 0
-    usados_e = set()
-    for i, ent in enumerate(esperando):
-        aso = ent.get("asiento") or {}
-        claves_o = _claves(aso.get("referencia"), aso.get("comentario"))
-        if not claves_o:
-            continue      # sin referencia no hay confirmación automática
-        importe = round((aso.get("debe") or 0) or (aso.get("haber") or 0), 2)
-        lado_original = "debe" if (aso.get("debe") or 0) else "haber"
-        econf = next(
+    confirmed, confirmed_idx, cancelled = [], set(), 0
+    used_e = set()
+    for i, item in enumerate(waiting):
+        entry = item.get("asiento") or {}
+        o_keys = _keys(entry.get("referencia"), entry.get("comentario"))
+        if not o_keys:
+            continue      # without a reference there is no automatic confirmation
+        amount = round((entry.get("debe") or 0) or (entry.get("haber") or 0), 2)
+        original_side = "debe" if (entry.get("debe") or 0) else "haber"
+        e_conf = next(
             (a for a in g["e"]
-             if a.id not in usados_e and a.lado == lado_original
-             and round(a.importe, 2) == importe
-             and _claves(a.referencia, a.comentario) & claves_o), None)
-        if econf is None:
+             if a.id not in used_e and a.side == original_side
+             and round(a.amount, 2) == amount
+             and _keys(a.reference, a.comment) & o_keys), None)
+        if e_conf is None:
             continue
-        usados_e.add(econf.id)
-        idx_conf.add(i)
-        confirmados.append({
-            "banco": ent["banco"], "asiento": econf.to_dict(),
+        used_e.add(e_conf.id)
+        confirmed_idx.add(i)
+        confirmed.append({
+            "banco": item["banco"], "asiento": e_conf.to_dict(),
             "metodo": "confirmado en E (venía conciliado contra O)",
         })
-        # la confirmación genera una contrapartida en O: cancelarla del pool
+        # the confirmation creates a counter-entry in O: cancel it from the pool
         for j, a in enumerate(g["o"]):
-            if (a.lado != lado_original and round(a.importe, 2) == importe
-                    and _claves(a.referencia, a.comentario) & claves_o):
+            if (a.side != original_side and round(a.amount, 2) == amount
+                    and _keys(a.reference, a.comment) & o_keys):
                 del g["o"][j]
-                canceladas += 1
+                cancelled += 1
                 break
-    g["e"][:] = [a for a in g["e"] if a.id not in usados_e]
+    g["e"][:] = [a for a in g["e"] if a.id not in used_e]
 
-    pendientes = []
-    for i, ent in enumerate(esperando):
-        if i in idx_conf:
+    pending = []
+    for i, item in enumerate(waiting):
+        if i in confirmed_idx:
             continue
-        metodo = ent.get("metodo") or ""
-        if "arrastrado" not in metodo:
-            ent = {**ent, "metodo": (metodo + " · arrastrado").strip(" ·")}
-        pendientes.append(ent)
-    return confirmados, pendientes, canceladas
+        method = item.get("metodo") or ""
+        if "arrastrado" not in method:
+            item = {**item, "metodo": (method + " · arrastrado").strip(" ·")}
+        pending.append(item)
+    return confirmed, pending, cancelled
 
 
-def _cobertura_mayor(movs, rango_mayor):
-    """El mayor se trae por rango de fechas: lo que el banco tiene FUERA de ese
-    rango no tiene contra qué cruzar. No es que falte el asiento en el FBS —
-    es que no se trajo. Devuelve None si el mayor cubre todo el extracto.
+def _ledger_coverage(movs, ledger_range):
+    """The ledger is pulled by date range: what the bank has OUTSIDE that range
+    has nothing to match against. It's not that the entry is missing in FBS —
+    it wasn't pulled. Returns None if the ledger covers the whole statement.
 
-    El rango del mayor sale de los archivos/traídas de HOY (no de los asientos
-    que sobrevivieron a la memoria de conciliados: si el mayor de hoy ya estaba
-    todo conciliado, el rango igual se trajo).
+    The ledger range comes from TODAY's files/pulls (not from the entries that
+    survived the matched memory: if today's ledger was already all matched,
+    the range was still pulled).
 
-    Del lado de adelante se toleran 2 días: es normal que los últimos
-    movimientos del banco todavía no tengan asiento cargado."""
-    d1, d2 = rango_mayor
-    fb = [m.fecha for m in movs if m.fecha]
+    On the forward side 2 days are tolerated: it's normal for the bank's last
+    movements not to have an entry loaded yet."""
+    d1, d2 = ledger_range
+    fb = [m.date for m in movs if m.date]
     if not d1 or not d2 or not fb:
         return None
-    antes = sum(1 for m in movs if m.fecha and m.fecha < d1)
-    despues = sum(1 for m in movs if m.fecha and (m.fecha - d2).days > 2)
-    if not antes and not despues:
+    before = sum(1 for m in movs if m.date and m.date < d1)
+    after = sum(1 for m in movs if m.date and (m.date - d2).days > 2)
+    if not before and not after:
         return None
     return {"mayor_desde": d1.isoformat(), "mayor_hasta": d2.isoformat(),
             "banco_desde": min(fb).isoformat(), "banco_hasta": max(fb).isoformat(),
-            "antes": antes, "despues": despues, "fuera": antes + despues}
+            "antes": before, "despues": after, "fuera": before + after}
 
 
-def _resumen_mini(r):
+def _mini_summary(r):
     return {
         "movimientos_banco": r["movimientos_banco"],
         "conciliados": r["conciliados_e"] + r["en_o_pendientes_confirmar"]
@@ -1253,299 +1253,300 @@ def _resumen_mini(r):
 
 
 @app.post("/api/diario/conciliar/{staging_id}")
-def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
-    """Modo diario, paso 2: con las asignaciones archivo→cuenta confirmadas,
-    corre una conciliación por cuenta (mismo motor y mismos aprendizajes que
-    el modo mensual) y devuelve el tablero del día."""
+def api_daily_reconcile(staging_id: str, body: dict = Body(...)):
+    """Daily mode, step 2: with the file→account assignments confirmed, runs
+    one reconciliation per account (same engine and same learning as the
+    monthly mode) and returns the day's board."""
     stag = STAGING.get(staging_id)
     if not stag:
         return JSONResponse(status_code=404, content={
             "error": "La identificación expiró (el servidor se reinició). Volvé a subir los archivos."})
-    asignaciones = cuerpo.get("asignaciones") or {}
-    cuentas = cuentas_mod.cargar()
-    por_id = {c["id"]: c for c in cuentas}
-    # el id del tablero se conoce de entrada: cada job guarda a qué corrida
-    # diaria pertenece, así su detalle sabe volver al tablero del día
-    grupo_id = uuid.uuid4().hex[:10]
+    assignments = body.get("asignaciones") or {}
+    accounts = accounts_mod.load()
+    by_id = {c["id"]: c for c in accounts}
+    # the board id is known from the start: each job stores which daily run it
+    # belongs to, so its detail knows how to go back to the day's board
+    run_id = uuid.uuid4().hex[:10]
 
-    # agrupar archivos por cuenta y aprender mapeos FBS nuevos
-    grupos = {}
-    sin_asignar = []
-    for fila in stag["resumen"]:
-        nombre = fila["archivo"]
-        cid = asignaciones.get(nombre, fila.get("cuenta_id"))
-        if not cid or cid == "ignorar" or fila["tipo"] == "desconocido":
-            sin_asignar.append({"archivo": nombre, "tipo": fila["tipo"],
-                                "motivo": fila.get("error") or "sin cuenta asignada"})
+    # group files by account and learn new FBS mappings
+    groups = {}
+    unassigned = []
+    for row in stag["resumen"]:
+        name = row["archivo"]
+        cid = assignments.get(name, row.get("cuenta_id"))
+        if not cid or cid == "ignorar" or row["tipo"] == "desconocido":
+            unassigned.append({"archivo": name, "tipo": row["tipo"],
+                               "motivo": row.get("error") or "sin cuenta asignada"})
             continue
-        info = stag["archivos"][nombre]
-        g = grupos.setdefault(cid, {"movs": [], "e": [], "o": [], "archivos": [],
+        info = stag["archivos"][name]
+        g = groups.setdefault(cid, {"movs": [], "e": [], "o": [], "archivos": [],
                                     "mayor_fechas": []})
-        g["archivos"].append(nombre)
-        if fila["tipo"] == "extracto":
+        g["archivos"].append(name)
+        if row["tipo"] == "extracto":
             g["movs"].extend(info["movimientos"])
         else:
-            # qué rango de fechas trajo el mayor de hoy (para avisar si se
-            # quedó corto contra el extracto)
-            g["mayor_fechas"] += [date.fromisoformat(fila[k]) for k in ("desde", "hasta")
-                                  if fila.get(k)]
-            # un archivo FBS puede traer la hoja E, la O, o las dos juntas
-            g["e"].extend(a for a in info["asientos"] if a.hoja == "E")
-            g["o"].extend(a for a in info["asientos"] if a.hoja == "O")
-            cods = info.get("codigos") or {}
-            if por_id.get(cid):
-                for letra in set(info.get("hoja") or "E") & {"E", "O"}:
-                    ident = cods.get(letra) or fila.get("nombre_fbs")
-                    if ident and ident not in (por_id[cid].get("fbs_e"),
-                                               por_id[cid].get("fbs_o")):
-                        cuentas = cuentas_mod.mapear_fbs(cid, letra, ident,
-                                                         fila.get("nombre_fbs"))
-                por_id = {c["id"]: c for c in cuentas}
+            # which date range today's ledger brought (to warn if it falls
+            # short of the statement)
+            g["mayor_fechas"] += [date.fromisoformat(row[k]) for k in ("desde", "hasta")
+                                  if row.get(k)]
+            # an FBS file can carry sheet E, sheet O, or both together
+            g["e"].extend(a for a in info["asientos"] if a.sheet == "E")
+            g["o"].extend(a for a in info["asientos"] if a.sheet == "O")
+            codes = info.get("codigos") or {}
+            if by_id.get(cid):
+                for letter in set(info.get("hoja") or "E") & {"E", "O"}:
+                    ident = codes.get(letter) or row.get("nombre_fbs")
+                    if ident and ident not in (by_id[cid].get("fbs_e"),
+                                               by_id[cid].get("fbs_o")):
+                        accounts = accounts_mod.map_fbs(cid, letter, ident,
+                                                        row.get("nombre_fbs"))
+                by_id = {c["id"]: c for c in accounts}
 
-    reglas = reglas_mod.cargar()
-    equivalencias = eq_mod.cargar()
-    terminos_gasto = gastos_conf.cargar()
+    rules = rules_mod.load()
+    equivalence_pairs = equivalences.load()
+    user_fee_terms = fee_terms.load()
 
-    arrastre = _cargar_arrastre()
-    memoria = _cargar_memoria()
-    tablero = []
-    for cid, g in grupos.items():
-        etiqueta = cuentas_mod.etiqueta(por_id[cid]) if cid in por_id else cid
+    carry_over = _load_carry_over()
+    memory = _load_memory()
+    board = []
+    for cid, g in groups.items():
+        label = accounts_mod.label(by_id[cid]) if cid in by_id else cid
 
-        # memoria de conciliados: sumar lo consumido por la corrida anterior
-        # (en su estado actual, manuales incluidos) y omitir las repeticiones
-        # que traigan los archivos acumulativos de hoy
-        mem = memoria.setdefault(cid, {"movs": {}, "asientos": {}, "jobs": []})
+        # matched memory: add what the previous run consumed (in its current
+        # state, manual matches included) and skip the repetitions today's
+        # cumulative files bring
+        mem = memory.setdefault(cid, {"movs": {}, "asientos": {}, "jobs": []})
         mem.setdefault("jobs", [])
-        prev_id = arrastre.get(cid)
-        prev = _obtener(prev_id or "")
-        if prev and prev_id not in mem["jobs"]:   # cada corrida se cosecha una sola vez
-            c_movs, c_asientos = _cosechar_consumidos(prev)
+        prev_id = carry_over.get(cid)
+        prev = _get_job(prev_id or "")
+        if prev and prev_id not in mem["jobs"]:   # each run is harvested only once
+            c_movs, c_entries = _harvest_consumed(prev)
             for k, n in c_movs.items():
                 mem["movs"][k] = mem["movs"].get(k, 0) + n
-            for k, n in c_asientos.items():
+            for k, n in c_entries.items():
                 mem["asientos"][k] = mem["asientos"].get(k, 0) + n
             mem["jobs"].append(prev_id)
 
-        om_movs = om_asientos = 0
-        usados_mem = {}
-        # NUNCA se suprimen filas repetidas: dos impuestos o comisiones idénticos
-        # son movimientos reales. Lo único que se omite es lo que la memoria de
-        # conciliados registró como ya consumido en corridas anteriores (y solo
-        # tantas veces como se consumió).
+        skipped_movs = skipped_entries = 0
+        used_mem = {}
+        # Repeated rows are NEVER suppressed: two identical taxes or
+        # commissions are real movements. The only thing skipped is what the
+        # matched memory recorded as already consumed in previous runs (and
+        # only as many times as it was consumed).
         movs = []
-        for m in sorted(g["movs"], key=lambda x: (x.fecha or date.min, x.id)):
-            k = _clave_mov_obj(m)
-            if usados_mem.get(k, 0) < mem["movs"].get(k, 0):
-                usados_mem[k] = usados_mem.get(k, 0) + 1
-                om_movs += 1
+        for m in sorted(g["movs"], key=lambda x: (x.date or date.min, x.id)):
+            k = _movement_key_obj(m)
+            if used_mem.get(k, 0) < mem["movs"].get(k, 0):
+                used_mem[k] = used_mem.get(k, 0) + 1
+                skipped_movs += 1
                 continue
             m.id = f"B#{len(movs) + 1}"
             movs.append(m)
-        usados_mem = {}
-        for lado in ("e", "o"):
-            filtrados = []
-            for a in g[lado]:
-                k = _clave_asiento_obj(a)
-                if usados_mem.get(k, 0) < mem["asientos"].get(k, 0):
-                    usados_mem[k] = usados_mem.get(k, 0) + 1
-                    om_asientos += 1
+        used_mem = {}
+        for side in ("e", "o"):
+            kept = []
+            for a in g[side]:
+                k = _entry_key_obj(a)
+                if used_mem.get(k, 0) < mem["asientos"].get(k, 0):
+                    used_mem[k] = used_mem.get(k, 0) + 1
+                    skipped_entries += 1
                     continue
-                filtrados.append(a)
-            g[lado] = filtrados
-        # ciclo O -> E: lo conciliado contra O en la corrida anterior espera su
-        # confirmación; si el E de hoy la trae, pasa directo a Conciliados (E)
-        conf_e, carried_o, contrap_cancel = _procesar_confirmaciones(prev, g)
+                kept.append(a)
+            g[side] = kept
+        # O -> E cycle: what was matched against O in the previous run waits
+        # for its confirmation; if today's E has it, it goes straight to
+        # Conciliados (E)
+        confirmed_e, carried_o, cancelled_counter = _process_confirmations(prev, g)
 
-        # ¿el mayor que se trajo cubre las fechas del extracto? Se mira ANTES
-        # del arrastre: lo arrastrado trae asientos viejos y taparía el hueco.
-        fm = g.get("mayor_fechas") or []
-        pedido = stag.get("rango_fbs")
-        if fm and pedido:      # el mayor vino del FBS directo: vale lo pedido
-            fm = [date.fromisoformat(pedido[0]), date.fromisoformat(pedido[1])]
-        cobertura = _cobertura_mayor(movs, (min(fm), max(fm)) if fm else (None, None))
+        # does the pulled ledger cover the statement's dates? Checked BEFORE
+        # the carry-over: carried entries are old and would hide the gap.
+        ledger_dates = g.get("mayor_fechas") or []
+        requested = stag.get("rango_fbs")
+        if ledger_dates and requested:      # the ledger came straight from FBS: the request counts
+            ledger_dates = [date.fromisoformat(requested[0]), date.fromisoformat(requested[1])]
+        coverage = _ledger_coverage(movs, (min(ledger_dates), max(ledger_dates)) if ledger_dates else (None, None))
 
-        # arrastre: los pendientes de la conciliación anterior de esta cuenta
-        # entran al cruce de hoy (lo de ayer aparece en el FBS de hoy y viceversa)
-        arr_movs, arr_asientos = _aplicar_arrastre(cid, movs, g, arrastre)
+        # carry-over: the pending items of this account's previous
+        # reconciliation join today's matching (yesterday's shows up in
+        # today's FBS and the other way around)
+        carried_movs, carried_entries = _apply_carry_over(cid, movs, g, carry_over)
         if not movs:
-            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_extracto",
-                            "archivos": g["archivos"]})
+            board.append({"cuenta_id": cid, "etiqueta": label, "estado": "sin_extracto",
+                          "archivos": g["archivos"]})
             continue
         if not g["e"] and not g["o"]:
-            tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "sin_fbs",
-                            "archivos": g["archivos"],
-                            "resumen": {"movimientos_banco": len(movs)}})
+            board.append({"cuenta_id": cid, "etiqueta": label, "estado": "sin_fbs",
+                          "archivos": g["archivos"],
+                          "resumen": {"movimientos_banco": len(movs)}})
             continue
-        _forzar_gastos_movs(movs)
-        resultado = conciliar(movs, g["e"], g["o"], reglas_aprendidas=reglas,
-                              equivalencias=equivalencias, terminos_gasto=terminos_gasto,
-                              excepciones_gasto=gastos_conf.cargar_excepciones())
-        # período cubierto por los extractos de HOY (sin contar los arrastrados,
-        # que traen fechas de días anteriores)
-        fechas = [m.fecha for m in movs if m.fecha and m.id.startswith("B#")]
-        extractos_meta = [{"archivo": ", ".join(g["archivos"]),
-                           "desde": min(fechas) if fechas else None,
-                           "hasta": max(fechas) if fechas else None}]
+        _force_fee_flags(movs)
+        result = reconcile(movs, g["e"], g["o"], learned_rules=rules,
+                           equivalence_pairs=equivalence_pairs, user_fee_terms=user_fee_terms,
+                           fee_exceptions=fee_terms.load_exceptions())
+        # period covered by TODAY's statements (not counting the carried ones,
+        # which bring dates of previous days)
+        dates = [m.date for m in movs if m.date and m.id.startswith("B#")]
+        statements_meta = [{"archivo": ", ".join(g["archivos"]),
+                            "desde": min(dates) if dates else None,
+                            "hasta": max(dates) if dates else None}]
         job_id = uuid.uuid4().hex[:12]
-        salida = _serializar(resultado, extractos_meta, [], "desactivada")
-        salida["conciliados_manual"] = []
-        salida["resumen"]["conciliados_manual"] = 0
-        salida["resumen"]["reglas_disponibles"] = len(reglas)
-        salida["job_id"] = job_id
-        salida["cuenta"] = {"id": cid, "etiqueta": etiqueta}
-        salida["grupo_diario"] = grupo_id
-        if cobertura:
-            salida["cobertura_mayor"] = cobertura
-        # ciclo O -> E: sumar confirmados y arrastrar los que siguen pendientes
-        if conf_e or carried_o:
-            salida["conciliados_e"].extend(conf_e)
-            salida["conciliados_o"].extend(carried_o)
-            r = salida["resumen"]
-            r["conciliados_e"] += len(conf_e)
+        out = _serialize(result, statements_meta, [], "desactivada")
+        out["conciliados_manual"] = []
+        out["resumen"]["conciliados_manual"] = 0
+        out["resumen"]["reglas_disponibles"] = len(rules)
+        out["job_id"] = job_id
+        out["cuenta"] = {"id": cid, "etiqueta": label}
+        out["grupo_diario"] = run_id
+        if coverage:
+            out["cobertura_mayor"] = coverage
+        # O -> E cycle: add the confirmed ones and carry those still pending
+        if confirmed_e or carried_o:
+            out["conciliados_e"].extend(confirmed_e)
+            out["conciliados_o"].extend(carried_o)
+            r = out["resumen"]
+            r["conciliados_e"] += len(confirmed_e)
             r["en_o_pendientes_confirmar"] += len(carried_o)
-            r["confirmados_desde_o"] = len(conf_e)
-            r["contrapartidas_o_canceladas"] = contrap_cancel
-            r["movimientos_banco"] += len(conf_e) + len(carried_o)
-            conc = r["conciliados_e"] + r["en_o_pendientes_confirmar"]
+            r["confirmados_desde_o"] = len(confirmed_e)
+            r["contrapartidas_o_canceladas"] = cancelled_counter
+            r["movimientos_banco"] += len(confirmed_e) + len(carried_o)
+            matched = r["conciliados_e"] + r["en_o_pendientes_confirmar"]
             r["porcentaje_conciliado"] = round(
-                100.0 * conc / max(1, r["movimientos_banco"]), 1)
+                100.0 * matched / max(1, r["movimientos_banco"]), 1)
             r["porcentaje_explicado"] = round(min(100.0,
-                100.0 * (conc + r.get("gastos_explicados", 0))
+                100.0 * (matched + r.get("gastos_explicados", 0))
                 / max(1, r["movimientos_banco"])), 1)
 
-        # de qué job venía la cadena de esta cuenta (para poder deshacer corridas)
-        salida["arrastre_desde"] = arrastre.get(cid)
-        if om_movs or om_asientos:
-            salida["memoria_omitidos"] = {"movimientos": om_movs, "asientos": om_asientos}
-            salida["resumen"]["omitidos"] = om_movs + om_asientos
-        salida["cruces_vetados"] = _aplicar_vetos_datos(salida)
-        _recalcular_resumen(salida)   # etiqueta haberes y separa sus contadores
-        analisis_mod.anotar_residuales(salida)
-        if arr_movs or arr_asientos:
-            salida["arrastre"] = {"movimientos": arr_movs, "asientos": arr_asientos,
-                                  "desde_job": arrastre.get(cid)}
-            salida["resumen"]["arrastrados"] = arr_movs + arr_asientos
-            salida["resumen"]["arrastrados_movs"] = arr_movs
-            salida["resumen"]["arrastrados_asientos"] = arr_asientos
-        RESULTADOS[job_id] = salida
-        _guardar(job_id)
-        arrastre[cid] = job_id   # la próxima conciliación arrastra desde acá
-        tablero.append({"cuenta_id": cid, "etiqueta": etiqueta, "estado": "ok",
-                        "job_id": job_id, "archivos": g["archivos"],
-                        "desde": fechas and min(fechas).isoformat() or None,
-                        "hasta": fechas and max(fechas).isoformat() or None,
-                        "cobertura_mayor": cobertura,
-                        "resumen": _resumen_mini(salida["resumen"])})
+        # which job this account's chain came from (to be able to undo runs)
+        out["arrastre_desde"] = carry_over.get(cid)
+        if skipped_movs or skipped_entries:
+            out["memoria_omitidos"] = {"movimientos": skipped_movs, "asientos": skipped_entries}
+            out["resumen"]["omitidos"] = skipped_movs + skipped_entries
+        out["cruces_vetados"] = _apply_vetoes(out)
+        _recompute_summary(out)   # tags payroll and splits its counters
+        analysis.annotate_residuals(out)
+        if carried_movs or carried_entries:
+            out["arrastre"] = {"movimientos": carried_movs, "asientos": carried_entries,
+                               "desde_job": carry_over.get(cid)}
+            out["resumen"]["arrastrados"] = carried_movs + carried_entries
+            out["resumen"]["arrastrados_movs"] = carried_movs
+            out["resumen"]["arrastrados_asientos"] = carried_entries
+        RESULTS[job_id] = out
+        _save_job(job_id)
+        carry_over[cid] = job_id   # the next reconciliation carries over from here
+        board.append({"cuenta_id": cid, "etiqueta": label, "estado": "ok",
+                      "job_id": job_id, "archivos": g["archivos"],
+                      "desde": dates and min(dates).isoformat() or None,
+                      "hasta": dates and max(dates).isoformat() or None,
+                      "cobertura_mayor": coverage,
+                      "resumen": _mini_summary(out["resumen"])})
 
-    _guardar_arrastre(arrastre)
-    _guardar_memoria(memoria)
-    grupo = {"grupo_id": grupo_id, "procesado": date.today().isoformat(),
-             "hora": time.strftime("%H:%M"),
-             "marca": stag.get("marca"),
-             "cuentas": sorted(tablero, key=lambda x: x["etiqueta"]),
-             "sin_asignar": sin_asignar}
-    with open(os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json"), "w", encoding="utf-8") as f:
-        json.dump(grupo, f, ensure_ascii=False)
+    _save_carry_over(carry_over)
+    _save_memory(memory)
+    run = {"grupo_id": run_id, "procesado": date.today().isoformat(),
+           "hora": time.strftime("%H:%M"),
+           "marca": stag.get("marca"),
+           "cuentas": sorted(board, key=lambda x: x["etiqueta"]),
+           "sin_asignar": unassigned}
+    with open(os.path.join(DATA_DIR, f"grupo_{run_id}.json"), "w", encoding="utf-8") as f:
+        json.dump(run, f, ensure_ascii=False)
     STAGING.pop(staging_id, None)
-    return grupo
+    return run
 
 
 @app.get("/api/diario")
-def api_diario_historial(marca: str = ""):
-    """La memoria diaria: todas las conciliaciones diarias guardadas, de la
-    más reciente a la más vieja, con su resumen. Los tableros nunca se borran
-    y los pendientes encadenan cada día con el siguiente.
+def api_daily_history(marca: str = ""):
+    """The daily memory: every saved daily reconciliation, newest first, with
+    its summary. Boards are never deleted and the pending items chain each
+    day to the next.
 
-    Con ?marca= se listan solo las corridas de esa marca. El filtro no depende
-    de cómo estén hoy las marcas y las cuentas en el hub: la marca se compara
-    tolerando renombres (misma_marca) y las cuentas por número, no por el id
-    completo (que cambia si renombran el banco). Una corrida que no es de
-    ninguna marca conocida se muestra igual, para no perderla de vista."""
-    todas = cuentas_mod.cargar() if marca else []
-    nums_marca = {cuentas_mod.numero_cuenta(c["id"])
-                  for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
-    nums_otras = ({cuentas_mod.numero_cuenta(c["id"]) for c in todas} - {""}) - nums_marca
-    marcas_hoy = cuentas_mod.marcas_con_cuentas(todas)
+    With ?marca= only that brand's runs are listed. The filter doesn't depend
+    on how brands and accounts are in the hub today: the brand is compared
+    tolerating renames (same_brand) and the accounts by number, not by the
+    full id (which changes if the bank is renamed). A run that belongs to no
+    known brand is shown anyway, so it isn't lost from sight."""
+    everything = accounts_mod.load() if marca else []
+    brand_numbers = {accounts_mod.account_number(c["id"])
+                     for c in accounts_mod.filter_brand(everything, marca)} - {""}
+    other_numbers = ({accounts_mod.account_number(c["id"]) for c in everything} - {""}) - brand_numbers
+    brands_today = accounts_mod.brands_with_accounts(everything)
 
-    def _de_esta_marca(g: dict, cuentas: list) -> bool:
-        nums = {cuentas_mod.numero_cuenta(c.get("cuenta_id")) for c in cuentas} - {""}
-        if cuentas_mod.misma_marca(g.get("marca"), marca) or (nums & nums_marca):
+    def _of_this_brand(g: dict, accounts: list) -> bool:
+        nums = {accounts_mod.account_number(c.get("cuenta_id")) for c in accounts} - {""}
+        if accounts_mod.same_brand(g.get("marca"), marca) or (nums & brand_numbers):
             return True
-        if nums & nums_otras:                       # sus cuentas son de otra marca
+        if nums & other_numbers:                       # its accounts belong to another brand
             return False
-        # sin cuentas reconocibles: se esconde solo si dice ser de otra marca
-        # que hoy existe; si no, es huérfana y se muestra
-        return not any(cuentas_mod.misma_marca(g.get("marca"), m) for m in marcas_hoy)
-    grupos = []
-    for nombre in os.listdir(DATOS_DIR):
-        if not (nombre.startswith("grupo_") and nombre.endswith(".json")):
+        # no recognizable accounts: hidden only if it claims to be of another
+        # brand that exists today; otherwise it's an orphan and is shown
+        return not any(accounts_mod.same_brand(g.get("marca"), m) for m in brands_today)
+    runs = []
+    for name in os.listdir(DATA_DIR):
+        if not (name.startswith("grupo_") and name.endswith(".json")):
             continue
-        ruta = os.path.join(DATOS_DIR, nombre)
+        path = os.path.join(DATA_DIR, name)
         try:
-            with open(ruta, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 g = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
-        cuentas = g.get("cuentas", [])
-        if marca and not _de_esta_marca(g, cuentas):
+        accounts = g.get("cuentas", [])
+        if marca and not _of_this_brand(g, accounts):
             continue
-        ok = [c for c in cuentas if c.get("estado") == "ok"]
+        ok = [c for c in accounts if c.get("estado") == "ok"]
         def r(c, k):
             return (c.get("resumen") or {}).get(k) or 0
-        expl = [c["resumen"]["porcentaje_explicado"] for c in ok
-                if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
-        fechas_mov = [c.get(k) for c in cuentas for k in ("desde", "hasta") if c.get(k)]
-        grupos.append({
-            "desde": min(fechas_mov) if fechas_mov else None,
-            "hasta": max(fechas_mov) if fechas_mov else None,
+        explained = [c["resumen"]["porcentaje_explicado"] for c in ok
+                     if (c.get("resumen") or {}).get("porcentaje_explicado") is not None]
+        mov_dates = [c.get(k) for c in accounts for k in ("desde", "hasta") if c.get(k)]
+        runs.append({
+            "desde": min(mov_dates) if mov_dates else None,
+            "hasta": max(mov_dates) if mov_dates else None,
             "grupo_id": g.get("grupo_id"), "marca": g.get("marca"),
-            "bancos": sorted({cuentas_mod.banco_de(c.get("cuenta_id"))
-                              for c in cuentas if c.get("cuenta_id")} - {""}),
+            "bancos": sorted({accounts_mod.bank_name(c.get("cuenta_id"))
+                              for c in accounts if c.get("cuenta_id")} - {""}),
             "procesado": g.get("procesado"), "hora": g.get("hora"),
-            "cuentas": len(cuentas), "conciliadas": len(ok),
-            "incompletas": len(cuentas) - len(ok),
+            "cuentas": len(accounts), "conciliadas": len(ok),
+            "incompletas": len(accounts) - len(ok),
             "movimientos": sum(r(c, "movimientos_banco") for c in ok),
             "arrastrados": sum(r(c, "arrastrados") for c in ok),
             "pendientes": sum(r(c, "banco_sin_contabilizar") + r(c, "mayor_sin_banco")
                               for c in ok),
-            "explicado_promedio": round(sum(expl) / len(expl), 1) if expl else None,
-            "_orden": os.path.getmtime(ruta),
+            "explicado_promedio": round(sum(explained) / len(explained), 1) if explained else None,
+            "_orden": os.path.getmtime(path),
         })
-    grupos.sort(key=lambda x: x["_orden"], reverse=True)
-    for g in grupos:
+    runs.sort(key=lambda x: x["_orden"], reverse=True)
+    for g in runs:
         g.pop("_orden")
-    return {"grupos": grupos}
+    return {"grupos": runs}
 
 
-def _filas_conciliadas(datos: dict) -> list[dict]:
-    """Todo lo que una conciliación dio por resuelto, como filas planas
-    banco <-> asiento. Es lo que la memoria de conciliados da por consumido:
-    por eso un movimiento ya cruzado no vuelve a aparecer en las corridas
-    siguientes."""
-    filas = []
+def _matched_rows(data: dict) -> list[dict]:
+    """Everything a reconciliation considered solved, as flat bank <-> entry
+    rows. It's what the matched memory takes as consumed: that's why an
+    already matched movement doesn't show up again in the following runs."""
+    rows = []
 
-    def fila(tipo, metodo, banco=None, asiento=None):
-        filas.append({"tipo": tipo, "metodo": metodo,
-                      "banco": banco, "asiento": asiento})
+    def row(kind, method, bank=None, entry=None):
+        rows.append({"tipo": kind, "metodo": method,
+                     "banco": bank, "asiento": entry})
 
-    for m in datos.get("conciliados_e", []):
-        fila("Cruzado con la cuenta E", m.get("metodo"), m.get("banco"), m.get("asiento"))
-    for m in datos.get("conciliados_o", []):
-        fila("Conciliado contra la O" + (" (confirmado)" if m.get("confirmado") else ""),
-             m.get("metodo"), m.get("banco"), m.get("asiento"))
-    for m in datos.get("conciliados_manual", []):
-        bancos, mayor = m.get("banco") or [], m.get("mayor") or []
-        for i in range(max(len(bancos), len(mayor))):
-            fila("Conciliado a mano", m.get("nota") or "conciliación manual",
-                 bancos[i] if i < len(bancos) else None,
-                 mayor[i] if i < len(mayor) else None)
-    for b in datos.get("gastos_bancarios", []):
-        fila("Gasto bancario", "no se cruza asiento por asiento", b, None)
-    return filas
+    for m in data.get("conciliados_e", []):
+        row("Cruzado con la cuenta E", m.get("metodo"), m.get("banco"), m.get("asiento"))
+    for m in data.get("conciliados_o", []):
+        row("Conciliado contra la O" + (" (confirmado)" if m.get("confirmado") else ""),
+            m.get("metodo"), m.get("banco"), m.get("asiento"))
+    for m in data.get("conciliados_manual", []):
+        banks, ledger = m.get("banco") or [], m.get("mayor") or []
+        for i in range(max(len(banks), len(ledger))):
+            row("Conciliado a mano", m.get("nota") or "conciliación manual",
+                banks[i] if i < len(banks) else None,
+                ledger[i] if i < len(ledger) else None)
+    for b in data.get("gastos_bancarios", []):
+        row("Gasto bancario", "no se cruza asiento por asiento", b, None)
+    return rows
 
 
-def _texto_fila(f: dict) -> str:
+def _row_text(f: dict) -> str:
     b, a = f.get("banco") or {}, f.get("asiento") or {}
     return " ".join(str(x) for x in (
         f.get("tipo"), f.get("metodo"), b.get("fecha"), b.get("descripcion"),
@@ -1555,87 +1556,86 @@ def _texto_fila(f: dict) -> str:
 
 
 @app.get("/api/diario/conciliados")
-def api_diario_conciliados(cuenta: str = "", q: str = "", corridas: int = 40,
-                           limite: int = 1500):
-    """Historial de conciliados de una cuenta en el modo diario: qué cruzó cada
-    corrida y contra qué asiento. Sirve para el control que no se podía hacer:
-    si un movimiento del banco figura sin asiento, acá se ve si ese asiento ya
-    se había consumido antes — y con qué movimiento se cruzó.
+def api_daily_matched(cuenta: str = "", q: str = "", corridas: int = 40,
+                      limite: int = 1500):
+    """History of an account's matched items in daily mode: what each run
+    matched and against which entry. It enables the check that couldn't be
+    done: if a bank movement shows without an entry, here you see whether that
+    entry was already consumed before — and with which movement it was matched.
 
-    Se arma leyendo los tableros guardados (no una copia aparte), así refleja
-    también lo que se conció a mano o se anuló después de la corrida."""
-    num = cuentas_mod.numero_cuenta(cuenta) if cuenta else ""
-    grupos = []
-    for nombre in os.listdir(DATOS_DIR):
-        if nombre.startswith("grupo_") and nombre.endswith(".json"):
-            ruta = os.path.join(DATOS_DIR, nombre)
-            grupos.append((os.path.getmtime(ruta), ruta))
-    grupos.sort(reverse=True)
+    Built by reading the saved boards (not a separate copy), so it also
+    reflects what was matched by hand or cancelled after the run."""
+    num = accounts_mod.account_number(cuenta) if cuenta else ""
+    runs = []
+    for name in os.listdir(DATA_DIR):
+        if name.startswith("grupo_") and name.endswith(".json"):
+            path = os.path.join(DATA_DIR, name)
+            runs.append((os.path.getmtime(path), path))
+    runs.sort(reverse=True)
 
-    filas, corridas_leidas, truncado = [], 0, False
-    for _, ruta in grupos:
-        if corridas_leidas >= max(1, corridas) or len(filas) >= limite:
-            truncado = truncado or len(filas) >= limite
+    rows, runs_read, truncated = [], 0, False
+    for _, path in runs:
+        if runs_read >= max(1, corridas) or len(rows) >= limite:
+            truncated = truncated or len(rows) >= limite
             break
         try:
-            with open(ruta, encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 g = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
-        usadas = [c for c in g.get("cuentas", [])
-                  if c.get("estado") == "ok" and c.get("job_id")
-                  and (not cuenta or cuentas_mod.numero_cuenta(c.get("cuenta_id")) == num)]
-        if not usadas:
+        used = [c for c in g.get("cuentas", [])
+                if c.get("estado") == "ok" and c.get("job_id")
+                and (not cuenta or accounts_mod.account_number(c.get("cuenta_id")) == num)]
+        if not used:
             continue
-        corridas_leidas += 1
-        for c in usadas:
-            datos = _obtener(c["job_id"])
-            if not datos:
+        runs_read += 1
+        for c in used:
+            data = _get_job(c["job_id"])
+            if not data:
                 continue
-            cabecera = {"grupo_id": g.get("grupo_id"), "job_id": c["job_id"],
-                        "cuenta_id": c.get("cuenta_id"), "etiqueta": c.get("etiqueta"),
-                        "procesado": g.get("procesado"), "hora": g.get("hora")}
-            for f in _filas_conciliadas(datos):
-                filas.append({**cabecera, **f})
+            header = {"grupo_id": g.get("grupo_id"), "job_id": c["job_id"],
+                      "cuenta_id": c.get("cuenta_id"), "etiqueta": c.get("etiqueta"),
+                      "procesado": g.get("procesado"), "hora": g.get("hora")}
+            for f in _matched_rows(data):
+                rows.append({**header, **f})
 
     if q:
-        termino = q.strip().lower()
-        filas = [f for f in filas if termino in _texto_fila(f).lower()]
-    filas.sort(key=lambda f: ((f.get("banco") or {}).get("fecha")
-                              or (f.get("asiento") or {}).get("fecha") or ""),
-               reverse=True)
-    return {"cuenta": cuenta, "corridas": corridas_leidas, "total": len(filas),
-            "truncado": truncado, "filas": filas[:limite]}
+        term = q.strip().lower()
+        rows = [f for f in rows if term in _row_text(f).lower()]
+    rows.sort(key=lambda f: ((f.get("banco") or {}).get("fecha")
+                             or (f.get("asiento") or {}).get("fecha") or ""),
+              reverse=True)
+    return {"cuenta": cuenta, "corridas": runs_read, "total": len(rows),
+            "truncado": truncated, "filas": rows[:limite]}
 
 
 @app.delete("/api/diario/memoria")
-def api_diario_memoria_borrar():
-    """Borra TODA la memoria de conciliados (fase de prueba): los asientos y
-    movimientos consumidos en corridas anteriores vuelven a aparecer como
-    pendientes en las próximas traídas. No toca los tableros ni el arrastre.
-    (Declarada antes que /api/diario/{grupo_id} para que 'memoria' no se
-    interprete como un id de tablero.)"""
-    m = _cargar_memoria()
+def api_daily_memory_delete():
+    """Deletes ALL the matched memory (test phase): the entries and movements
+    consumed in previous runs show up again as pending in the next pulls. It
+    doesn't touch the boards or the carry-over.
+    (Declared before /api/diario/{grupo_id} so 'memoria' isn't taken as a
+    board id.)"""
+    m = _load_memory()
     movs = sum(sum(c.get("movs", {}).values()) for c in m.values())
-    asientos = sum(sum(c.get("asientos", {}).values()) for c in m.values())
-    if os.path.exists(RUTA_MEMORIA):
-        os.remove(RUTA_MEMORIA)
+    entries = sum(sum(c.get("asientos", {}).values()) for c in m.values())
+    if os.path.exists(MATCHED_MEMORY_PATH):
+        os.remove(MATCHED_MEMORY_PATH)
     return {"ok": True, "cuentas_olvidadas": len(m),
-            "movs_olvidados": movs, "asientos_olvidados": asientos}
+            "movs_olvidados": movs, "asientos_olvidados": entries}
 
 
 @app.get("/api/diario/{grupo_id}/excel")
-def api_diario_excel(grupo_id: str):
-    """Exporta el tablero de una corrida diaria completo a Excel: resumen por
-    cuenta + listas consolidadas de todas las cuentas (pendientes del banco,
-    haberes, gastos y pendientes del mayor), con la columna Cuenta en cada
-    hoja. El detalle completo de UNA cuenta se sigue exportando desde adentro
-    de esa conciliación."""
-    ruta = _ruta_grupo(grupo_id)
-    if not ruta or not os.path.exists(ruta):
+def api_daily_excel(grupo_id: str):
+    """Exports a daily run's full board to Excel: summary per account +
+    consolidated lists of every account (bank pending items, payroll, fees and
+    ledger pending items), with the Cuenta column on each sheet. The full
+    detail of ONE account is still exported from inside that reconciliation."""
+    path = _run_path(grupo_id)
+    if not path or not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
-    with open(ruta, encoding="utf-8") as f:
-        grupo = json.load(f)
+    with open(path, encoding="utf-8") as f:
+        run = json.load(f)
 
     from openpyxl import Workbook
     wb = Workbook()
@@ -1643,7 +1643,7 @@ def api_diario_excel(grupo_id: str):
     ws.title = "Tablero"
     ws.append(["Cuenta", "Estado", "Movimientos", "Conciliados", "Arrastrados",
                "Pendientes banco", "Pendientes mayor", "% explicado"])
-    hojas = {
+    sheets = {
         "Banco sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
                                    "Detalle", "Débito", "Crédito", "Cargado en FBS"],
         "Haberes sin contabilizar": ["Cuenta", "Fecha", "Comprobante", "Descripción",
@@ -1653,471 +1653,471 @@ def api_diario_excel(grupo_id: str):
         "Mayor sin banco": ["Cuenta", "Hoja", "Asiento", "Fecha", "Referencia",
                             "Comentario", "Debe", "Haber"],
     }
-    for nombre, headers in hojas.items():
-        wb.create_sheet(nombre).append(headers)
+    for name, headers in sheets.items():
+        wb.create_sheet(name).append(headers)
 
-    def fila_mov(etiqueta, m):
-        return [etiqueta, m.get("fecha"), m.get("comprobante"), m.get("descripcion"),
+    def movement_row(label, m):
+        return [label, m.get("fecha"), m.get("comprobante"), m.get("descripcion"),
                 m.get("detalle"), m.get("debito") or None, m.get("credito") or None,
                 m.get("cargado_fbs") or ""]
 
-    for fila in grupo.get("cuentas", []):
-        etiqueta = fila.get("etiqueta") or fila.get("cuenta_id") or ""
-        r = fila.get("resumen") or {}
-        ws.append([etiqueta, fila.get("estado"),
+    for row in run.get("cuentas", []):
+        label = row.get("etiqueta") or row.get("cuenta_id") or ""
+        r = row.get("resumen") or {}
+        ws.append([label, row.get("estado"),
                    r.get("movimientos_banco"), r.get("conciliados"),
                    r.get("arrastrados"), r.get("banco_sin_contabilizar"),
                    r.get("mayor_sin_banco"), r.get("porcentaje_explicado")])
-        datos = _obtener(fila["job_id"]) if fila.get("job_id") else None
-        if not datos:
+        data = _get_job(row["job_id"]) if row.get("job_id") else None
+        if not data:
             continue
-        for m in datos.get("banco_sin_contabilizar", []):
-            destino = ("Haberes sin contabilizar" if m.get("es_haberes")
-                       else "Banco sin contabilizar")
-            wb[destino].append(fila_mov(etiqueta, m))
-        for m in datos.get("gastos_bancarios", []):
-            wb["Gastos bancarios"].append(fila_mov(etiqueta, m))
-        for lista in ("e_sin_banco", "o_pendientes_sin_banco"):
-            for a in datos.get(lista, []):
+        for m in data.get("banco_sin_contabilizar", []):
+            target = ("Haberes sin contabilizar" if m.get("es_haberes")
+                      else "Banco sin contabilizar")
+            wb[target].append(movement_row(label, m))
+        for m in data.get("gastos_bancarios", []):
+            wb["Gastos bancarios"].append(movement_row(label, m))
+        for list_name in ("e_sin_banco", "o_pendientes_sin_banco"):
+            for a in data.get(list_name, []):
                 wb["Mayor sin banco"].append(
-                    [etiqueta, a.get("hoja"), a.get("asiento"), a.get("fecha"),
+                    [label, a.get("hoja"), a.get("asiento"), a.get("fecha"),
                      a.get("referencia"), a.get("comentario"),
                      a.get("debe") or None, a.get("haber") or None])
 
     buf = io.BytesIO()
     wb.save(buf)
-    nombre = f"Conciliacion_diaria_{grupo.get('procesado') or grupo_id}.xlsx"
+    name = f"Conciliacion_diaria_{run.get('procesado') or grupo_id}.xlsx"
     return Response(
         content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/diario/{grupo_id}")
-def api_diario_grupo(grupo_id: str):
-    ruta = _ruta_grupo(grupo_id)
-    if not ruta or not os.path.exists(ruta):
+def api_daily_run(grupo_id: str):
+    path = _run_path(grupo_id)
+    if not path or not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
-    with open(ruta, encoding="utf-8") as f:
-        grupo = json.load(f)
-    # refrescar los números con el estado actual de cada job (conciliaciones
-    # manuales posteriores incluidas)
-    for fila in grupo["cuentas"]:
-        if fila.get("job_id"):
-            datos = _obtener(fila["job_id"])
-            if datos:
-                fila["resumen"] = _resumen_mini(datos["resumen"])
-    return grupo
+    with open(path, encoding="utf-8") as f:
+        run = json.load(f)
+    # refresh the numbers with each job's current state (later manual
+    # reconciliations included)
+    for row in run["cuentas"]:
+        if row.get("job_id"):
+            data = _get_job(row["job_id"])
+            if data:
+                row["resumen"] = _mini_summary(data["resumen"])
+    return run
 
 
 @app.delete("/api/diario/{grupo_id}")
-def api_diario_eliminar(grupo_id: str):
-    """Elimina una corrida diaria completa (p. ej. se subió un extracto
-    equivocado): borra el tablero y los jobs de sus cuentas, y rebobina la
-    cadena de arrastre de cada cuenta a su corrida anterior."""
-    ruta = _ruta_grupo(grupo_id)
-    if not ruta or not os.path.exists(ruta):
+def api_daily_delete(grupo_id: str):
+    """Deletes a whole daily run (e.g. a wrong statement was uploaded): removes
+    the board and its accounts' jobs, and rewinds each account's carry-over
+    chain to its previous run."""
+    path = _run_path(grupo_id)
+    if not path or not os.path.exists(path):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
-    with open(ruta, encoding="utf-8") as f:
-        grupo = json.load(f)
+    with open(path, encoding="utf-8") as f:
+        run = json.load(f)
 
-    arrastre = _cargar_arrastre()
-    rebobinadas = []
-    for fila in grupo.get("cuentas", []):
-        job_id = fila.get("job_id")
+    carry_over = _load_carry_over()
+    rewound = []
+    for row in run.get("cuentas", []):
+        job_id = row.get("job_id")
         if not job_id:
             continue
-        datos = _obtener(job_id) or {}
-        cid = fila.get("cuenta_id")
-        # si esta corrida era el último eslabón del arrastre, volver al anterior
-        if cid and arrastre.get(cid) == job_id:
-            anterior = datos.get("arrastre_desde") or \
-                (datos.get("arrastre") or {}).get("desde_job")
-            if anterior and _obtener(anterior):
-                arrastre[cid] = anterior
-                rebobinadas.append({"cuenta_id": cid, "vuelve_a": anterior})
+        data = _get_job(job_id) or {}
+        cid = row.get("cuenta_id")
+        # if this run was the last link of the carry-over, go back to the previous one
+        if cid and carry_over.get(cid) == job_id:
+            previous = data.get("arrastre_desde") or \
+                (data.get("arrastre") or {}).get("desde_job")
+            if previous and _get_job(previous):
+                carry_over[cid] = previous
+                rewound.append({"cuenta_id": cid, "vuelve_a": previous})
             else:
-                arrastre.pop(cid, None)
-                rebobinadas.append({"cuenta_id": cid, "vuelve_a": None})
-        RESULTADOS.pop(job_id, None)
+                carry_over.pop(cid, None)
+                rewound.append({"cuenta_id": cid, "vuelve_a": None})
+        RESULTS.pop(job_id, None)
         try:
-            os.remove(os.path.join(DATOS_DIR, f"{job_id}.json"))
+            os.remove(os.path.join(DATA_DIR, f"{job_id}.json"))
         except OSError:
             pass
-    _guardar_arrastre(arrastre)
-    os.remove(ruta)
-    return {"ok": True, "grupo_id": grupo_id, "arrastre_rebobinado": rebobinadas}
+    _save_carry_over(carry_over)
+    os.remove(path)
+    return {"ok": True, "grupo_id": grupo_id, "arrastre_rebobinado": rewound}
 
 
 @app.get("/api/gastos")
-def api_gastos():
-    """Conceptos definidos por el usuario que se clasifican como gasto
-    bancario, y excepciones (conceptos que NUNCA lo son)."""
-    return {"gastos": gastos_conf.cargar(),
-            "excepciones": gastos_conf.cargar_excepciones()}
+def api_fees():
+    """Concepts defined by the user that are classified as bank fees, and
+    exceptions (concepts that NEVER are)."""
+    return {"gastos": fee_terms.load(),
+            "excepciones": fee_terms.load_exceptions()}
 
 
 @app.delete("/api/gastos/excepciones/{exc_id}")
-def api_gastos_excepcion_eliminar(exc_id: str):
-    """(Declarada antes que /api/gastos/{term_id} para que 'excepciones' no
-    se interprete como un id de término.)"""
-    return {"excepciones": gastos_conf.eliminar_excepcion(exc_id)}
+def api_fee_exception_delete(exc_id: str):
+    """(Declared before /api/gastos/{term_id} so 'excepciones' isn't taken as
+    a term id.)"""
+    return {"excepciones": fee_terms.remove_exception(exc_id)}
 
 
 @app.post("/api/gastos")
-def api_gastos_agregar(cuerpo: dict = Body(...)):
-    """Agrega un concepto de gasto. Si viene job_id, además reclasifica en ese
-    resultado los movimientos de 'banco sin contabilizar' que lo contengan."""
-    terminos, error = gastos_conf.agregar(cuerpo.get("termino"))
-    # un término ya registrado no es un error fatal: se re-aplica igual al job
-    # (típico reintento del usuario cuando el primer clic no movió nada)
+def api_fees_add(body: dict = Body(...)):
+    """Adds a fee concept. If a job_id comes too, it also reclassifies in that
+    result the 'banco sin contabilizar' movements that contain it."""
+    terms, error = fee_terms.add(body.get("termino"))
+    # a term already registered is not a fatal error: it's applied to the job
+    # anyway (the user's typical retry when the first click moved nothing)
     if error and "ya está registrado" not in error:
         return JSONResponse(status_code=422, content={"error": error})
 
-    datos, movidos = None, 0
-    job_id = cuerpo.get("job_id")
+    data, moved = None, 0
+    job_id = body.get("job_id")
     if job_id:
-        datos = _obtener(job_id)
-    if datos:
-        termino = gastos_conf.limpiar_termino(cuerpo.get("termino"))
-        se_mueven = [x for x in datos["banco_sin_contabilizar"]
-                     if gastos_conf.es_gasto(x["descripcion"], [{"termino": termino}])]
-        if se_mueven:
-            ids = {x["id"] for x in se_mueven}
-            datos["banco_sin_contabilizar"] = [
-                x for x in datos["banco_sin_contabilizar"] if x["id"] not in ids]
-            datos["gastos_bancarios"].extend(se_mueven)
-            datos["gastos_bancarios"].sort(key=lambda x: x["fecha"] or "")
-            movidos = len(se_mueven)
-            _recalcular_resumen(datos)
-            _guardar(job_id)
-    return {"gastos": terminos, "movidos": movidos, "datos": datos}
+        data = _get_job(job_id)
+    if data:
+        term = fee_terms.clean_term(body.get("termino"))
+        to_move = [x for x in data["banco_sin_contabilizar"]
+                   if fee_terms.is_fee(x["descripcion"], [{"termino": term}])]
+        if to_move:
+            ids = {x["id"] for x in to_move}
+            data["banco_sin_contabilizar"] = [
+                x for x in data["banco_sin_contabilizar"] if x["id"] not in ids]
+            data["gastos_bancarios"].extend(to_move)
+            data["gastos_bancarios"].sort(key=lambda x: x["fecha"] or "")
+            moved = len(to_move)
+            _recompute_summary(data)
+            _save_job(job_id)
+    return {"gastos": terms, "movidos": moved, "datos": data}
 
 
 @app.delete("/api/gastos/{term_id}")
-def api_gastos_eliminar(term_id: str):
-    return {"gastos": gastos_conf.eliminar(term_id)}
+def api_fees_delete(term_id: str):
+    return {"gastos": fee_terms.remove(term_id)}
 
 
 @app.post("/api/excluir/{job_id}")
-def api_excluir(job_id: str, cuerpo: dict = Body(...)):
-    """Saca asientos del mayor de la conciliación (anulados, contraasientos que
-    la detección automática no encontró, etc.). Quedan referenciados y se
-    pueden restaurar."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_exclude(job_id: str, body: dict = Body(...)):
+    """Takes ledger entries out of the reconciliation (cancelled ones,
+    reversals the automatic detection didn't find, etc.). They stay referenced
+    and can be restored."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    ids = set(cuerpo.get("ids_mayor") or [])
+    ids = set(body.get("ids_mayor") or [])
     if not ids:
         return JSONResponse(status_code=422, content={"error": "No hay asientos seleccionados"})
 
     items = []
-    for lista in LISTAS_MAYOR:
-        for x in datos[lista]:
+    for list_name in LEDGER_LISTS:
+        for x in data[list_name]:
             if x["id"] in ids:
-                items.append({**x, "_origen": lista})
+                items.append({**x, "_origen": list_name})
     if len(items) != len(ids):
         return JSONResponse(status_code=409, content={
             "error": "Algunos asientos ya no están disponibles"})
-    for lista in LISTAS_MAYOR:
-        datos[lista] = [x for x in datos[lista] if x["id"] not in ids]
+    for list_name in LEDGER_LISTS:
+        data[list_name] = [x for x in data[list_name] if x["id"] not in ids]
 
-    datos.setdefault("excluidos_mayor", []).append({
+    data.setdefault("excluidos_mayor", []).append({
         "excl_id": uuid.uuid4().hex[:10],
         "mayor": items,
-        "nota": (cuerpo.get("nota") or "").strip(),
+        "nota": (body.get("nota") or "").strip(),
     })
-    _recalcular_resumen(datos)
-    _guardar(job_id)
-    return datos
+    _recompute_summary(data)
+    _save_job(job_id)
+    return data
 
 
 @app.delete("/api/excluir/{job_id}/{excl_id}")
-def api_excluir_deshacer(job_id: str, excl_id: str):
-    datos = _obtener(job_id)
-    if not datos:
+def api_exclude_undo(job_id: str, excl_id: str):
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    entrada = next((e for e in datos.get("excluidos_mayor", [])
-                    if e["excl_id"] == excl_id), None)
-    if not entrada:
+    exclusion = next((e for e in data.get("excluidos_mayor", [])
+                      if e["excl_id"] == excl_id), None)
+    if not exclusion:
         return JSONResponse(status_code=404, content={"error": "Exclusión no encontrada"})
-    datos["excluidos_mayor"] = [e for e in datos["excluidos_mayor"]
-                                if e["excl_id"] != excl_id]
-    for x in entrada["mayor"]:
-        origen = x.pop("_origen", "e_sin_banco")
-        datos[origen].append(x)
-        datos[origen].sort(key=lambda i: i["fecha"] or "")
-    _recalcular_resumen(datos)
-    _guardar(job_id)
-    return datos
+    data["excluidos_mayor"] = [e for e in data["excluidos_mayor"]
+                               if e["excl_id"] != excl_id]
+    for x in exclusion["mayor"]:
+        origin = x.pop("_origen", "e_sin_banco")
+        data[origin].append(x)
+        data[origin].sort(key=lambda i: i["fecha"] or "")
+    _recompute_summary(data)
+    _save_job(job_id)
+    return data
 
 
 @app.get("/api/progreso/{job_id}")
-def api_progreso(job_id: str):
-    p = PROGRESO.get(job_id)
+def api_progress(job_id: str):
+    p = PROGRESS.get(job_id)
     if p:
         return p
-    if _obtener(job_id):
+    if _get_job(job_id):
         return {"estado": "listo", "porcentaje": 100, "eta_seg": 0,
                 "fase": "Conciliación terminada"}
     return JSONResponse(status_code=404, content={"error": "Job no encontrado"})
 
 
 @app.get("/api/resultado/{job_id}")
-def api_resultado(job_id: str):
-    datos = _obtener(job_id)
-    if not datos:
+def api_result(job_id: str):
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    return datos
+    return data
 
 
 @app.post("/api/manual/{job_id}")
-def api_conciliar_manual(job_id: str, cuerpo: dict = Body(...)):
-    """Registra una conciliación manual (N movimientos del banco ↔ M asientos)."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_manual_match(job_id: str, body: dict = Body(...)):
+    """Records a manual reconciliation (N bank movements ↔ M entries)."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    datos.setdefault("conciliados_manual", [])
+    data.setdefault("conciliados_manual", [])
 
-    ids_banco = set(cuerpo.get("ids_banco") or [])
-    ids_mayor = set(cuerpo.get("ids_mayor") or [])
-    if not ids_banco or not ids_mayor:
+    bank_ids = set(body.get("ids_banco") or [])
+    ledger_ids = set(body.get("ids_mayor") or [])
+    if not bank_ids or not ledger_ids:
         return JSONResponse(status_code=422, content={
             "error": "Hay que seleccionar al menos un movimiento del banco y un asiento del mayor"})
 
-    # localizar y extraer los ítems de las listas residuales
-    items_banco, items_mayor = [], []
-    for lista in LISTAS_BANCO:
-        for x in datos[lista]:
-            if x["id"] in ids_banco:
-                items_banco.append({**x, "_origen": lista})
-    for lista in LISTAS_MAYOR:
-        for x in datos[lista]:
-            if x["id"] in ids_mayor:
-                items_mayor.append({**x, "_origen": lista})
+    # find and take the items out of the residual lists
+    bank_items, ledger_items = [], []
+    for list_name in BANK_LISTS:
+        for x in data[list_name]:
+            if x["id"] in bank_ids:
+                bank_items.append({**x, "_origen": list_name})
+    for list_name in LEDGER_LISTS:
+        for x in data[list_name]:
+            if x["id"] in ledger_ids:
+                ledger_items.append({**x, "_origen": list_name})
 
-    encontrados = {x["id"] for x in items_banco} | {x["id"] for x in items_mayor}
-    faltantes = (ids_banco | ids_mayor) - encontrados
-    if faltantes:
+    found = {x["id"] for x in bank_items} | {x["id"] for x in ledger_items}
+    missing = (bank_ids | ledger_ids) - found
+    if missing:
         return JSONResponse(status_code=409, content={
-            "error": f"Estos ítems ya no están disponibles (¿ya conciliados?): {sorted(faltantes)}"})
+            "error": f"Estos ítems ya no están disponibles (¿ya conciliados?): {sorted(missing)}"})
 
-    for lista in LISTAS_BANCO:
-        datos[lista] = [x for x in datos[lista] if x["id"] not in ids_banco]
-    for lista in LISTAS_MAYOR:
-        datos[lista] = [x for x in datos[lista] if x["id"] not in ids_mayor]
+    for list_name in BANK_LISTS:
+        data[list_name] = [x for x in data[list_name] if x["id"] not in bank_ids]
+    for list_name in LEDGER_LISTS:
+        data[list_name] = [x for x in data[list_name] if x["id"] not in ledger_ids]
 
-    neto_banco = round(sum(x["credito"] - x["debito"] for x in items_banco), 2)
-    neto_mayor = round(sum(x["debe"] - x["haber"] for x in items_mayor), 2)
+    bank_net = round(sum(x["credito"] - x["debito"] for x in bank_items), 2)
+    ledger_net = round(sum(x["debe"] - x["haber"] for x in ledger_items), 2)
     match = {
         "match_id": uuid.uuid4().hex[:10],
-        "banco": items_banco,
-        "mayor": items_mayor,
-        "neto_banco": neto_banco,
-        "neto_mayor": neto_mayor,
-        "diferencia": round(neto_banco - neto_mayor, 2),
-        "nota": (cuerpo.get("nota") or "").strip(),
-        "fuente": cuerpo.get("fuente") or "manual",
+        "banco": bank_items,
+        "mayor": ledger_items,
+        "neto_banco": bank_net,
+        "neto_mayor": ledger_net,
+        "diferencia": round(bank_net - ledger_net, 2),
+        "nota": (body.get("nota") or "").strip(),
+        "fuente": body.get("fuente") or "manual",
     }
-    datos["conciliados_manual"].append(match)
+    data["conciliados_manual"].append(match)
 
-    # aprender la regla para futuras conciliaciones
-    regla = reglas_mod.aprender(match)
-    match["regla_aprendida"] = bool(regla)
+    # learn the rule for future reconciliations
+    rule = rules_mod.learn(match)
+    match["regla_aprendida"] = bool(rule)
 
-    idx = cuerpo.get("sugerencia_idx")
-    if idx is not None and 0 <= idx < len(datos["ia"]["sugerencias"]):
-        datos["ia"]["sugerencias"][idx]["aceptada"] = True
+    idx = body.get("sugerencia_idx")
+    if idx is not None and 0 <= idx < len(data["ia"]["sugerencias"]):
+        data["ia"]["sugerencias"][idx]["aceptada"] = True
 
-    _recalcular_resumen(datos)
-    _guardar(job_id)
-    return datos
+    _recompute_summary(data)
+    _save_job(job_id)
+    return data
 
 
 @app.post("/api/confirmar/{job_id}")
-def api_confirmar(job_id: str, cuerpo: dict = Body(...)):
-    """Marca movimientos 'pendientes de confirmar (O)' como confirmados en el
-    sistema contable (o los desmarca). Es un checklist de seguimiento."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_confirm(job_id: str, body: dict = Body(...)):
+    """Marks 'pending confirmation (O)' movements as confirmed in the
+    accounting system (or unmarks them). It's a follow-up checklist."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
 
-    if "todos" in cuerpo:
-        val = bool(cuerpo["todos"])
-        for m in datos["conciliados_o"]:
+    if "todos" in body:
+        val = bool(body["todos"])
+        for m in data["conciliados_o"]:
             m["confirmado"] = val
     else:
-        banco_id = cuerpo.get("banco_id")
-        m = next((m for m in datos["conciliados_o"]
-                  if m["banco"]["id"] == banco_id), None)
+        bank_id = body.get("banco_id")
+        m = next((m for m in data["conciliados_o"]
+                  if m["banco"]["id"] == bank_id), None)
         if not m:
             return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
-        m["confirmado"] = bool(cuerpo.get("confirmado", True))
+        m["confirmado"] = bool(body.get("confirmado", True))
 
-    datos["resumen"]["o_confirmados"] = sum(
-        1 for m in datos["conciliados_o"] if m.get("confirmado"))
-    _guardar(job_id)
-    return datos
+    data["resumen"]["o_confirmados"] = sum(
+        1 for m in data["conciliados_o"] if m.get("confirmado"))
+    _save_job(job_id)
+    return data
 
 
 @app.post("/api/cargado/{job_id}")
-def api_marcar_cargado(job_id: str, cuerpo: dict = Body(...)):
-    """Marca (o desmarca) un movimiento del banco como YA CARGADO en el FBS.
-    Es una marca de control: el movimiento no cambia de solapa, solo queda
-    pintado, para que el operador sepa qué le falta cargar cuando vuelve a
-    mirar. La marca persiste por movimiento y lo sigue al día siguiente."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_mark_loaded(job_id: str, body: dict = Body(...)):
+    """Marks (or unmarks) a bank movement as ALREADY LOADED in FBS. It's a
+    control mark: the movement doesn't change tabs, it's only painted, so the
+    operator knows what is left to load when they look again. The mark
+    persists per movement and follows it to the next day."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    banco_id = cuerpo.get("banco_id")
-    mov = next((m for lista in LISTAS_BANCO for m in datos.get(lista, [])
-                if m["id"] == banco_id), None)
+    bank_id = body.get("banco_id")
+    mov = next((m for list_name in BANK_LISTS for m in data.get(list_name, [])
+                if m["id"] == bank_id), None)
     if not mov:
         return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
 
-    cargados = _cargados_fbs()
-    clave = _clave_mov_dict(mov)
-    if cuerpo.get("cargado", True):
-        cargados[clave] = {"fecha": date.today().isoformat(),
-                           "nota": (cuerpo.get("nota") or "").strip()[:300],
-                           "descripcion": mov.get("descripcion"), "job": job_id}
+    loaded = _loaded_in_fbs()
+    key = _movement_key(mov)
+    if body.get("cargado", True):
+        loaded[key] = {"fecha": date.today().isoformat(),
+                       "nota": (body.get("nota") or "").strip()[:300],
+                       "descripcion": mov.get("descripcion"), "job": job_id}
     else:
-        cargados.pop(clave, None)
-    _guardar_cargados(cargados)
+        loaded.pop(key, None)
+    _save_loaded_in_fbs(loaded)
 
-    _recalcular_resumen(datos)   # re-etiqueta y actualiza los contadores
-    _guardar(job_id)
-    return datos
+    _recompute_summary(data)   # re-tags and updates the counters
+    _save_job(job_id)
+    return data
 
 
 @app.post("/api/reclasificar/{job_id}")
-def api_reclasificar(job_id: str, cuerpo: dict = Body(...)):
-    """Transfiere un movimiento del banco a otra clasificación (banco sin
-    contabilizar / gastos bancarios / haberes), con el porqué del usuario.
-    La decisión persiste y las corridas futuras la respetan."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_reclassify(job_id: str, body: dict = Body(...)):
+    """Moves a bank movement to another classification (banco sin contabilizar
+    / gastos bancarios / haberes), with the user's reason. The decision
+    persists and future runs respect it."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    destino = cuerpo.get("destino")
-    if destino not in DESTINOS_RECLAS:
+    target = body.get("destino")
+    if target not in RECLASSIFICATION_TARGETS:
         return JSONResponse(status_code=422, content={"error": "Destino inválido"})
-    motivo = (cuerpo.get("motivo") or "").strip()
-    if not motivo:
+    reason = (body.get("motivo") or "").strip()
+    if not reason:
         return JSONResponse(status_code=422, content={
             "error": "Contanos por qué va en esa clasificación, así queda registrado"})
-    banco_id = cuerpo.get("banco_id")
-    origen = next((lista for lista in ("banco_sin_contabilizar", "gastos_bancarios")
-                   if any(m["id"] == banco_id for m in datos.get(lista, []))), None)
-    if not origen:
+    bank_id = body.get("banco_id")
+    origin = next((list_name for list_name in ("banco_sin_contabilizar", "gastos_bancarios")
+                   if any(m["id"] == bank_id for m in data.get(list_name, []))), None)
+    if not origin:
         return JSONResponse(status_code=404, content={"error": "Movimiento no encontrado"})
-    mov = next(m for m in datos[origen] if m["id"] == banco_id)
+    mov = next(m for m in data[origin] if m["id"] == bank_id)
 
-    lista_destino = ("gastos_bancarios" if destino == "gastos_bancarios"
-                     else "banco_sin_contabilizar")
-    if lista_destino != origen:
-        datos[origen] = [m for m in datos[origen] if m is not mov]
-        datos[lista_destino].append(mov)
-        datos[lista_destino].sort(key=lambda x: x.get("fecha") or "")
-    mov["reclasificado"] = motivo
+    target_list = ("gastos_bancarios" if target == "gastos_bancarios"
+                   else "banco_sin_contabilizar")
+    if target_list != origin:
+        data[origin] = [m for m in data[origin] if m is not mov]
+        data[target_list].append(mov)
+        data[target_list].sort(key=lambda x: x.get("fecha") or "")
+    mov["reclasificado"] = reason
 
-    items = _cargar_reclas()
-    items = [r for r in items if r.get("mov") != _clave_mov_dict(mov)]
-    items.append({"mov": _clave_mov_dict(mov), "destino": destino,
-                  "motivo": motivo[:300], "descripcion": mov.get("descripcion"),
+    items = _load_reclassifications()
+    items = [r for r in items if r.get("mov") != _movement_key(mov)]
+    items.append({"mov": _movement_key(mov), "destino": target,
+                  "motivo": reason[:300], "descripcion": mov.get("descripcion"),
                   "fecha": date.today().isoformat(), "job": job_id})
-    _guardar_reclas(items)
+    _save_reclassifications(items)
 
-    # "que quede grabado que este CONCEPTO nunca es gasto": al sacarlo de
-    # gastos se puede aprender la excepción, que vale para movimientos
-    # parecidos en TODAS las corridas futuras (no solo este movimiento)
-    excepcion_aprendida = None
-    if cuerpo.get("aprender_concepto") and destino != "gastos_bancarios":
-        _, err = gastos_conf.agregar_excepcion(mov.get("descripcion"))
+    # "record that this CONCEPT is never a fee": when it's taken out of fees,
+    # the exception can be learned, and it applies to similar movements in ALL
+    # future runs (not only this movement)
+    learned_exception = None
+    if body.get("aprender_concepto") and target != "gastos_bancarios":
+        _, err = fee_terms.add_exception(mov.get("descripcion"))
         if err and "ya está registrado" not in err:
             return JSONResponse(status_code=422, content={"error": err})
-        excepcion_aprendida = gastos_conf.limpiar_termino(mov.get("descripcion"))
-        # mover ya mismo los demás gastos de este resultado que la contengan
-        parecidos = [m for m in datos["gastos_bancarios"]
-                     if gastos_conf.es_gasto(m.get("descripcion"),
-                                             [{"termino": excepcion_aprendida}])]
-        if parecidos:
-            ids = {m["id"] for m in parecidos}
-            datos["gastos_bancarios"] = [m for m in datos["gastos_bancarios"]
-                                         if m["id"] not in ids]
-            datos["banco_sin_contabilizar"].extend(parecidos)
-            datos["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
+        learned_exception = fee_terms.clean_term(mov.get("descripcion"))
+        # move right away the other fees of this result that contain it
+        similar = [m for m in data["gastos_bancarios"]
+                   if fee_terms.is_fee(m.get("descripcion"),
+                                       [{"termino": learned_exception}])]
+        if similar:
+            ids = {m["id"] for m in similar}
+            data["gastos_bancarios"] = [m for m in data["gastos_bancarios"]
+                                        if m["id"] not in ids]
+            data["banco_sin_contabilizar"].extend(similar)
+            data["banco_sin_contabilizar"].sort(key=lambda x: x.get("fecha") or "")
 
-    _recalcular_resumen(datos)
-    _guardar(job_id)
-    # los totales de la ND mensual de ESTE resultado no se rearman acá;
-    # quedan bien en la próxima corrida (el matcher ya respeta la decisión)
-    return {**datos, "excepcion_aprendida": excepcion_aprendida}
+    _recompute_summary(data)
+    _save_job(job_id)
+    # the monthly debit note totals of THIS result are not rebuilt here; they
+    # come out right in the next run (the matcher already respects the decision)
+    return {**data, "excepcion_aprendida": learned_exception}
 
 
 @app.post("/api/anular/{job_id}")
-def api_anular_cruce(job_id: str, cuerpo: dict = Body(...)):
-    """Anula un cruce automático que no corresponde (pedido del cliente): el
-    movimiento vuelve a 'Banco sin contabilizar' y el asiento a su lista de
-    pendientes (E u O según la hoja). El par queda vetado: ninguna corrida
-    futura lo vuelve a proponer."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_cancel_match(job_id: str, body: dict = Body(...)):
+    """Cancels an automatic match that doesn't belong (the client's request):
+    the movement goes back to 'Banco sin contabilizar' and the entry to its
+    pending list (E or O according to its sheet). The pair is vetoed: no
+    future run proposes it again."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    lista = cuerpo.get("lista")
-    if lista not in ("conciliados_e", "conciliados_o"):
+    list_name = body.get("lista")
+    if list_name not in ("conciliados_e", "conciliados_o"):
         return JSONResponse(status_code=422, content={"error": "Lista inválida"})
-    banco_id = cuerpo.get("banco_id")
-    match = next((m for m in datos.get(lista, [])
-                  if m["banco"]["id"] == banco_id), None)
+    bank_id = body.get("banco_id")
+    match = next((m for m in data.get(list_name, [])
+                  if m["banco"]["id"] == bank_id), None)
     if not match:
         return JSONResponse(status_code=404, content={"error": "Cruce no encontrado"})
 
-    vetos = _cargar_vetos()
-    vetos.append({"id": uuid.uuid4().hex[:12],
-                  "mov": _clave_mov_dict(match["banco"]),
-                  "asiento": _clave_asiento_dict(match["asiento"]),
-                  "metodo": match.get("metodo"), "job": job_id,
-                  "fecha": date.today().isoformat()})
-    _guardar_vetos(vetos)
-    _anular_cruce_datos(datos, match, lista)
-    _guardar(job_id)
-    return datos
+    vetoes = _load_vetoes()
+    vetoes.append({"id": uuid.uuid4().hex[:12],
+                   "mov": _movement_key(match["banco"]),
+                   "asiento": _entry_key(match["asiento"]),
+                   "metodo": match.get("metodo"), "job": job_id,
+                   "fecha": date.today().isoformat()})
+    _save_vetoes(vetoes)
+    _undo_match(data, match, list_name)
+    _save_job(job_id)
+    return data
 
 
 @app.delete("/api/manual/{job_id}/{match_id}")
-def api_deshacer_manual(job_id: str, match_id: str):
-    """Deshace una conciliación manual: los ítems vuelven a sus listas."""
-    datos = _obtener(job_id)
-    if not datos:
+def api_manual_undo(job_id: str, match_id: str):
+    """Undoes a manual reconciliation: the items go back to their lists."""
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    match = next((m for m in datos.get("conciliados_manual", [])
+    match = next((m for m in data.get("conciliados_manual", [])
                   if m["match_id"] == match_id), None)
     if not match:
         return JSONResponse(status_code=404, content={"error": "Match no encontrado"})
 
-    datos["conciliados_manual"] = [m for m in datos["conciliados_manual"]
-                                   if m["match_id"] != match_id]
-    reglas_mod.olvidar(match)
+    data["conciliados_manual"] = [m for m in data["conciliados_manual"]
+                                  if m["match_id"] != match_id]
+    rules_mod.forget(match)
     for x in match["banco"]:
-        origen = x.pop("_origen", "banco_sin_contabilizar")
-        datos[origen].append(x)
-        datos[origen].sort(key=lambda i: i["fecha"] or "")
+        origin = x.pop("_origen", "banco_sin_contabilizar")
+        data[origin].append(x)
+        data[origin].sort(key=lambda i: i["fecha"] or "")
     for x in match["mayor"]:
-        origen = x.pop("_origen", "e_sin_banco")
-        datos[origen].append(x)
-        datos[origen].sort(key=lambda i: i["fecha"] or "")
+        origin = x.pop("_origen", "e_sin_banco")
+        data[origin].append(x)
+        data[origin].sort(key=lambda i: i["fecha"] or "")
 
-    _recalcular_resumen(datos)
-    _guardar(job_id)
-    return datos
+    _recompute_summary(data)
+    _save_job(job_id)
+    return data
 
 
 @app.get("/api/exportar/{job_id}")
-def api_exportar(job_id: str):
-    datos = _obtener(job_id)
-    if not datos:
+def api_export(job_id: str):
+    data = _get_job(job_id)
+    if not data:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
-    buffer = _generar_excel(datos)
+    buffer = _build_excel(data)
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2125,32 +2125,32 @@ def api_exportar(job_id: str):
     )
 
 
-def _generar_excel(datos):
+def _build_excel(data):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
 
     wb = openpyxl.Workbook()
-    encabezado = Font(bold=True, color="FFFFFF")
-    relleno = PatternFill("solid", fgColor="C8102E")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="C8102E")
 
-    def hoja(nombre, columnas, filas):
-        ws = wb.create_sheet(nombre)
-        ws.append(columnas)
+    def sheet(name, columns, rows):
+        ws = wb.create_sheet(name)
+        ws.append(columns)
         for c in ws[1]:
-            c.font = encabezado
-            c.fill = relleno
-        for f in filas:
+            c.font = header_font
+            c.fill = header_fill
+        for f in rows:
             ws.append(f)
         for col in ws.columns:
-            ancho = max((len(str(c.value or '')) for c in col), default=10)
-            ws.column_dimensions[col[0].column_letter].width = min(ancho + 2, 60)
+            width = max((len(str(c.value or '')) for c in col), default=10)
+            ws.column_dimensions[col[0].column_letter].width = min(width + 2, 60)
         return ws
 
-    # Resumen
+    # Summary
     ws = wb.active
     ws.title = "Resumen"
-    r = datos["resumen"]
-    filas = [
+    r = data["resumen"]
+    rows = [
         ("Movimientos del banco", r["movimientos_banco"]),
         ("Conciliados con cuenta E", r["conciliados_e"]),
         ("En cuenta O pendientes de confirmar", r["en_o_pendientes_confirmar"]),
@@ -2172,112 +2172,112 @@ def _generar_excel(datos):
     ]
     ws.append(["Concepto", "Valor"])
     for c in ws[1]:
-        c.font = encabezado
-        c.fill = relleno
-    for f in filas:
+        c.font = header_font
+        c.fill = header_fill
+    for f in rows:
         ws.append(f)
     ws.column_dimensions["A"].width = 48
     ws.column_dimensions["B"].width = 30
 
-    def fila_match(m):
+    def match_row(m):
         b, a = m["banco"], m["asiento"]
         return (b["fecha"], b["comprobante"], b["descripcion"], b["debito"] or "",
                 b["credito"] or "", a["hoja"], a["asiento"], a["fecha"],
                 a["referencia"], a["comentario"], a["debe"] or "", a["haber"] or "",
                 m["metodo"])
 
-    cols_match = ["Fecha banco", "Comprobante", "Descripción banco", "Débito", "Crédito",
+    match_cols = ["Fecha banco", "Comprobante", "Descripción banco", "Débito", "Crédito",
                   "Hoja", "Asiento", "Fecha mayor", "Referencia", "Comentario",
                   "Debe", "Haber", "Método"]
-    hoja("Conciliados (E)", cols_match, [fila_match(m) for m in datos["conciliados_e"]])
-    hoja("Pendientes confirmar (O)", cols_match + ["Confirmado en FES"],
-         [fila_match(m) + ("SÍ" if m.get("confirmado") else "",)
-          for m in datos["conciliados_o"]])
+    sheet("Conciliados (E)", match_cols, [match_row(m) for m in data["conciliados_e"]])
+    sheet("Pendientes confirmar (O)", match_cols + ["Confirmado en FES"],
+          [match_row(m) + ("SÍ" if m.get("confirmado") else "",)
+           for m in data["conciliados_o"]])
 
-    cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
-                  "Archivo", "Cargado en FBS"]
-    def fila_banco(b):
+    bank_cols = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
+                 "Archivo", "Cargado en FBS"]
+    def bank_row(b):
         return (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
                 b["debito"] or "", b["credito"] or "", b["archivo"],
                 b.get("cargado_fbs") or "")
-    habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
-    resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
-    # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
-    hoja("Haberes sin contabilizar", cols_banco, [fila_banco(b) for b in habs])
-    hoja("Banco sin contabilizar", cols_banco, [fila_banco(b) for b in resto])
-    hoja("Gastos bancarios", cols_banco,
-         [fila_banco(b) for b in datos["gastos_bancarios"]])
+    payroll = [b for b in data["banco_sin_contabilizar"] if b.get("es_haberes")]
+    rest = [b for b in data["banco_sin_contabilizar"] if not b.get("es_haberes")]
+    # a dedicated sheet: the payroll entry in FBS is built from this list
+    sheet("Haberes sin contabilizar", bank_cols, [bank_row(b) for b in payroll])
+    sheet("Banco sin contabilizar", bank_cols, [bank_row(b) for b in rest])
+    sheet("Gastos bancarios", bank_cols,
+          [bank_row(b) for b in data["gastos_bancarios"]])
 
-    cols_mayor = ["Hoja", "Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"]
-    def fila_mayor(a):
+    ledger_cols = ["Hoja", "Asiento", "Fecha", "Referencia", "Comentario", "Debe", "Haber"]
+    def ledger_row(a):
         return (a["hoja"], a["asiento"], a["fecha"], a["referencia"],
                 a["comentario"], a["debe"] or "", a["haber"] or "")
-    hoja("Mayor E sin banco", cols_mayor, [fila_mayor(a) for a in datos["e_sin_banco"]])
-    hoja("O pendientes sin banco", cols_mayor,
-         [fila_mayor(a) for a in datos["o_pendientes_sin_banco"]])
+    sheet("Mayor E sin banco", ledger_cols, [ledger_row(a) for a in data["e_sin_banco"]])
+    sheet("O pendientes sin banco", ledger_cols,
+          [ledger_row(a) for a in data["o_pendientes_sin_banco"]])
 
-    filas_x = []
-    for p in datos.get("contraasientos", []):
-        filas_x.append(fila_mayor(p["debe"]) + ("contraasiento (automático)",))
-        filas_x.append(fila_mayor(p["haber"]) + ("contraasiento (automático)",))
-    for e in datos.get("excluidos_mayor", []):
-        motivo = "excluido manualmente" + (f' — {e["nota"]}' if e["nota"] else "")
+    excluded_rows = []
+    for p in data.get("contraasientos", []):
+        excluded_rows.append(ledger_row(p["debe"]) + ("contraasiento (automático)",))
+        excluded_rows.append(ledger_row(p["haber"]) + ("contraasiento (automático)",))
+    for e in data.get("excluidos_mayor", []):
+        reason = "excluido manualmente" + (f' — {e["nota"]}' if e["nota"] else "")
         for a in e["mayor"]:
-            filas_x.append(fila_mayor(a) + (motivo,))
-    hoja("Contraasientos y excluidos", cols_mayor + ["Motivo"], filas_x)
+            excluded_rows.append(ledger_row(a) + (reason,))
+    sheet("Contraasientos y excluidos", ledger_cols + ["Motivo"], excluded_rows)
 
-    # Nota de débito mensual (gastos bancarios agrupados)
-    filas_nd = []
-    for p in datos["nota_debito"]:
+    # Monthly debit note (grouped bank fees)
+    debit_note_rows = []
+    for p in data["nota_debito"]:
         for c in p["categorias"]:
             obs = ""
             if "iva_esperado" in c:
-                dif = round(c["importe"] - c["iva_esperado"], 2)
-                obs = f'IVA esperado $ {c["iva_esperado"]:,.2f} (dif {dif:,.2f})'
-            filas_nd.append((p["periodo"], c["categoria"], c["cantidad"], c["importe"], obs))
-        filas_nd.append((p["periodo"], "TOTAL SEGÚN EXTRACTO", "", p["total_extracto"], ""))
+                diff = round(c["importe"] - c["iva_esperado"], 2)
+                obs = f'IVA esperado $ {c["iva_esperado"]:,.2f} (dif {diff:,.2f})'
+            debit_note_rows.append((p["periodo"], c["categoria"], c["cantidad"], c["importe"], obs))
+        debit_note_rows.append((p["periodo"], "TOTAL SEGÚN EXTRACTO", "", p["total_extracto"], ""))
         for a in p["asientos_mayor"]:
-            lado = a["haber"] or -a["debe"]
-            filas_nd.append((p["periodo"], f'Mayor [{a["hoja"]}] {a["referencia"]} — {a["comentario"]}',
-                             "", lado, "asiento del mayor"))
+            side = a["haber"] or -a["debe"]
+            debit_note_rows.append((p["periodo"], f'Mayor [{a["hoja"]}] {a["referencia"]} — {a["comentario"]}',
+                                    "", side, "asiento del mayor"))
         if p["total_mayor"] is not None:
-            filas_nd.append((p["periodo"], "TOTAL SEGÚN MAYOR", "", p["total_mayor"], ""))
-            filas_nd.append((p["periodo"], "DIFERENCIA (extracto - mayor)", "",
-                             p["diferencia"], ""))
-        filas_nd.append(("", "", "", "", ""))
-    hoja("Gastos por mes (ND)",
-         ["Período", "Concepto", "Cant.", "Importe", "Observación"], filas_nd)
+            debit_note_rows.append((p["periodo"], "TOTAL SEGÚN MAYOR", "", p["total_mayor"], ""))
+            debit_note_rows.append((p["periodo"], "DIFERENCIA (extracto - mayor)", "",
+                                    p["diferencia"], ""))
+        debit_note_rows.append(("", "", "", "", ""))
+    sheet("Gastos por mes (ND)",
+          ["Período", "Concepto", "Cant.", "Importe", "Observación"], debit_note_rows)
 
-    # Detalle de conceptos por período (para investigar diferencias)
-    filas_con = []
-    for p in datos["nota_debito"]:
+    # Detail of concepts per period (to investigate differences)
+    concept_rows = []
+    for p in data["nota_debito"]:
         for c in p["conceptos"]:
-            filas_con.append((p["periodo"], c["descripcion"], c["cantidad"], c["importe"]))
-    hoja("Gastos detalle conceptos",
-         ["Período", "Concepto del extracto", "Cant.", "Importe"], filas_con)
+            concept_rows.append((p["periodo"], c["descripcion"], c["cantidad"], c["importe"]))
+    sheet("Gastos detalle conceptos",
+          ["Período", "Concepto del extracto", "Cant.", "Importe"], concept_rows)
 
-    # Conciliados manualmente (grupos N a M)
-    filas_man = []
-    for n, m in enumerate(datos.get("conciliados_manual", []), 1):
+    # Matched by hand (N to M groups)
+    manual_rows = []
+    for n, m in enumerate(data.get("conciliados_manual", []), 1):
         for b in m["banco"]:
-            filas_man.append((n, "BANCO", b["fecha"], b["comprobante"],
-                              f'{b["descripcion"]} {b["detalle"]}'.strip(),
-                              b["debito"] or "", b["credito"] or "", "", m["nota"]))
+            manual_rows.append((n, "BANCO", b["fecha"], b["comprobante"],
+                                f'{b["descripcion"]} {b["detalle"]}'.strip(),
+                                b["debito"] or "", b["credito"] or "", "", m["nota"]))
         for a in m["mayor"]:
-            filas_man.append((n, f'MAYOR {a["hoja"]}', a["fecha"], a["asiento"],
-                              f'{a["referencia"]} — {a["comentario"]}',
-                              a["haber"] or "", a["debe"] or "", "", ""))
-        filas_man.append((n, "→ diferencia", "", "", "", "", "", m["diferencia"],
-                          "aceptada de IA" if m["fuente"] == "ia" else ""))
-    hoja("Conciliados manualmente",
-         ["Grupo", "Lado", "Fecha", "Comp/Asiento", "Descripción",
-          "Débito/Haber", "Crédito/Debe", "Diferencia", "Nota"], filas_man)
+            manual_rows.append((n, f'MAYOR {a["hoja"]}', a["fecha"], a["asiento"],
+                                f'{a["referencia"]} — {a["comentario"]}',
+                                a["haber"] or "", a["debe"] or "", "", ""))
+        manual_rows.append((n, "→ diferencia", "", "", "", "", "", m["diferencia"],
+                            "aceptada de IA" if m["fuente"] == "ia" else ""))
+    sheet("Conciliados manualmente",
+          ["Grupo", "Lado", "Fecha", "Comp/Asiento", "Descripción",
+           "Débito/Haber", "Crédito/Debe", "Diferencia", "Nota"], manual_rows)
 
-    if datos["ia"]["sugerencias"]:
-        hoja("Sugerencias IA",
-             ["IDs banco", "IDs mayor", "Confianza", "Motivo"],
-             [(", ".join(s["ids_banco"]), ", ".join(s["ids_mayor"]),
-               s["confianza"], s["motivo"]) for s in datos["ia"]["sugerencias"]])
+    if data["ia"]["sugerencias"]:
+        sheet("Sugerencias IA",
+              ["IDs banco", "IDs mayor", "Confianza", "Motivo"],
+              [(", ".join(s["ids_banco"]), ", ".join(s["ids_mayor"]),
+                s["confianza"], s["motivo"]) for s in data["ia"]["sugerencias"]])
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -2286,25 +2286,25 @@ def _generar_excel(datos):
 
 
 @app.get("/api/demo/estado")
-def api_demo_estado():
+def api_demo_state():
     if not DEMO_MODE:
         return {"demo": False}
     from engine import simulacion
     return {"demo": True, "hoy": simulacion.ultimo_habil().isoformat()}
 
 
-def _cuentas_demo(marca: str = "") -> list[dict]:
-    """Las cuentas del hub con FBS (las que la simulación conoce), de la marca."""
+def _demo_accounts(brand: str = "") -> list[dict]:
+    """The hub accounts with FBS (the ones the simulation knows) of the brand."""
     from engine import simulacion
-    todas = fbs_sql.cuentas_fbs()
-    return simulacion.con_roles(fbs_sql._filtrar_cfgs(todas, marca), todas)
+    everything = fbs_sql.hub_fbs_accounts()
+    return simulacion.con_roles(fbs_sql._filter_configs(everything, brand), everything)
 
 
-def _rango_demo(desde: str, hasta: str):
+def _demo_range(date_from: str, date_to: str):
     from engine import simulacion
     try:
-        d1 = date.fromisoformat(desde) if desde else simulacion.ultimo_habil()
-        d2 = date.fromisoformat(hasta) if hasta else d1
+        d1 = date.fromisoformat(date_from) if date_from else simulacion.ultimo_habil()
+        d2 = date.fromisoformat(date_to) if date_to else d1
     except ValueError:
         return None
     if d1 > d2:
@@ -2313,81 +2313,81 @@ def _rango_demo(desde: str, hasta: str):
 
 
 @app.get("/api/demo/cuentas")
-def api_demo_cuentas(marca: str = ""):
-    """Cuentas para generar extractos en la demo, con el formato de su banco."""
+def api_demo_accounts(marca: str = ""):
+    """Accounts to generate statements for in the demo, with their bank's format."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     from engine import simulacion
     return {"cuentas": [{"cuenta_id": c["cuenta_id"], "etiqueta": c["etiqueta"],
                          "banco": c["banco"], "moneda": c["moneda"], "rol": c["rol"],
                          "formato": simulacion.FORMATOS.get(c["banco"], c["banco"])}
-                        for c in sorted(_cuentas_demo(marca), key=lambda x: x["etiqueta"])],
+                        for c in sorted(_demo_accounts(marca), key=lambda x: x["etiqueta"])],
             "hoy": simulacion.ultimo_habil().isoformat()}
 
 
 @app.get("/api/demo/extracto")
-def api_demo_extracto(cuenta: str, desde: str = "", hasta: str = "", marca: str = ""):
-    """El extracto de una cuenta para el rango, en el formato de su banco y
-    coherente con el mayor que trae el FBS simulado."""
+def api_demo_statement(cuenta: str, desde: str = "", hasta: str = "", marca: str = ""):
+    """The statement of one account for the range, in its bank's format and
+    consistent with the ledger the simulated FBS returns."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     from engine import simulacion
-    rango = _rango_demo(desde, hasta)
-    c = next((x for x in _cuentas_demo(marca) if x["cuenta_id"] == cuenta), None)
-    if not rango or not c:
+    date_range = _demo_range(desde, hasta)
+    c = next((x for x in _demo_accounts(marca) if x["cuenta_id"] == cuenta), None)
+    if not date_range or not c:
         return JSONResponse(status_code=404, content={"error": "Esa cuenta no tiene FBS en el hub de la demo."})
     try:
-        nombre, contenido, n = simulacion.extracto(c, *rango)
+        name, content, n = simulacion.extracto(c, *date_range)
     except RuntimeError as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
-    tipo = ("text/csv" if nombre.endswith(".csv") else "application/vnd.ms-excel"
-            if nombre.endswith(".xls") else
+    kind = ("text/csv" if name.endswith(".csv") else "application/vnd.ms-excel"
+            if name.endswith(".xls") else
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    return Response(content=contenido, media_type=tipo, headers={
-        "Content-Disposition": f'attachment; filename="{nombre}"',
+    return Response(content=content, media_type=kind, headers={
+        "Content-Disposition": f'attachment; filename="{name}"',
         "X-Movimientos": str(n), "Cache-Control": "no-store"})
 
 
 @app.get("/api/demo/extractos")
-def api_demo_extractos(marca: str = "", desde: str = "", hasta: str = ""):
-    """Los extractos de todas las cuentas de la marca, en un .zip."""
+def api_demo_statements(marca: str = "", desde: str = "", hasta: str = ""):
+    """The statements of every account of the brand, in a .zip."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     from engine import simulacion
-    rango = _rango_demo(desde, hasta)
-    cuentas = _cuentas_demo(marca)
-    if not rango or not cuentas:
+    date_range = _demo_range(desde, hasta)
+    accounts = _demo_accounts(marca)
+    if not date_range or not accounts:
         return JSONResponse(status_code=404, content={"error": "No hay cuentas con FBS en el hub de la demo."})
-    contenido = simulacion.zip_extractos(cuentas, *rango)
-    d1, d2 = rango
-    nombre = f"extractos_{cuentas_mod.slug(marca) or 'grupo'}_{d1.isoformat()}" + \
+    content = simulacion.zip_extractos(accounts, *date_range)
+    d1, d2 = date_range
+    name = f"extractos_{accounts_mod.slug(marca) or 'grupo'}_{d1.isoformat()}" + \
              ("" if d1 == d2 else f"_a_{d2.isoformat()}") + ".zip"
-    return Response(content=contenido, media_type="application/zip", headers={
-        "Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})
+    return Response(content=content, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
-_ID_JOB_RE = re.compile(r"^[0-9a-f]{12}\.json$")
-_ID_GRUPO_RE = re.compile(r"^grupo_[0-9a-f]{10}\.json$")
+_JOB_FILE_RE = re.compile(r"^[0-9a-f]{12}\.json$")
+_RUN_FILE_RE = re.compile(r"^grupo_[0-9a-f]{10}\.json$")
 
 
 @app.post("/api/demo/reset")
 def api_demo_reset():
-    """Limpia el estado acumulado de la demo (ROD-10 "09"): lo que haya en
-    memoria (movimientos/asientos ya consumidos), el arrastre entre corridas,
-    y el historial de conciliaciones (jobs y grupos) — sin esto, repetir el
-    mismo extracto lo mostraba como "ya conciliado" en vez de correrlo de
-    nuevo. Los extractos y el FBS simulado no guardan nada: salen siempre
-    iguales de engine/simulacion.py."""
+    """Clears the demo's accumulated state (ROD-10 "09"): whatever is in the
+    memory (movements/entries already consumed), the carry-over between runs,
+    and the reconciliation history (jobs and boards) — without this, repeating
+    the same statement showed it as "already reconciled" instead of running it
+    again. The statements and the simulated FBS store nothing: they always
+    come out the same from engine/simulacion.py."""
     if not DEMO_MODE:
         return JSONResponse(status_code=404, content={"error": "No disponible"})
     STAGING.clear()
-    RESULTADOS.clear()
-    for ruta in (RUTA_ARRASTRE, RUTA_MEMORIA):
-        if os.path.exists(ruta):
-            os.remove(ruta)
-    for nombre in os.listdir(DATOS_DIR):
-        if _ID_JOB_RE.match(nombre) or _ID_GRUPO_RE.match(nombre):
-            os.remove(os.path.join(DATOS_DIR, nombre))
+    RESULTS.clear()
+    for path in (CARRY_OVER_PATH, MATCHED_MEMORY_PATH):
+        if os.path.exists(path):
+            os.remove(path)
+    for name in os.listdir(DATA_DIR):
+        if _JOB_FILE_RE.match(name) or _RUN_FILE_RE.match(name):
+            os.remove(os.path.join(DATA_DIR, name))
     return {"ok": True}
 
 
@@ -2400,14 +2400,14 @@ if DEMO_MODE:
 
 
 @app.get("/diario")
-def pagina_diario():
+def daily_page():
     return FileResponse(os.path.join(BASE_DIR, "static", "diario.html"),
                         headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/")
 def index():
-    # sin caché: tras cada deploy el navegador debe traer la interfaz nueva
+    # no cache: after each deploy the browser must fetch the new UI
     return FileResponse(os.path.join(BASE_DIR, "static", "index.html"),
                         headers={"Cache-Control": "no-cache"})
 
@@ -2417,8 +2417,8 @@ app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), na
 
 if __name__ == "__main__":
     import uvicorn
-    puerto = int(os.environ.get("PORT", "8765"))
+    port = int(os.environ.get("PORT", "8765"))
     host = "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1"
-    # proxy_headers=False: la IP del cliente y "es local" las decide
-    # engine/seguridad.py, no uvicorn (que confiaría en X-Forwarded-For)
-    uvicorn.run(app, host=host, port=puerto, proxy_headers=False)
+    # proxy_headers=False: the client IP and "is local" are decided by
+    # engine/seguridad.py, not by uvicorn (which would trust X-Forwarded-For)
+    uvicorn.run(app, host=host, port=port, proxy_headers=False)

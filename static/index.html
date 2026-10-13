@@ -199,7 +199,7 @@
   td { padding: 7px 10px; border-bottom: 1px solid rgba(255,255,255,0.06); vertical-align: top; }
   td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   td .metodo { font-size: var(--fs-xs); background: color-mix(in srgb, var(--acento) 12%, transparent); border: 1px solid color-mix(in srgb, var(--acento) 35%, transparent); color: var(--acento); border-radius: 99px; padding: 1px 8px; white-space:nowrap; }
-  /* control de carga en el FBS: la fila queda pintada y tachada, como en Excel */
+  /* loading control in FBS: the row stays painted and struck through, like in Excel */
   tr.cargado td { background: color-mix(in srgb, var(--verde) 10%, transparent); color: var(--texto2); }
   tr.cargado td:nth-child(3) { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--verde) 70%, transparent); }
   td .chip-cargado { font-size: var(--fs-xs); background: color-mix(in srgb, var(--verde) 14%, transparent); border: 1px solid color-mix(in srgb, var(--verde) 45%, transparent); color: var(--verde); border-radius: 99px; padding: 1px 8px; white-space: nowrap; text-decoration: none; display: inline-block; }
@@ -208,7 +208,7 @@
   td .conf-baja { color: var(--texto2); }
   .oculto { display: none; }
 
-  /* --- conciliación manual --- */
+  /* --- manual reconciliation --- */
   .panel-manual { background: var(--panel); border: 1px solid var(--border); border-top:none; border-radius: 0 0 16px 16px; padding: 14px; backdrop-filter: blur(14px); }
   .dual { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 900px) { .dual { grid-template-columns: 1fr; } }
@@ -232,7 +232,7 @@
   .item .badge { font-size: var(--fs-xs); border-radius: 99px; padding: 0 7px; background: rgba(255,255,255,0.07); border: 1px solid var(--border); color: var(--texto2); white-space: nowrap; }
   .item .badge.cierra { background: color-mix(in srgb, var(--verde) 14%, transparent); border-color: color-mix(in srgb, var(--verde) 40%, transparent); color: var(--verde); font-weight: 700; }
 
-  /* --- overlay de progreso --- */
+  /* --- progress overlay --- */
   #overlay { z-index: 100; }
   .ov-card { background: var(--dialogo); border: 1px solid var(--border);
     border-radius: 20px;
@@ -255,9 +255,9 @@
     line-height: 1.5; border-top: 1px solid var(--border); padding-top: 12px; }
   #ovError { color: var(--rojo); font-size: var(--fs-md); margin-top: 10px; }
 
-  /* --- diccionario de equivalencias --- */
+  /* --- equivalences dictionary --- */
 
-  /* --- análisis IA de asientos pendientes --- */
+  /* --- AI analysis of pending entries --- */
   .btn-info { width: 28px; height: 28px; border-radius: 50%;
     border: 1px solid color-mix(in srgb, var(--acento) 50%, transparent); background: color-mix(in srgb, var(--acento) 12%, transparent);
     color: var(--acento); font-family: "Sora", sans-serif; font-style: italic;
@@ -299,7 +299,7 @@
   .eq-add input:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
   .eq-add input::placeholder { color: var(--texto2); }
   
-  /* --- indicador de modo simulación --- */
+  /* --- simulation mode indicator --- */
   .badge-sim { border: 1px solid color-mix(in srgb, var(--ambar) 50%, transparent);
     color: var(--ambar); background: color-mix(in srgb, var(--ambar) 10%, transparent); border-radius: 10px;
     padding: 6px 14px; font-size: var(--fs-xs); font-weight: 700;
@@ -339,7 +339,7 @@
   button.secundario, a.secundario { font-family: inherit; background: rgba(255,255,255,0.06); color: var(--texto); border:1px solid var(--border); padding: 9px 16px; border-radius: 10px; font-size: var(--fs-md); cursor:pointer; transition: background .2s, border-color .2s; text-decoration: none; display: inline-block; }
   button.secundario:hover, a.secundario:hover { background: rgba(255,255,255,0.12); border-color: color-mix(in srgb, var(--acento) 55%, transparent); }
 
-  /* ---------- tema claro (conmutable, misma identidad del hub) ---------- */
+  /* ---------- light theme (switchable, same identity as the hub) ---------- */
   body.claro {
     color-scheme: light;
     --acento: #0a6fb5;
@@ -414,12 +414,12 @@
 </head>
 <body>
 <script>
-// Servida en la raíz (/diario) o detrás del proxy del hub (/app/<id>/diario):
-// toda llamada cuelga de la CARPETA de la página, nunca de la raíz del dominio.
-// Una ruta absoluta ('/api/...') detrás del proxy apunta al hub y no a la app,
-// y la pantalla queda sin cuentas, sin FBS y sin historial.
+// Served at the root (/diario) or behind the hub proxy (/app/<id>/diario):
+// every call hangs from the page's FOLDER, never from the domain root.
+// An absolute path ('/api/...') behind the proxy points at the hub, not the app,
+// and the page is left without accounts, without FBS and without history.
 const BASE = location.pathname.replace(/\/[^/]*$/, '/');
-// Sesión: si el servidor responde 401 (sesión vencida), volver al login.
+// Session: if the server answers 401 (expired session), go back to the login.
 (function () {
   const original = window.fetch.bind(window);
   window.fetch = async (...args) => {
@@ -436,7 +436,7 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   });
 })();
 
-  // Tema antes del primer pintado: evita el destello oscuro para quien usa modo claro
+  // Theme before the first paint: avoids the dark flash for light-mode users
   (function () {
     var t = null; try { t = localStorage.getItem('tema'); } catch (e) {}
     if (t === 'claro' || (!t && matchMedia('(prefers-color-scheme: light)').matches))
@@ -749,24 +749,24 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-// argumento de un onclick="...": literal JS (JSON) escapado para el atributo. Escapar solo el
-// HTML no alcanza: el navegador decodifica &#39; antes de correr el JS.
+// argument of an onclick="...": a JS (JSON) literal escaped for the attribute. Escaping only
+// the HTML is not enough: the browser decodes &#39; before running the JS.
 const jsArg = s => esc(JSON.stringify(String(s ?? '')));
 
-/* ============ diálogos accesibles (foco, Escape, retorno) ============ */
+/* ============ accessible dialogs (focus, Escape, return) ============ */
 const SCROLL = { behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' };
 let modalOpener = null;
-function abrirModal(id, foco) {
+function openModal(id, focus) {
   const m = document.getElementById(id);
   if (!m.classList.contains('oculto')) return;
   modalOpener = document.activeElement;
   m.classList.remove('oculto');
-  const el = (foco && document.querySelector(foco))
+  const el = (focus && document.querySelector(focus))
     || [...m.querySelectorAll('input, textarea, select, button, [tabindex="-1"]')]
       .find(x => x.offsetParent !== null);
   if (el) el.focus();
 }
-function cerrarModal(id) {
+function closeModal(id) {
   const m = document.getElementById(id);
   if (m.classList.contains('oculto')) return;
   m.classList.add('oculto');
@@ -774,215 +774,215 @@ function cerrarModal(id) {
   modalOpener = null;
 }
 document.addEventListener('keydown', e => {
-  const abierto = [...document.querySelectorAll('[role="dialog"]')]
+  const openDialog = [...document.querySelectorAll('[role="dialog"]')]
     .filter(m => !m.classList.contains('oculto')).pop();
-  if (!abierto) return;
+  if (!openDialog) return;
   if (e.key === 'Escape') {
-    const cerrar = abierto.querySelector('[data-cerrar]');
-    if (cerrar && cerrar.offsetParent !== null) { e.preventDefault(); cerrar.click(); }
+    const closeButton = openDialog.querySelector('[data-cerrar]');
+    if (closeButton && closeButton.offsetParent !== null) { e.preventDefault(); closeButton.click(); }
     return;
   }
   if (e.key !== 'Tab') return;
-  const f = [...abierto.querySelectorAll(
+  const f = [...openDialog.querySelectorAll(
     'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')]
     .filter(x => x.offsetParent !== null);
   if (!f.length) { e.preventDefault(); return; }
-  const primero = f[0], ultimo = f[f.length - 1];
-  if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
-  else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
-  else if (!abierto.contains(document.activeElement)) { e.preventDefault(); primero.focus(); }
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  else if (!openDialog.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
 });
 
-// confirmar({ titulo, texto, ok, peligro }) -> Promise<boolean>: reemplaza a confirm()
-let confResolver = null;
-function confirmar({ titulo, texto, ok = 'Confirmar', peligro = false }) {
-  document.getElementById('modalConfirmarTitulo').textContent = titulo;
-  document.getElementById('modalConfirmarTexto').textContent = texto;
+// askConfirm({ titulo, texto, ok, peligro }) -> Promise<boolean>: replaces confirm()
+let confirmResolver = null;
+function askConfirm({ titulo: title, texto: text, ok = 'Confirmar', peligro: danger = false }) {
+  document.getElementById('modalConfirmarTitulo').textContent = title;
+  document.getElementById('modalConfirmarTexto').textContent = text;
   const b = document.getElementById('confOk');
   b.textContent = ok;
-  b.className = peligro ? 'secundario peligro' : 'principal';
-  return new Promise(res => { confResolver = res; abrirModal('modalConfirmar', '#confCancelar'); });
+  b.className = danger ? 'secundario peligro' : 'principal';
+  return new Promise(res => { confirmResolver = res; openModal('modalConfirmar', '#confCancelar'); });
 }
-function resolverConf(v) { const r = confResolver; confResolver = null; cerrarModal('modalConfirmar'); if (r) r(v); }
-document.getElementById('confOk').addEventListener('click', () => resolverConf(true));
-document.getElementById('confCancelar').addEventListener('click', () => resolverConf(false));
-document.getElementById('modalConfirmar').addEventListener('click', e => { if (e.target.id === 'modalConfirmar') resolverConf(false); });
+function resolveConfirm(v) { const r = confirmResolver; confirmResolver = null; closeModal('modalConfirmar'); if (r) r(v); }
+document.getElementById('confOk').addEventListener('click', () => resolveConfirm(true));
+document.getElementById('confCancelar').addEventListener('click', () => resolveConfirm(false));
+document.getElementById('modalConfirmar').addEventListener('click', e => { if (e.target.id === 'modalConfirmar') resolveConfirm(false); });
 
-// avisar(msg, 'error' | 'info'): aviso flotante con rol de alerta, reemplaza a alert()
-function avisar(msg, tipo = 'error') {
-  let cont = document.getElementById('toasts');
-  if (!cont) { cont = document.createElement('div'); cont.id = 'toasts'; document.body.appendChild(cont); }
+// notify(msg, 'error' | 'info'): floating notice with an alert role, replaces alert()
+function notify(msg, kind = 'error') {
+  let container = document.getElementById('toasts');
+  if (!container) { container = document.createElement('div'); container.id = 'toasts'; document.body.appendChild(container); }
   const d = document.createElement('div');
-  d.className = 'aviso ' + tipo + ' toast';
-  d.setAttribute('role', tipo === 'error' ? 'alert' : 'status');
+  d.className = 'aviso ' + kind + ' toast';
+  d.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   const s = document.createElement('span'); s.textContent = msg; d.appendChild(s);
   const b = document.createElement('button'); b.type = 'button'; b.className = 'toast-cerrar';
   b.setAttribute('aria-label', 'Cerrar aviso'); b.textContent = '×';
   b.addEventListener('click', () => d.remove()); d.appendChild(b);
-  cont.appendChild(d);
-  if (tipo !== 'error') setTimeout(() => d.remove(), 9000);
+  container.appendChild(d);
+  if (kind !== 'error') setTimeout(() => d.remove(), 9000);
 }
-// modo demo: el FBS está simulado y el extracto sale de la misma simulación
-// (engine/simulacion.py): se genera el de una cuenta y el mayor se trae del
-// FBS con esa misma cuenta y fechas
+// demo mode: the FBS is simulated and the statement comes from the same
+// simulation (engine/simulacion.py): one account's statement is generated and
+// the ledger is pulled from FBS with that same account and dates
 fetch(`${BASE}api/demo/estado`).then(r => r.json()).then(j => {
   if (!j.demo) return;
   $('#demoBanner').textContent = 'DEMO — datos ficticios · FBS simulado';
   $('#demoBanner').classList.remove('oculto');
-  if (!MARCA) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
+  if (!BRAND) $('#subtitulo').textContent = 'Ambiente de demo — datos ficticios';
   document.title = 'Conciliador bancario — demo';
-  generadorDemo(j.hoy);
+  demoGenerator(j.hoy);
 }).catch(() => {});
 
-const MESES_DEMO = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
+const DEMO_MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
                     'septiembre', 'octubre', 'noviembre', 'diciembre'];
-async function generadorDemo(hoy) {
+async function demoGenerator(today) {
   let j;
-  try { j = await (await fetch(conMarca(`${BASE}api/demo/cuentas`))).json(); } catch { return; }
+  try { j = await (await fetch(withBrand(`${BASE}api/demo/cuentas`))).json(); } catch { return; }
   if (!j.cuentas || !j.cuentas.length) return;
-  const [a, m] = [Number(hoy.slice(0, 4)), Number(hoy.slice(5, 7))];
+  const [a, m] = [Number(today.slice(0, 4)), Number(today.slice(5, 7))];
   const iso = (y, mm, d) => `${y}-${String(mm).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-  const ant = m === 1 ? [a - 1, 12] : [a, m - 1];
-  const finAnt = new Date(ant[0], ant[1], 0).getDate();
-  const periodos = [
-    { id: 'anterior', txt: `Mes anterior (${MESES_DEMO[ant[1] - 1]} ${ant[0]})`,
-      desde: iso(ant[0], ant[1], 1), hasta: iso(ant[0], ant[1], finAnt) },
-    { id: 'curso', txt: `Mes en curso (1 al ${Number(hoy.slice(8, 10))} de ${MESES_DEMO[m - 1]})`,
-      desde: iso(a, m, 1), hasta: hoy },
+  const prevMonth = m === 1 ? [a - 1, 12] : [a, m - 1];
+  const prevMonthEnd = new Date(prevMonth[0], prevMonth[1], 0).getDate();
+  const periods = [
+    { id: 'anterior', txt: `Mes anterior (${DEMO_MONTHS[prevMonth[1] - 1]} ${prevMonth[0]})`,
+      desde: iso(prevMonth[0], prevMonth[1], 1), hasta: iso(prevMonth[0], prevMonth[1], prevMonthEnd) },
+    { id: 'curso', txt: `Mes en curso (1 al ${Number(today.slice(8, 10))} de ${DEMO_MONTHS[m - 1]})`,
+      desde: iso(a, m, 1), hasta: today },
   ];
-  $('#demoPeriodo').innerHTML = periodos.map(p => `<option value="${p.id}">${esc(p.txt)}</option>`).join('');
-  const orden = [...j.cuentas].sort((x, y) => (x.rol === 'principal' ? 0 : 1) - (y.rol === 'principal' ? 0 : 1));
-  $('#demoCuenta').innerHTML = orden.map(c =>
+  $('#demoPeriodo').innerHTML = periods.map(p => `<option value="${p.id}">${esc(p.txt)}</option>`).join('');
+  const ordered = [...j.cuentas].sort((x, y) => (x.rol === 'principal' ? 0 : 1) - (y.rol === 'principal' ? 0 : 1));
+  $('#demoCuenta').innerHTML = ordered.map(c =>
     `<option value="${esc(c.cuenta_id)}">${esc(c.etiqueta)} · ${esc(c.formato)}</option>`).join('');
-  const elegido = () => periodos.find(p => p.id === $('#demoPeriodo').value) || periodos[0];
-  const url = () => conMarca(`${BASE}api/demo/extracto?cuenta=${encodeURIComponent($('#demoCuenta').value)}` +
-    `&desde=${elegido().desde}&hasta=${elegido().hasta}`);
-  const pintarLink = () => { $('#lnkDemoDescargar').href = url(); };
-  ['#demoCuenta', '#demoPeriodo'].forEach(s => $(s).addEventListener('change', pintarLink));
-  pintarLink();
+  const chosenPeriod = () => periods.find(p => p.id === $('#demoPeriodo').value) || periods[0];
+  const url = () => withBrand(`${BASE}api/demo/extracto?cuenta=${encodeURIComponent($('#demoCuenta').value)}` +
+    `&desde=${chosenPeriod().desde}&hasta=${chosenPeriod().hasta}`);
+  const refreshLink = () => { $('#lnkDemoDescargar').href = url(); };
+  ['#demoCuenta', '#demoPeriodo'].forEach(s => $(s).addEventListener('change', refreshLink));
+  refreshLink();
   $('#btnDemoCargar').addEventListener('click', async () => {
-    const msj = $('#demoMsj'), p = elegido();
-    msj.style.color = 'var(--texto2)';
-    msj.innerHTML = '<span class="spinner"></span>Generando el extracto…';
+    const msg = $('#demoMsj'), p = chosenPeriod();
+    msg.style.color = 'var(--texto2)';
+    msg.innerHTML = '<span class="spinner"></span>Generando el extracto…';
     $('#btnDemoCargar').disabled = true;
     try {
       const r = await fetch(url());
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'No se pudo generar el extracto');
-      const nombre = (r.headers.get('Content-Disposition') || '').split('filename="')[1]?.replace(/"$/, '') || 'extracto';
-      archivosPdf = [new File([await r.blob()], nombre)];
-      archivoXls = null;
-      // el mayor: la misma cuenta y las mismas fechas, del FBS
+      const name = (r.headers.get('Content-Disposition') || '').split('filename="')[1]?.replace(/"$/, '') || 'extracto';
+      statementFiles = [new File([await r.blob()], name)];
+      ledgerFile = null;
+      // the ledger: the same account and the same dates, from FBS
       const sel = document.getElementById('fbsCtaMensual');
       if (sel && [...sel.options].some(o => o.value === $('#demoCuenta').value)) {
         sel.value = $('#demoCuenta').value;
         $('#fbsDesdeM').value = p.desde;
         $('#fbsHastaM').value = p.hasta;
       }
-      pintarListas();
-      msj.style.color = 'var(--verde, #4ade80)';
-      msj.textContent = `Extracto de ${r.headers.get('X-Movimientos')} movimientos y mayor del FBS listos: tocá «Conciliar».`;
+      paintFileLists();
+      msg.style.color = 'var(--verde, #4ade80)';
+      msg.textContent = `Extracto de ${r.headers.get('X-Movimientos')} movimientos y mayor del FBS listos: tocá «Conciliar».`;
     } catch (e) {
-      msj.style.color = 'var(--rojo)';
-      msj.textContent = e.message;
+      msg.style.color = 'var(--rojo)';
+      msg.textContent = e.message;
     }
     $('#btnDemoCargar').disabled = false;
   });
   $('#kitDemo').classList.remove('oculto');
 }
-let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
+let statementFiles = [], ledgerFile = null, data = null, activeTab = null;
 
-// ?marca=X etiqueta la conciliación con esa marca y mantiene los links dentro
-// del contexto (el hub puede linkear una página por marca)
-const MARCA = new URLSearchParams(location.search).get('marca') || '';
-const conMarca = (url) => MARCA
-  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
+// ?marca=X tags the reconciliation with that brand and keeps the links inside
+// the context (the hub can link one page per brand)
+const BRAND = new URLSearchParams(location.search).get('marca') || '';
+const withBrand = (url) => BRAND
+  ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(BRAND)
   : url;
-if (MARCA) {
-  $('#linkDiario').href = conMarca(`${BASE}diario`);
-  fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
-    const nombre = j.marca_nombre || MARCA;
-    $('#chipMarca').textContent = nombre;
+if (BRAND) {
+  $('#linkDiario').href = withBrand(`${BASE}diario`);
+  fetch(withBrand(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
+    const name = j.marca_nombre || BRAND;
+    $('#chipMarca').textContent = name;
     $('#chipMarca').classList.remove('oculto');
-    document.title = `Conciliador bancario — ${nombre}`;
-    $('#subtitulo').textContent = `Extractos vs. libro mayor — ${nombre}`;
+    document.title = `Conciliador bancario — ${name}`;
+    $('#subtitulo').textContent = `Extractos vs. libro mayor — ${name}`;
   });
 }
 
-// Tema claro/oscuro: elección compartida entre las páginas del conciliador
-function pintarTema() {
+// Light/dark theme: a choice shared by the reconciler's pages
+function paintTheme() {
   $('#btnTema').textContent = document.body.classList.contains('claro')
     ? 'Modo oscuro' : 'Modo claro';
 }
 $('#btnTema').addEventListener('click', () => {
-  const claro = document.body.classList.toggle('claro');
-  localStorage.setItem('tema', claro ? 'claro' : 'oscuro');
-  pintarTema();
+  const light = document.body.classList.toggle('claro');
+  localStorage.setItem('tema', light ? 'claro' : 'oscuro');
+  paintTheme();
 });
-pintarTema();
+paintTheme();
 
-// En celular, Equivalencias y Gastos bajan a la tarjeta: el header queda con tema y link
-const mqMovil = matchMedia('(max-width: 720px)');
-function ubicarConfig() {
+// On a phone, Equivalences and Fees move down to the card: the header keeps the theme and the link
+const mqMobile = matchMedia('(max-width: 720px)');
+function placeConfigButtons() {
   ['btnEquiv', 'btnGastos'].forEach(id => {
     const b = $('#' + id);
-    if (mqMovil.matches) { if (b.parentElement.id !== 'configMovil') $('#configMovil').appendChild(b); }
+    if (mqMobile.matches) { if (b.parentElement.id !== 'configMovil') $('#configMovil').appendChild(b); }
     else if (!b.parentElement.classList.contains('zona-derecha')) $('.zona-derecha').insertBefore(b, $('#badgeSim'));
   });
 }
-mqMovil.addEventListener('change', ubicarConfig);
-ubicarConfig();
+mqMobile.addEventListener('change', placeConfigButtons);
+placeConfigButtons();
 
-// Modo simulación: con ?simular en la URL, la IA no consume API
-const MODO_SIMULACION = new URLSearchParams(location.search).has('simular');
-if (MODO_SIMULACION) {
+// Simulation mode: with ?simular in the URL, the AI doesn't spend API
+const SIMULATION_MODE = new URLSearchParams(location.search).has('simular');
+if (SIMULATION_MODE) {
   document.getElementById('badgeSim').classList.remove('oculto');
   document.getElementById('ovSim').classList.remove('oculto');
   document.getElementById('bannerSim').classList.remove('oculto');
 }
 
-function configurarZona(zona, input, multiple, alCambiar) {
-  zona.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
-  zona.addEventListener('keydown', e => {
+function setUpDropZone(zone, input, multiple, onChange) {
+  zone.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') input.click(); });
+  zone.addEventListener('keydown', e => {
       if (!e.target.classList.contains('zona-cta')) return;
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
     });
-  zona.addEventListener('dragover', e => { e.preventDefault(); zona.classList.add('arrastrando'); });
-  zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
-  zona.addEventListener('drop', e => {
-    e.preventDefault(); zona.classList.remove('arrastrando');
-    alCambiar([...e.dataTransfer.files]);
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('arrastrando'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('arrastrando'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('arrastrando');
+    onChange([...e.dataTransfer.files]);
   });
-  input.addEventListener('change', () => alCambiar([...input.files]));
+  input.addEventListener('change', () => onChange([...input.files]));
 }
 
-configurarZona($('#zonaPdf'), $('#inputPdf'), true, files => {
-  archivosPdf = archivosPdf.concat(files.filter(f => /\.(pdf|xlsx?|csv|txt)$/i.test(f.name)));
-  pintarListas();
+setUpDropZone($('#zonaPdf'), $('#inputPdf'), true, files => {
+  statementFiles = statementFiles.concat(files.filter(f => /\.(pdf|xlsx?|csv|txt)$/i.test(f.name)));
+  paintFileLists();
 });
-configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
+setUpDropZone($('#zonaXls'), $('#inputXls'), false, files => {
   const f = files.find(f => /\.xlsx?$/i.test(f.name));
-  if (f) archivoXls = f;
-  pintarListas();
+  if (f) ledgerFile = f;
+  paintFileLists();
 });
 
-const fbsCtaSel = () => document.getElementById('fbsCtaMensual')?.value || '';
+const selectedFbsAccount = () => document.getElementById('fbsCtaMensual')?.value || '';
 
-function pintarListas() {
-  $('#listaPdf').innerHTML = archivosPdf.map((f, i) =>
+function paintFileLists() {
+  $('#listaPdf').innerHTML = statementFiles.map((f, i) =>
     `<li><span>${esc(f.name)}</span><button onclick="quitarPdf(${i}, event)" aria-label="Quitar ${esc(f.name)}">×</button></li>`).join('');
-  $('#listaXls').innerHTML = archivoXls ?
-    `<li><span>${esc(archivoXls.name)}</span><button onclick="quitarXls(event)" aria-label="Quitar ${esc(archivoXls.name)}">×</button></li>` : '';
-  // el mayor puede venir del Excel subido o del FBS (cuenta + rango)
-  const mayorFbsOk = fbsCtaSel() && $('#fbsDesdeM').value && $('#fbsHastaM').value;
-  $('#btnConciliar').disabled = !(archivosPdf.length && (archivoXls || mayorFbsOk));
+  $('#listaXls').innerHTML = ledgerFile ?
+    `<li><span>${esc(ledgerFile.name)}</span><button onclick="quitarXls(event)" aria-label="Quitar ${esc(ledgerFile.name)}">×</button></li>` : '';
+  // the ledger can come from the uploaded Excel or from FBS (account + range)
+  const fbsLedgerOk = selectedFbsAccount() && $('#fbsDesdeM').value && $('#fbsHastaM').value;
+  $('#btnConciliar').disabled = !(statementFiles.length && (ledgerFile || fbsLedgerOk));
 }
 
-// FBS directo para el mayor mensual: cuentas configuradas en el hub (por marca)
-fetch(conMarca(`${BASE}api/fbs-sql`)).then(r => r.json()).then(j => {
+// Direct FBS for the monthly ledger: accounts configured in the hub (per brand)
+fetch(withBrand(`${BASE}api/fbs-sql`)).then(r => r.json()).then(j => {
   if (j.modo !== 'hub' || !j.cuentas.length) return;
-  const hoy = new Date().toISOString().slice(0, 10);
-  $('#fbsDesdeM').value = hoy.slice(0, 8) + '01';   // el mes en curso por defecto
-  $('#fbsHastaM').value = hoy;
+  const today = new Date().toISOString().slice(0, 10);
+  $('#fbsDesdeM').value = today.slice(0, 8) + '01';   // the current month by default
+  $('#fbsHastaM').value = today;
   const sel = $('#fbsCtaMensual');
   j.cuentas.forEach(c => {
     const op = document.createElement('option');
@@ -992,55 +992,55 @@ fetch(conMarca(`${BASE}api/fbs-sql`)).then(r => r.json()).then(j => {
   });
   $('#fbsMensual').style.display = 'block';
   ['fbsCtaMensual', 'fbsDesdeM', 'fbsHastaM'].forEach(id =>
-    document.getElementById(id).addEventListener('change', pintarListas));
+    document.getElementById(id).addEventListener('change', paintFileLists));
 }).catch(() => {});
-window.quitarPdf = (i, e) => { e.stopPropagation(); archivosPdf.splice(i, 1); pintarListas(); };
-window.quitarXls = e => { e.stopPropagation(); archivoXls = null; pintarListas(); };
+window.quitarPdf = (i, e) => { e.stopPropagation(); statementFiles.splice(i, 1); paintFileLists(); };
+window.quitarXls = e => { e.stopPropagation(); ledgerFile = null; paintFileLists(); };
 
 const fmt = n => n == null || n === '' ? '' :
   Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 $('#btnConciliar').addEventListener('click', async () => {
-  if (MODO_SIMULACION && $('#chkIa').checked) {
-    const seguir = await confirmar({
+  if (SIMULATION_MODE && $('#chkIa').checked) {
+    const proceed = await askConfirm({
       titulo: 'Modo simulación',
       texto: 'La URL contiene ?simular: las sugerencias de IA serán de prueba, generadas sin usar la API. ' +
         'Para una corrida real, salí del modo simulación con el botón del aviso de arriba.',
       ok: 'Continuar en simulación' });
-    if (!seguir) return;
+    if (!proceed) return;
   }
   const fd = new FormData();
-  archivosPdf.forEach(f => fd.append('extractos', f));
-  if (archivoXls) {
-    fd.append('mayor', archivoXls);       // el Excel subido tiene prioridad
+  statementFiles.forEach(f => fd.append('extractos', f));
+  if (ledgerFile) {
+    fd.append('mayor', ledgerFile);       // the uploaded Excel takes precedence
   } else {
-    fd.append('fbs_cuenta', fbsCtaSel());
+    fd.append('fbs_cuenta', selectedFbsAccount());
     fd.append('fbs_desde', $('#fbsDesdeM').value);
     fd.append('fbs_hasta', $('#fbsHastaM').value);
   }
-  fd.append('usar_ia', $('#chkIa').checked ? (MODO_SIMULACION ? 'simular' : 'si') : 'no');
-  fd.append('marca', MARCA);
+  fd.append('usar_ia', $('#chkIa').checked ? (SIMULATION_MODE ? 'simular' : 'si') : 'no');
+  fd.append('marca', BRAND);
   $('#btnConciliar').disabled = true;
   $('#estado').textContent = '';
   $('#avisos').innerHTML = '';
-  mostrarOverlay();
+  showOverlay();
   $('#ovFase').textContent = 'Subiendo archivos';
   try {
     const resp = await fetch(`${BASE}api/conciliar`, { method: 'POST', body: fd });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
     localStorage.setItem('ultimo_job', json.job_id);
-    seguirProgreso(json.job_id);
+    followProgress(json.job_id);
   } catch (err) {
-    errorOverlay(err.message);
+    overlayError(err.message);
   }
 });
 
-/* ============ overlay de progreso ============ */
+/* ============ progress overlay ============ */
 let pollTimer = null, tickTimer = null, etaBase = null, etaTs = 0;
 
-function mostrarOverlay() {
-  abrirModal('overlay');
+function showOverlay() {
+  openModal('overlay');
   $('#ovError').classList.add('oculto');
   $('#ovCerrar').classList.add('oculto');
   $('#ovAnillo').style.display = '';
@@ -1049,8 +1049,8 @@ function mostrarOverlay() {
   $('#ovPct').textContent = '0%';
   $('#ovEta').textContent = '';
 }
-function ocultarOverlay() {
-  cerrarModal('overlay');
+function hideOverlay() {
+  closeModal('overlay');
   clearInterval(pollTimer); clearInterval(tickTimer);
   pollTimer = tickTimer = null;
 }
@@ -1061,14 +1061,14 @@ const fmtEta = s => {
   return `~${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')} s restantes`;
 };
 
-function seguirProgreso(jobId) {
-  mostrarOverlay();
-  const consultar = async () => {
+function followProgress(jobId) {
+  showOverlay();
+  const poll = async () => {
     try {
       const r = await fetch(`${BASE}api/progreso/${jobId}`);
       const p = await r.json();
       if (!r.ok) throw new Error(p.error || 'Job no encontrado');
-      if (p.estado === 'error') { errorOverlay(p.mensaje); return; }
+      if (p.estado === 'error') { overlayError(p.mensaje); return; }
       $('#ovFase').textContent = p.fase || '';
       $('#ovBarra').style.transform = `scaleX(${(p.porcentaje || 0) / 100})`;
       $('#ovPct').textContent = (p.porcentaje || 0) + '%';
@@ -1076,22 +1076,22 @@ function seguirProgreso(jobId) {
       if (p.estado === 'listo') {
         clearInterval(pollTimer); clearInterval(tickTimer);
         await cargarResultado(jobId);
-        ocultarOverlay();
+        hideOverlay();
       }
-    } catch (e) { errorOverlay(e.message); }
+    } catch (e) { overlayError(e.message); }
   };
-  consultar();
-  pollTimer = setInterval(consultar, 1500);
+  poll();
+  pollTimer = setInterval(poll, 1500);
   tickTimer = setInterval(() => {
     if (etaBase == null) return;
-    const resta = etaBase - (Date.now() - etaTs) / 1000;
-    $('#ovEta').textContent = fmtEta(Math.max(0, resta));
+    const remaining = etaBase - (Date.now() - etaTs) / 1000;
+    $('#ovEta').textContent = fmtEta(Math.max(0, remaining));
   }, 1000);
 }
 
-function errorOverlay(msg) {
+function overlayError(msg) {
   clearInterval(pollTimer); clearInterval(tickTimer);
-  abrirModal('overlay');
+  openModal('overlay');
   $('#ovAnillo').style.display = 'none';
   $('#ovTitulo').textContent = 'No se pudo completar la conciliación';
   $('#ovFase').textContent = '';
@@ -1102,70 +1102,71 @@ function errorOverlay(msg) {
   $('#btnConciliar').disabled = false;
 }
 
+// name kept: inline onclick handlers call it by name
 async function cargarResultado(jobId) {
   const r = await fetch(`${BASE}api/resultado/${jobId}`);
   const json = await r.json();
   if (!r.ok) throw new Error(json.error || 'Error al cargar el resultado');
-  datos = json;
-  // la URL identifica la conciliación: se puede compartir con otro usuario
+  data = json;
+  // the URL identifies the reconciliation: it can be shared with another user
   const params = new URLSearchParams(location.search);
   params.set('job', jobId);
   history.replaceState(null, '', '?' + params.toString());
   localStorage.setItem('ultimo_job', jobId);
-  mostrarResultados();
+  showResults();
   $('#estado').textContent = 'Listo';
   $('#btnConciliar').disabled = false;
 }
 
-/* Entrar con ?job= es ver el DETALLE de una conciliación ya procesada (el
-   link del tablero diario, o uno compartido). En ese caso la zona para subir
-   archivos no corresponde: confunde ("me mandó a la mensual") y, peor, desde
-   ahí se podía disparar una conciliación mensual sin querer. */
-function modoDetalle() {
+/* Entering with ?job= means viewing the DETAIL of an already processed
+   reconciliation (the daily board's link, or a shared one). In that case the
+   upload area doesn't belong: it confuses ("it sent me to the monthly one")
+   and, worse, a monthly reconciliation could be fired from there by mistake. */
+function detailMode() {
   $('#cargaCard').classList.add('oculto');
-  const barra = $('#barraDetalle');
-  const esDiaria = datos && datos.cuenta;
-  $('#detalleQue').innerHTML = esDiaria
+  const bar = $('#barraDetalle');
+  const isDaily = data && data.cuenta;
+  $('#detalleQue').innerHTML = isDaily
     ? `Estás viendo el <b>detalle de la conciliación diaria</b> de
-       <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que hagas acá (conciliar a
+       <b>${esc(data.cuenta.etiqueta)}</b>. Todo lo que hagas acá (conciliar a
        mano, marcar cargados, reglas) se guarda en esa conciliación.`
     : 'Estás viendo el <b>detalle de una conciliación ya procesada</b>.';
-  const volver = $('#btnVolverDiario');
+  const back = $('#btnVolverDiario');
   const hist = $('#btnHistConc');
-  if (esDiaria) {
-    const g = datos.grupo_diario;
-    volver.href = conMarca(`${BASE}diario${g ? `?grupo=${encodeURIComponent(g)}` : ''}`);
-    volver.classList.remove('oculto');
+  if (isDaily) {
+    const g = data.grupo_diario;
+    back.href = withBrand(`${BASE}diario${g ? `?grupo=${encodeURIComponent(g)}` : ''}`);
+    back.classList.remove('oculto');
     if (g) {
-      hist.href = conMarca(`${BASE}diario?grupo=${encodeURIComponent(g)}` +
-                           `&conciliados=${encodeURIComponent(datos.cuenta.id)}`);
+      hist.href = withBrand(`${BASE}diario?grupo=${encodeURIComponent(g)}` +
+                            `&conciliados=${encodeURIComponent(data.cuenta.id)}`);
       hist.classList.remove('oculto');
     }
   } else {
-    volver.classList.add('oculto');
+    back.classList.add('oculto');
     hist.classList.add('oculto');
   }
-  barra.classList.remove('oculto');
-  avisarCobertura();
+  bar.classList.remove('oculto');
+  warnCoverage();
 }
 
-// El mayor se trae del FBS por rango de fechas: si el rango se quedó corto,
-// hay movimientos del banco que no tienen asiento contra el cual cruzarse y
-// figuran "sin asiento" aunque en el FBS existan. Se dice explícitamente.
-function avisarCobertura() {
-  const c = datos && datos.cobertura_mayor;
-  const caja = $('#avisoCobertura');
-  if (!c) { caja.classList.add('oculto'); return; }
+// The ledger is pulled from FBS by date range: if the range fell short, there
+// are bank movements with no entry to match against, shown "sin asiento" even
+// though they exist in FBS. It's said explicitly.
+function warnCoverage() {
+  const c = data && data.cobertura_mayor;
+  const box = $('#avisoCobertura');
+  if (!c) { box.classList.add('oculto'); return; }
   const d = iso => iso ? iso.split('-').slice(1).reverse().join('/') : '';
-  const partes = [];
-  if (c.antes) partes.push(`${c.antes} anterior${c.antes === 1 ? '' : 'es'} al ${d(c.mayor_desde)}`);
-  if (c.despues) partes.push(`${c.despues} posterior${c.despues === 1 ? '' : 'es'} al ${d(c.mayor_hasta)}`);
-  caja.innerHTML = `<b>Ojo: el mayor no cubre todo el extracto.</b> Se trajo del FBS el mayor
+  const parts = [];
+  if (c.antes) parts.push(`${c.antes} anterior${c.antes === 1 ? '' : 'es'} al ${d(c.mayor_desde)}`);
+  if (c.despues) parts.push(`${c.despues} posterior${c.despues === 1 ? '' : 'es'} al ${d(c.mayor_hasta)}`);
+  box.innerHTML = `<b>Ojo: el mayor no cubre todo el extracto.</b> Se trajo del FBS el mayor
     del ${d(c.mayor_desde)} al ${d(c.mayor_hasta)}, y el extracto llega del ${d(c.banco_desde)}
-    al ${d(c.banco_hasta)}: hay <b>${c.fuera} movimientos</b> (${partes.join(' y ')}) que no tienen
+    al ${d(c.banco_hasta)}: hay <b>${c.fuera} movimientos</b> (${parts.join(' y ')}) que no tienen
     asiento contra el cual cruzarse. Si alguno de esos figura acá como "sin asiento" pero en el
     FBS existe, es por esto: volvé a traer el mayor desde el ${d(c.banco_desde)} y conciliá de nuevo.`;
-  caja.classList.remove('oculto');
+  box.classList.remove('oculto');
 }
 
 $('#btnNuevaConc').addEventListener('click', () => {
@@ -1174,11 +1175,11 @@ $('#btnNuevaConc').addEventListener('click', () => {
   $('#cargaCard').scrollIntoView(SCROLL);
 });
 
-// Al entrar: primero un ?job compartido por link; si no, el último trabajo propio
-(async function retomarUltimoJob() {
-  const compartido = new URLSearchParams(location.search).get('job');
-  if (compartido) {
-    try { await cargarResultado(compartido); modoDetalle(); return; }
+// On entry: first a ?job shared by link; otherwise the user's own last job
+(async function resumeLastJob() {
+  const shared = new URLSearchParams(location.search).get('job');
+  if (shared) {
+    try { await cargarResultado(shared); detailMode(); return; }
     catch (e) {
       $('#avisos').innerHTML = `<div class="aviso error">No se encontró la
         conciliación del link (${esc(e.message)}). Puede haberse borrado del servidor.</div>`;
@@ -1191,9 +1192,9 @@ $('#btnNuevaConc').addEventListener('click', () => {
     if (!r.ok) return;
     const p = await r.json();
     if (p.estado === 'procesando') {
-      seguirProgreso(j);
+      followProgress(j);
       $('#btnConciliar').disabled = true;
-    } else if (p.estado === 'listo' && !datos) {
+    } else if (p.estado === 'listo' && !data) {
       $('#avisos').innerHTML = `<div class="aviso info">Hay una conciliación previa disponible.
         <button class="secundario btn-chico" style="margin-left:8px;"
           onclick="cargarResultado(${jsArg(j)})">Retomar resultado</button></div>`;
@@ -1201,13 +1202,13 @@ $('#btnNuevaConc').addEventListener('click', () => {
   } catch {}
 })();
 
-// cruces anulados (vetos): se listan en la solapa de excluidos y se pueden revertir
-let vetos = [];
-async function cargarVetos() {
-  try { vetos = (await (await fetch(`${BASE}api/vetos`)).json()).vetos || []; } catch {}
+// cancelled matches (vetoes): listed in the excluded tab and can be reverted
+let vetoes = [];
+async function loadVetoes() {
+  try { vetoes = (await (await fetch(`${BASE}api/vetos`)).json()).vetos || []; } catch {}
 }
-cargarVetos();
-const METODOS = `
+loadVetoes();
+const METHODS = `
         <dt>importe+referencia</dt><dd>mismo importe y mismo número de comprobante, cheque o referencia en el banco y en el asiento.</dd>
         <dt>importe+beneficiario</dt><dd>mismo importe y mismo tercero (nombre o CUIT) en los dos lados.</dd>
         <dt>importe único</dt><dd>ese importe aparece una sola vez en el período de cada lado, así que solo pueden ser el mismo.</dd>
@@ -1216,15 +1217,15 @@ const METODOS = `
         <dt>equivalencia</dt><dd>los textos coinciden por el diccionario de equivalencias del botón del header.</dd>
         <dt>tolerancia</dt><dd>importes que difieren por centavos o por una comisión chica.</dd>
         <dt>confirmado en E</dt><dd>venía cruzado contra la cuenta O y en esta corrida apareció ya confirmado en la E.</dd>`;
-const GLOSARIO_TABS = {
+const TAB_GLOSSARY = {
   conciliados_e: ['Movimientos del extracto que encontraron su asiento en la cuenta E del FBS. Ya están conciliados: no hay nada que hacer, salvo revisar un cruce que no corresponda.',
     `<dt>Cuenta E</dt><dd>la cuenta del FBS donde queda el asiento cuando el ingreso o egreso ya está confirmado; es la que tiene que coincidir con el banco.</dd>
-     <dt>Método</dt><dd>cómo encontró el sistema este par:</dd>${METODOS}
+     <dt>Método</dt><dd>cómo encontró el sistema este par:</dd>${METHODS}
      <dt>Anular cruce</dt><dd>si el par no corresponde: cada parte vuelve a su lista de pendientes y el sistema no lo vuelve a proponer. Se revierte desde "Excluidos y cruces anulados".</dd>`],
   conciliados_o: ['Movimientos del extracto que cruzaron con un asiento de la cuenta O: la orden de pago o el recibo están cargados pero todavía no confirmados en el FBS. Tarea: confirmarlos en el FBS y tildarlos acá.',
     `<dt>Cuenta O</dt><dd>cuenta transitoria del FBS donde entran las órdenes de pago y recibos hasta que se confirman; al confirmar pasan a la E.</dd>
      <dt>Confirmar</dt><dd>marca que ya lo confirmaste en el FBS. "Confirmar todos" tilda la solapa entera.</dd>
-     <dt>Método</dt><dd>cómo se encontró el par:</dd>${METODOS}`],
+     <dt>Método</dt><dd>cómo se encontró el par:</dd>${METHODS}`],
   haberes_sin_contabilizar: ['Pagos de sueldos que están en el extracto y no tienen asiento. Tarea: con esta lista se arma el asiento de sueldos en el FBS; en la próxima corrida cruzan solos.',
     `<dt>Cargado</dt><dd>marca de control: ya armaste el asiento de sueldos con este movimiento. La fila queda pintada hasta que cruce sola en la próxima corrida.</dd>
      <dt>Transferir</dt><dd>si no es un sueldo, lo movés a "Banco sin asiento" o a "Gastos bancarios" explicando el motivo; queda aprendido.</dd>`],
@@ -1254,24 +1255,24 @@ const GLOSARIO_TABS = {
     `<dt>Confianza</dt><dd>alta, media o baja según la IA; leé el motivo antes de aceptar.</dd>
      <dt>Aceptar</dt><dd>concilia ese par como si lo hubieras hecho a mano y genera una regla aprendida.</dd>`],
 };
-function htmlGlosario(tab) {
-  const g = GLOSARIO_TABS[tab];
+function glossaryHtml(tab) {
+  const g = TAB_GLOSSARY[tab];
   if (!g) return '';
   return `<details class="glosario"><summary>Qué es esta lista y qué hacer con ella</summary>
     <p style="margin:6px 0 8px; line-height:1.5;">${g[0]}</p><dl>${g[1]}</dl></details>`;
 }
 
-function htmlVetos() {
-  if (!vetos.length) return '';
-  const fmtF = f => f ? f.split('-').reverse().join('/') : '';
+function vetoesHtml() {
+  if (!vetoes.length) return '';
+  const fmtDate = f => f ? f.split('-').reverse().join('/') : '';
   return `<section class="vetos" aria-labelledby="vetosTitulo">
-    <h4 id="vetosTitulo">Cruces anulados (${vetos.length})</h4>
+    <h4 id="vetosTitulo">Cruces anulados (${vetoes.length})</h4>
     <p class="exp">Pares que anulaste con "Anular cruce": el sistema no los vuelve a proponer en ninguna corrida.
       "Volver a permitir" saca el veto; en la próxima corrida pueden cruzarse de nuevo.</p>
-    ${vetos.map(v => `<div class="eq-fila">
-      <span class="lado-eq"><b>${esc(v.mov.descripcion)}</b><small>${esc(fmtF(v.mov.fecha))} · $ ${fmt(v.mov.neto)}${v.mov.comprobante ? ' · ' + esc(v.mov.comprobante) : ''}</small></span>
+    ${vetoes.map(v => `<div class="eq-fila">
+      <span class="lado-eq"><b>${esc(v.mov.descripcion)}</b><small>${esc(fmtDate(v.mov.fecha))} · $ ${fmt(v.mov.neto)}${v.mov.comprobante ? ' · ' + esc(v.mov.comprobante) : ''}</small></span>
       <span class="flecha" aria-hidden="true">≠</span>
-      <span class="lado-eq"><b>${esc(v.asiento.hoja)} ${esc(v.asiento.asiento)}</b><small>${esc(fmtF(v.asiento.fecha))} · Debe $ ${fmt(v.asiento.debe)} · Haber $ ${fmt(v.asiento.haber)}${v.metodo ? ' · era ' + esc(v.metodo) : ''}${v.fecha ? ' · anulado el ' + esc(fmtF(v.fecha)) : ''}</small></span>
+      <span class="lado-eq"><b>${esc(v.asiento.hoja)} ${esc(v.asiento.asiento)}</b><small>${esc(fmtDate(v.asiento.fecha))} · Debe $ ${fmt(v.asiento.debe)} · Haber $ ${fmt(v.asiento.haber)}${v.metodo ? ' · era ' + esc(v.metodo) : ''}${v.fecha ? ' · anulado el ' + esc(fmtDate(v.fecha)) : ''}</small></span>
       <button class="secundario btn-fila" type="button" onclick="permitirCruce(${jsArg(v.id)})">Volver a permitir</button>
     </div>`).join('')}
   </section>`;
@@ -1281,56 +1282,56 @@ window.permitirCruce = async id => {
     const resp = await fetch(`${BASE}api/vetos/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    vetos = json.vetos || [];
-    avisar('Listo: ese par puede volver a cruzarse en la próxima corrida.', 'info');
-    const quedan = (datos.contraasientos || []).length + (datos.excluidos_mayor || []).length + vetos.length;
-    refrescarTrasManual(quedan ? 'excluidos' : 'e_sin_banco');
-  } catch (err) { avisar(err.message); }
+    vetoes = json.vetos || [];
+    notify('Listo: ese par puede volver a cruzarse en la próxima corrida.', 'info');
+    const remaining = (data.contraasientos || []).length + (data.excluidos_mayor || []).length + vetoes.length;
+    refreshAfterManual(remaining ? 'excluidos' : 'e_sin_banco');
+  } catch (err) { notify(err.message); }
 };
 
-function mostrarResultados() {
-  const r = datos.resumen;
-  const primeraVez = $('#resultados').classList.contains('oculto');
+function showResults() {
+  const r = data.resumen;
+  const firstTime = $('#resultados').classList.contains('oculto');
   $('#resultados').classList.remove('oculto');
-  const fila = (nombre, cant, imp, suave) =>
-    `<li${suave ? ' class="suave"' : ''}><span>${nombre}</span><b>${cant}${imp != null ? `${cant === '' ? '' : ' · '}$ ${fmt(imp)}` : ''}</b></li>`;
-  const pctExpl = r.porcentaje_explicado ?? r.porcentaje_conciliado;
-  const hab = r.haberes_sin_contabilizar || { cantidad: 0, importe: 0 };
-  const oSin = r.o_pendientes_sin_banco || { cantidad: 0, importe: 0 };
-  const pendientes = r.banco_sin_contabilizar.cantidad + hab.cantidad + r.e_sin_banco.cantidad + oSin.cantidad;
-  const importePend = r.banco_sin_contabilizar.importe + hab.importe + r.e_sin_banco.importe + oSin.importe;
-  const movsManual = (datos.conciliados_manual || []).reduce((s, m) => s + m.banco.length, 0);
-  const origen = datos.mayor_origen && datos.mayor_origen.tipo === 'fbs'
-    ? `directo del FBS, ${esc(datos.mayor_origen.desde)} al ${esc(datos.mayor_origen.hasta)}`
+  const row = (name, count, amount, soft) =>
+    `<li${soft ? ' class="suave"' : ''}><span>${name}</span><b>${count}${amount != null ? `${count === '' ? '' : ' · '}$ ${fmt(amount)}` : ''}</b></li>`;
+  const pctExplained = r.porcentaje_explicado ?? r.porcentaje_conciliado;
+  const payroll = r.haberes_sin_contabilizar || { cantidad: 0, importe: 0 };
+  const oWithout = r.o_pendientes_sin_banco || { cantidad: 0, importe: 0 };
+  const pending = r.banco_sin_contabilizar.cantidad + payroll.cantidad + r.e_sin_banco.cantidad + oWithout.cantidad;
+  const pendingAmount = r.banco_sin_contabilizar.importe + payroll.importe + r.e_sin_banco.importe + oWithout.importe;
+  const manualMovs = (data.conciliados_manual || []).reduce((s, m) => s + m.banco.length, 0);
+  const source = data.mayor_origen && data.mayor_origen.tipo === 'fbs'
+    ? `directo del FBS, ${esc(data.mayor_origen.desde)} al ${esc(data.mayor_origen.hasta)}`
     : 'Excel subido';
-  const ia = datos.ia;
-  const iaTexto = !ia || ia.estado === 'desactivada' || ia.estado === 'no_solicitada' ? 'sin usar'
+  const ia = data.ia;
+  const iaText = !ia || ia.estado === 'desactivada' || ia.estado === 'no_solicitada' ? 'sin usar'
     : ia.estado === 'ok' || ia.estado === 'simulada'
       ? `${ia.sugerencias.length} sugerencia${ia.sugerencias.length === 1 ? '' : 's'}, ${ia.sugerencias.filter(s => s.aceptada).length} aceptada${ia.sugerencias.filter(s => s.aceptada).length === 1 ? '' : 's'}${ia.estado === 'simulada' ? ' (simuladas)' : ''}`
       : ia.estado === 'sin_credenciales' ? 'sin clave en el servidor' : 'con error';
   $('#kpis').innerHTML = `
     <section class="bloque explicado" aria-labelledby="blqExplicado">
       <h3 id="blqExplicado">Extracto explicado</h3>
-      <div class="cifra">${pctExpl}%<small>de ${r.movimientos_banco} movimientos</small></div>
+      <div class="cifra">${pctExplained}%<small>de ${r.movimientos_banco} movimientos</small></div>
       <ul>
-        ${fila('Conciliados con la cuenta E', r.conciliados_e)}
-        ${fila('En O, falta confirmar en el FBS', r.en_o_pendientes_confirmar)}
-        ${fila('Conciliados a mano', movsManual)}
-        ${fila('Gastos justificados por la nota de débito', r.gastos_explicados || 0)}
-        ${fila('Asiento por asiento, sin contar gastos', r.porcentaje_conciliado + '%', null, true)}
+        ${row('Conciliados con la cuenta E', r.conciliados_e)}
+        ${row('En O, falta confirmar en el FBS', r.en_o_pendientes_confirmar)}
+        ${row('Conciliados a mano', manualMovs)}
+        ${row('Gastos justificados por la nota de débito', r.gastos_explicados || 0)}
+        ${row('Asiento por asiento, sin contar gastos', r.porcentaje_conciliado + '%', null, true)}
       </ul>
     </section>
-    <section class="bloque pendiente${pendientes ? '' : ' cero'}" aria-labelledby="blqPendiente">
+    <section class="bloque pendiente${pending ? '' : ' cero'}" aria-labelledby="blqPendiente">
       <h3 id="blqPendiente">Falta resolver</h3>
-      <div class="cifra">${pendientes}<small>${pendientes ? `ítems · $ ${fmt(importePend)}` : 'todo cruzado'}</small></div>
+      <div class="cifra">${pending}<small>${pending ? `ítems · $ ${fmt(pendingAmount)}` : 'todo cruzado'}</small></div>
       <ul>
-        ${fila('Banco sin asiento', r.banco_sin_contabilizar.cantidad, r.banco_sin_contabilizar.importe)}
-        ${hab.cantidad ? fila('Haberes sin asiento', hab.cantidad, hab.importe) : ''}
-        ${fila('Asientos E sin banco', r.e_sin_banco.cantidad, r.e_sin_banco.importe)}
-        ${oSin.cantidad ? fila('Asientos O sin banco', oSin.cantidad, oSin.importe) : ''}
+        ${row('Banco sin asiento', r.banco_sin_contabilizar.cantidad, r.banco_sin_contabilizar.importe)}
+        ${payroll.cantidad ? row('Haberes sin asiento', payroll.cantidad, payroll.importe) : ''}
+        ${row('Asientos E sin banco', r.e_sin_banco.cantidad, r.e_sin_banco.importe)}
+        ${oWithout.cantidad ? row('Asientos O sin banco', oWithout.cantidad, oWithout.importe) : ''}
       </ul>
       <div class="accion">
-        ${pendientes ? `<button class="mini" type="button" onclick="activarTab('manual'); $('#panelManual').scrollIntoView(SCROLL);">Resolver a mano</button>
+        ${pending ? `<button class="mini" type="button" onclick="activarTab('manual'); $('#panelManual').scrollIntoView(SCROLL);">Resolver a mano</button>
         <button class="secundario btn-chico" type="button" onclick="activarTab('banco_sin_contabilizar')">Ver banco sin asiento</button>`
         : '<span style="font-size:var(--fs-sm);color:var(--texto2);">No quedó nada sin explicar. Podés exportar el Excel.</span>'}
       </div>
@@ -1338,281 +1339,282 @@ function mostrarResultados() {
     <section class="bloque" aria-labelledby="blqCorrida">
       <h3 id="blqCorrida">Esta corrida</h3>
       <ul>
-        ${fila('Movimientos del extracto', r.movimientos_banco)}
-        <li><span>Libro mayor</span><b>${origen}</b></li>
-        ${fila('Gastos e impuestos bancarios', r.gastos_bancarios.cantidad, r.gastos_bancarios.importe)}
-        ${r.nota_debito && r.nota_debito.periodos ? fila('Diferencia vs. nota de débito del mayor', '', r.nota_debito.diferencia_total) : ''}
-        ${fila('Cruzados por reglas aprendidas', r.reglas_aplicadas || 0, null, !r.reglas_aplicadas)}
-        ${fila('Cruzados por equivalencias', r.equivalencias_aplicadas || 0, null, !r.equivalencias_aplicadas)}
-        <li${ia && (ia.estado === 'ok' || ia.estado === 'simulada') ? '' : ' class="suave"'}><span>IA</span><b>${iaTexto}</b></li>
+        ${row('Movimientos del extracto', r.movimientos_banco)}
+        <li><span>Libro mayor</span><b>${source}</b></li>
+        ${row('Gastos e impuestos bancarios', r.gastos_bancarios.cantidad, r.gastos_bancarios.importe)}
+        ${r.nota_debito && r.nota_debito.periodos ? row('Diferencia vs. nota de débito del mayor', '', r.nota_debito.diferencia_total) : ''}
+        ${row('Cruzados por reglas aprendidas', r.reglas_aplicadas || 0, null, !r.reglas_aplicadas)}
+        ${row('Cruzados por equivalencias', r.equivalencias_aplicadas || 0, null, !r.equivalencias_aplicadas)}
+        <li${ia && (ia.estado === 'ok' || ia.estado === 'simulada') ? '' : ' class="suave"'}><span>IA</span><b>${iaText}</b></li>
       </ul>
     </section>`;
 
-  let avisos = '', notas = '';
-  if (datos.mayor_origen && datos.mayor_origen.tipo === 'fbs') {
-    const mo = datos.mayor_origen;
-    notas += `<div class="aviso info">El libro mayor se trajo <b>directo del FBS</b>
+  let warnings = '', notes = '';
+  if (data.mayor_origen && data.mayor_origen.tipo === 'fbs') {
+    const mo = data.mayor_origen;
+    notes += `<div class="aviso info">El libro mayor se trajo <b>directo del FBS</b>
       (${mo.asientos_e} asientos E y ${mo.asientos_o} asientos O, del
       ${esc(mo.desde)} al ${esc(mo.hasta)}) — sin subir archivos.</div>`;
   }
-  (datos.avisos_marca || []).forEach(a => {
-    avisos += `<div class="aviso error"><b>Ojo con la marca:</b> ${esc(a)}</div>`;
+  (data.avisos_marca || []).forEach(a => {
+    warnings += `<div class="aviso error"><b>Ojo con la marca:</b> ${esc(a)}</div>`;
   });
-  if (datos.cruces_vetados)
-    notas += `<div class="aviso info">Se desarmaron <b>${datos.cruces_vetados}</b>
-      cruce${datos.cruces_vetados === 1 ? '' : 's'} anulado${datos.cruces_vetados === 1 ? '' : 's'}
+  if (data.cruces_vetados)
+    notes += `<div class="aviso info">Se desarmaron <b>${data.cruces_vetados}</b>
+      cruce${data.cruces_vetados === 1 ? '' : 's'} anulado${data.cruces_vetados === 1 ? '' : 's'}
       en corridas anteriores (el sistema ya no propone esos pares): cada parte
       quedó en su lista de pendientes.
       <button class="secundario btn-fila" type="button" style="margin-left:8px;"
         onclick="activarTab('excluidos'); $('#extraTab').scrollIntoView(SCROLL);">Ver cruces anulados</button></div>`;
-  if (datos.cuenta)
-    notas += `<div class="aviso info">Conciliación del <b>modo diario</b> —
-      cuenta: <b>${esc(datos.cuenta.etiqueta)}</b>. Todo lo que concilies acá
+  if (data.cuenta)
+    notes += `<div class="aviso info">Conciliación del <b>modo diario</b> —
+      cuenta: <b>${esc(data.cuenta.etiqueta)}</b>. Todo lo que concilies acá
       (manual, reglas, equivalencias) aprende igual que en el modo mensual.</div>`;
-  if (datos.arrastre)
-    notas += `<div class="aviso info">Se arrastraron
-      <b>${datos.arrastre.movimientos}</b> movimientos del banco y
-      <b>${datos.arrastre.asientos}</b> asientos del FBS que quedaron pendientes
+  if (data.arrastre)
+    notes += `<div class="aviso info">Se arrastraron
+      <b>${data.arrastre.movimientos}</b> movimientos del banco y
+      <b>${data.arrastre.asientos}</b> asientos del FBS que quedaron pendientes
       de la conciliación anterior de esta cuenta (figuran como
       "(pendiente de días anteriores)"). Lo que cruce hoy se concilia solo;
-      lo que no, se vuelve a arrastrar mañana.${datos.arrastre.desde_job ?
-      ` <a href="${conMarca(`${BASE}?job=${esc(datos.arrastre.desde_job)}`)}" target="_blank"
+      lo que no, se vuelve a arrastrar mañana.${data.arrastre.desde_job ?
+      ` <a href="${withBrand(`${BASE}?job=${esc(data.arrastre.desde_job)}`)}" target="_blank"
         style="color:var(--azul)">Ver la conciliación anterior →</a>` : ''}</div>`;
   if (r.confirmados_desde_o)
-    notas += `<div class="aviso info"><b>${r.confirmados_desde_o}</b> movimientos
+    notes += `<div class="aviso info"><b>${r.confirmados_desde_o}</b> movimientos
       que estaban "pendientes de confirmar (O)" encontraron su asiento en la
       cuenta E (ya cargados en FBS) y pasaron directo a "Cruzados con la cuenta E"
       ${r.contrapartidas_o_canceladas ? `— se cancelaron además
       ${r.contrapartidas_o_canceladas} contrapartidas en O generadas por la
       confirmación` : ''}. Los que siguen sin confirmarse continúan en la solapa
       "Confirmar en FBS (cuenta O)".</div>`;
-  if (datos.memoria_omitidos)
-    notas += `<div class="aviso info">Los archivos de hoy traían de nuevo
-      <b>${datos.memoria_omitidos.movimientos}</b> movimientos y
-      <b>${datos.memoria_omitidos.asientos}</b> asientos que ya estaban conciliados
+  if (data.memoria_omitidos)
+    notes += `<div class="aviso info">Los archivos de hoy traían de nuevo
+      <b>${data.memoria_omitidos.movimientos}</b> movimientos y
+      <b>${data.memoria_omitidos.asientos}</b> asientos que ya estaban conciliados
       en corridas anteriores de esta cuenta: se omitieron automáticamente.
       Subir el extracto o el mayor acumulado (incluso el mes entero) no duplica nada.</div>`;
   if (r.reglas_aplicadas)
-    notas += `<div class="aviso info">Se conciliaron automáticamente
+    notes += `<div class="aviso info">Se conciliaron automáticamente
       <b>${r.reglas_aplicadas}</b> movimientos usando reglas aprendidas de tus
       conciliaciones manuales anteriores (método "regla aprendida").</div>`;
   if (r.equivalencias_aplicadas)
-    notas += `<div class="aviso info">Se conciliaron automáticamente
+    notes += `<div class="aviso info">Se conciliaron automáticamente
       <b>${r.equivalencias_aplicadas}</b> movimientos usando el diccionario de
       equivalencias (p. ej. "haberes" en el extracto = "sueldos" en el sistema).
       Podés ver el método "equivalencia" en las pestañas de conciliados.</div>`;
 
   if (ia.estado === 'sin_credenciales')
-    avisos += `<div class="aviso info"><b>La IA no corrió</b>: el servidor no tiene cargada la clave.
+    warnings += `<div class="aviso info"><b>La IA no corrió</b>: el servidor no tiene cargada la clave.
       Este resultado es la conciliación determinística completa. Quien administra el servidor
       puede revisar qué ve en <a href="${BASE}api/diagnostico" target="_blank">/api/diagnostico</a>.</div>`;
   else if (ia.estado === 'simulada')
-    notas += `<div class="aviso info">Las sugerencias de IA de este resultado son
+    notes += `<div class="aviso info">Las sugerencias de IA de este resultado son
       SIMULADAS (parámetro ?simular en la URL): se generaron sin usar la API,
       solo para pruebas de la interfaz.</div>`;
   else if (ia.estado.startsWith('error'))
-    avisos += `<div class="aviso error">IA: ${esc(ia.estado)}</div>`;
-  const nCargados = datos.resumen.cargados_fbs || 0;
-  if (nCargados)
-    notas += `<div class="aviso info">Control de carga: <b>${nCargados}</b>
+    warnings += `<div class="aviso error">IA: ${esc(ia.estado)}</div>`;
+  const loadedCount = data.resumen.cargados_fbs || 0;
+  if (loadedCount)
+    notes += `<div class="aviso info">Control de carga: <b>${loadedCount}</b>
       movimiento(s) ya marcados como cargados en el FBS (quedan pintados en verde).
       Los que no marcaste siguen sin pintar; cuando aparezcan en el mayor, cruzan
       solos y salen de esta lista.</div>`;
-  const nNotas = (notas.match(/<div class="aviso info"/g) || []).length;
-  $('#avisos').innerHTML = avisos + (nNotas ? `<details class="glosario notas-corrida">
-      <summary>Qué hizo el sistema en esta corrida (${nNotas} nota${nNotas === 1 ? '' : 's'})</summary>${notas}</details>` : '');
+  const noteCount = (notes.match(/<div class="aviso info"/g) || []).length;
+  $('#avisos').innerHTML = warnings + (noteCount ? `<details class="glosario notas-corrida">
+      <summary>Qué hizo el sistema en esta corrida (${noteCount} nota${noteCount === 1 ? '' : 's'})</summary>${notes}</details>` : '');
 
-  const nHaberes = datos.banco_sin_contabilizar.filter(m => m.es_haberes).length;
+  const payrollCount = data.banco_sin_contabilizar.filter(m => m.es_haberes).length;
   const tabs = [
-    ['conciliados_e', 'Cruzados con la cuenta E', datos.conciliados_e.length],
-    ['conciliados_o', 'Confirmar en FBS (cuenta O)', datos.conciliados_o.length],
-    ['haberes_sin_contabilizar', 'Haberes sin asiento', nHaberes],
+    ['conciliados_e', 'Cruzados con la cuenta E', data.conciliados_e.length],
+    ['conciliados_o', 'Confirmar en FBS (cuenta O)', data.conciliados_o.length],
+    ['haberes_sin_contabilizar', 'Haberes sin asiento', payrollCount],
     ['banco_sin_contabilizar', 'Banco sin asiento',
-     datos.banco_sin_contabilizar.length - nHaberes],
-    ['gastos_bancarios', 'Gastos bancarios', datos.gastos_bancarios.length],
-    ['nota_debito', 'Nota de débito por mes', datos.nota_debito.length],
-    ['e_sin_banco', 'Asientos E sin banco', datos.e_sin_banco.length],
-    ['o_pendientes_sin_banco', 'Asientos O sin banco', datos.o_pendientes_sin_banco.length],
-    ['manual', 'Conciliar a mano', (datos.conciliados_manual || []).length],
+     data.banco_sin_contabilizar.length - payrollCount],
+    ['gastos_bancarios', 'Gastos bancarios', data.gastos_bancarios.length],
+    ['nota_debito', 'Nota de débito por mes', data.nota_debito.length],
+    ['e_sin_banco', 'Asientos E sin banco', data.e_sin_banco.length],
+    ['o_pendientes_sin_banco', 'Asientos O sin banco', data.o_pendientes_sin_banco.length],
+    ['manual', 'Conciliar a mano', (data.conciliados_manual || []).length],
   ];
-  const nExcl = (datos.contraasientos || []).length * 2 + (datos.excluidos_mayor || [])
-    .reduce((s, e) => s + e.mayor.length, 0) + vetos.length;
-  if (nExcl) tabs.push(['excluidos', 'Excluidos y cruces anulados', nExcl]);
+  const excludedCount = (data.contraasientos || []).length * 2 + (data.excluidos_mayor || [])
+    .reduce((s, e) => s + e.mayor.length, 0) + vetoes.length;
+  if (excludedCount) tabs.push(['excluidos', 'Excluidos y cruces anulados', excludedCount]);
   if (ia.sugerencias.length) tabs.push(['ia', 'Sugerencias IA', ia.sugerencias.length]);
-  $('#tabs').innerHTML = tabs.map(([id, nombre, n]) =>
+  $('#tabs').innerHTML = tabs.map(([id, name, n]) =>
     `<button role="tab" id="tab-${id}" data-tab="${id}" aria-selected="false" tabindex="-1"
-       aria-controls="${id === 'manual' ? 'panelManual' : 'panelTabla'}">${nombre} <span class="n">${n}</span></button>`).join('');
+       aria-controls="${id === 'manual' ? 'panelManual' : 'panelTabla'}">${name} <span class="n">${n}</span></button>`).join('');
   document.querySelectorAll('#tabs button').forEach(b =>
     b.addEventListener('click', () => activarTab(b.dataset.tab)));
   activarTab(tabs[0][0]);
-  if (primeraVez) $('#resultados').scrollIntoView(SCROLL);
+  if (firstTime) $('#resultados').scrollIntoView(SCROLL);
 }
 
 $('#tabs').addEventListener('keydown', e => {
-  const botones = [...document.querySelectorAll('#tabs button')];
-  const i = botones.indexOf(document.activeElement);
+  const buttons = [...document.querySelectorAll('#tabs button')];
+  const i = buttons.indexOf(document.activeElement);
   if (i < 0) return;
-  const paso = { ArrowRight: 1, ArrowLeft: -1, Home: -i, End: botones.length - 1 - i }[e.key];
-  if (paso == null) return;
+  const step = { ArrowRight: 1, ArrowLeft: -1, Home: -i, End: buttons.length - 1 - i }[e.key];
+  if (step == null) return;
   e.preventDefault();
-  const b = botones[(i + paso + botones.length) % botones.length];
+  const b = buttons[(i + step + buttons.length) % buttons.length];
   b.focus(); activarTab(b.dataset.tab);
 });
 
+// name kept: inline onclick handlers call it by name
 function activarTab(id) {
-  tabActiva = id;
+  activeTab = id;
   document.querySelectorAll('#tabs button').forEach(b => {
-    const activa = b.dataset.tab === id;
-    b.classList.toggle('activa', activa);
-    b.setAttribute('aria-selected', activa ? 'true' : 'false');
-    b.tabIndex = activa ? 0 : -1;
+    const active = b.dataset.tab === id;
+    b.classList.toggle('activa', active);
+    b.setAttribute('aria-selected', active ? 'true' : 'false');
+    b.tabIndex = active ? 0 : -1;
   });
   $('#panelTabla').setAttribute('aria-labelledby', 'tab-' + id);
   $('#panelManual').setAttribute('aria-labelledby', 'tab-' + id);
   const manual = id === 'manual';
   $('#panelManual').classList.toggle('oculto', !manual);
   $('#panelTabla').classList.toggle('oculto', manual);
-  if (manual) { pintarManual(); return; }
+  if (manual) { paintManual(); return; }
   $('#buscador').value = '';
-  $('#accionesTab').innerHTML = id === 'conciliados_o' && datos.conciliados_o.length ?
+  $('#accionesTab').innerHTML = id === 'conciliados_o' && data.conciliados_o.length ?
     `<button class="mini" onclick="confirmarTodos(true)">Confirmar todos</button>
      <button class="secundario btn-chico"
        onclick="confirmarTodos(false)">Desmarcar todos</button>` : '';
-  pintarTabla();
+  paintTable();
 }
 
-window.confirmarMatch = async (bancoId, valor) => {
+window.confirmarMatch = async (bankId, value) => {
   try {
-    const resp = await fetch(`${BASE}api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/confirmar/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ banco_id: bancoId, confirmado: valor }),
+      body: JSON.stringify({ banco_id: bankId, confirmado: value }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    refrescarTrasManual('conciliados_o');
-  } catch (err) { avisar(err.message); }
+    data = json;
+    refreshAfterManual('conciliados_o');
+  } catch (err) { notify(err.message); }
 };
 
-/* marca de control "ya lo cargué en el FBS": pinta la fila, no la mueve */
-window.marcarCargado = async (bancoId, cargado) => {
+/* "I already loaded it in FBS" control mark: paints the row, doesn't move it */
+window.marcarCargado = async (bankId, loaded) => {
   try {
-    const resp = await fetch(`${BASE}api/cargado/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/cargado/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ banco_id: bancoId, cargado }),
+      body: JSON.stringify({ banco_id: bankId, cargado: loaded }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    refrescarTrasManual(tabActiva);
-  } catch (err) { avisar(err.message); }
+    data = json;
+    refreshAfterManual(activeTab);
+  } catch (err) { notify(err.message); }
 };
 
-const NOMBRES_CLASIF = {
+const CLASSIFICATION_NAMES = {
   banco_sin_contabilizar: 'Banco sin asiento',
   gastos_bancarios: 'Gastos bancarios',
   haberes_sin_contabilizar: 'Haberes sin asiento',
 };
 let transferId = null;
 
-window.abrirTransfer = bancoId => {
-  const m = [...datos.banco_sin_contabilizar, ...datos.gastos_bancarios]
-    .find(x => x.id === bancoId);
+window.abrirTransfer = bankId => {
+  const m = [...data.banco_sin_contabilizar, ...data.gastos_bancarios]
+    .find(x => x.id === bankId);
   if (!m) return;
-  const actual = datos.gastos_bancarios.some(x => x.id === bancoId)
+  const current = data.gastos_bancarios.some(x => x.id === bankId)
     ? 'gastos_bancarios'
     : (m.es_haberes ? 'haberes_sin_contabilizar' : 'banco_sin_contabilizar');
-  transferId = bancoId;
+  transferId = bankId;
   $('#trMov').innerHTML = `<b>${esc(m.descripcion)}</b><br>
     ${esc(m.fecha || '')} · ${m.debito ? '− $ ' + fmt(m.debito) : '+ $ ' + fmt(m.credito)}
-    · hoy está en <b>${NOMBRES_CLASIF[actual]}</b>`;
-  $('#trDestinos').innerHTML = Object.keys(NOMBRES_CLASIF)
-    .filter(k => k !== actual)
+    · hoy está en <b>${CLASSIFICATION_NAMES[current]}</b>`;
+  $('#trDestinos').innerHTML = Object.keys(CLASSIFICATION_NAMES)
+    .filter(k => k !== current)
     .map((k, i) => `<label style="display:flex;gap:8px;align-items:center;cursor:pointer;">
       <input type="radio" name="trDestino" value="${k}" ${i === 0 ? 'checked' : ''}>
-      Transferir a <b>${NOMBRES_CLASIF[k]}</b></label>`).join('');
+      Transferir a <b>${CLASSIFICATION_NAMES[k]}</b></label>`).join('');
   $('#trMotivo').value = '';
   $('#trError').textContent = '';
-  // saliendo de Gastos se puede aprender el concepto como "nunca es gasto"
-  const concepto = (m.descripcion || '').toLowerCase().split(/\s+/)
+  // when leaving Fees, the concept can be learned as "never a fee"
+  const concept = (m.descripcion || '').toLowerCase().split(/\s+/)
     .filter(t => !/\d/.test(t)).join(' ').trim();
   $('#trAprenderBox').style.display =
-    (actual === 'gastos_bancarios' && concepto.length >= 4) ? 'flex' : 'none';
+    (current === 'gastos_bancarios' && concept.length >= 4) ? 'flex' : 'none';
   $('#trAprender').checked = false;
-  $('#trConcepto').textContent = `"${concepto}"`;
-  abrirModal('modalTransfer');
+  $('#trConcepto').textContent = `"${concept}"`;
+  openModal('modalTransfer');
   $('#trMotivo').focus();
 };
 
 $('#trGuardar').addEventListener('click', async () => {
-  const destino = document.querySelector('input[name=trDestino]:checked')?.value;
-  const motivo = $('#trMotivo').value.trim();
-  if (!motivo) { $('#trError').textContent = 'Contanos por qué va ahí — queda registrado.'; return; }
+  const target = document.querySelector('input[name=trDestino]:checked')?.value;
+  const reason = $('#trMotivo').value.trim();
+  if (!reason) { $('#trError').textContent = 'Contanos por qué va ahí — queda registrado.'; return; }
   try {
-    const resp = await fetch(`${BASE}api/reclasificar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/reclasificar/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ banco_id: transferId, destino, motivo,
+      body: JSON.stringify({ banco_id: transferId, destino: target, motivo: reason,
                              aprender_concepto: $('#trAprender').checked }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    cerrarModal('modalTransfer');
-    if (json.excepcion_aprendida) cargarGastos();   // refresca la lista de excepciones
-    refrescarTrasManual(tabActiva);
+    data = json;
+    closeModal('modalTransfer');
+    if (json.excepcion_aprendida) loadFeeTerms();   // refreshes the exceptions list
+    refreshAfterManual(activeTab);
   } catch (err) { $('#trError').textContent = err.message; }
 });
-$('#trCerrar').addEventListener('click', () => cerrarModal('modalTransfer'));
+$('#trCerrar').addEventListener('click', () => closeModal('modalTransfer'));
 $('#modalTransfer').addEventListener('click', e => {
-  if (e.target.id === 'modalTransfer') cerrarModal('modalTransfer');
+  if (e.target.id === 'modalTransfer') closeModal('modalTransfer');
 });
 
-window.anularCruce = async bancoId => {
-  const lista = tabActiva;
-  if (!(await confirmar({ titulo: '¿Anular este cruce?', texto: 'El movimiento del extracto vuelve a "Banco sin asiento" y el asiento del mayor a su lista de pendientes. El sistema no va a volver a proponer este par; si te arrepentís, lo revertís desde la solapa "Excluidos y cruces anulados".', ok: 'Anular cruce' }))) return;
+window.anularCruce = async bankId => {
+  const listName = activeTab;
+  if (!(await askConfirm({ titulo: '¿Anular este cruce?', texto: 'El movimiento del extracto vuelve a "Banco sin asiento" y el asiento del mayor a su lista de pendientes. El sistema no va a volver a proponer este par; si te arrepentís, lo revertís desde la solapa "Excluidos y cruces anulados".', ok: 'Anular cruce' }))) return;
   try {
-    const resp = await fetch(`${BASE}api/anular/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/anular/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ banco_id: bancoId, lista }),
+      body: JSON.stringify({ banco_id: bankId, lista: listName }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    await cargarVetos();
-    refrescarTrasManual(lista);
-  } catch (err) { avisar(err.message); }
+    data = json;
+    await loadVetoes();
+    refreshAfterManual(listName);
+  } catch (err) { notify(err.message); }
 };
 
-window.confirmarTodos = async valor => {
+window.confirmarTodos = async value => {
   try {
-    const resp = await fetch(`${BASE}api/confirmar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/confirmar/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ todos: valor }),
+      body: JSON.stringify({ todos: value }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    refrescarTrasManual('conciliados_o');
-  } catch (err) { avisar(err.message); }
+    data = json;
+    refreshAfterManual('conciliados_o');
+  } catch (err) { notify(err.message); }
 };
 
-function pintarTabla() {
-  const filtro = $('#buscador').value.toLowerCase();
+function paintTable() {
+  const filter = $('#buscador').value.toLowerCase();
   const thead = $('#tabla thead'), tbody = $('#tabla tbody');
-  let cols = [], filas = [];
+  let cols = [], rows = [];
 
-  if (tabActiva === 'conciliados_e' || tabActiva === 'conciliados_o') {
+  if (activeTab === 'conciliados_e' || activeTab === 'conciliados_o') {
     cols = ['Fecha banco', 'Comprobante', 'Descripción banco', 'Débito', 'Crédito',
             'Asiento', 'Fecha mayor', 'Referencia', 'Comentario', 'Método'];
-    if (tabActiva === 'conciliados_o') cols.push('Confirmado en FBS');
+    if (activeTab === 'conciliados_o') cols.push('Confirmado en FBS');
     cols.push('');
-    filas = datos[tabActiva].map(m => {
+    rows = data[activeTab].map(m => {
       const f = [
         m.banco.fecha, m.banco.comprobante, m.banco.descripcion,
         { num: m.banco.debito }, { num: m.banco.credito },
         m.asiento.asiento, m.asiento.fecha, m.asiento.referencia, m.asiento.comentario,
         { html: `<span class="metodo">${esc(m.metodo)}</span>` }];
-      if (tabActiva === 'conciliados_o')
+      if (activeTab === 'conciliados_o')
         f.push({ html: m.confirmado
           ? `<button class="mini" style="background:var(--verde)"
                onclick="confirmarMatch(${jsArg(m.banco.id)}, false)">Confirmado</button>`
@@ -1623,93 +1625,93 @@ function pintarTabla() {
         onclick="anularCruce(${jsArg(m.banco.id)})">Anular cruce</button>` });
       return f;
     });
-  } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios'
-             || tabActiva === 'haberes_sin_contabilizar') {
+  } else if (activeTab === 'banco_sin_contabilizar' || activeTab === 'gastos_bancarios'
+             || activeTab === 'haberes_sin_contabilizar') {
     cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo', ''];
-    const items = tabActiva === 'haberes_sin_contabilizar'
-      ? datos.banco_sin_contabilizar.filter(m => m.es_haberes)
-      : tabActiva === 'banco_sin_contabilizar'
-        ? datos.banco_sin_contabilizar.filter(m => !m.es_haberes)
-        : datos[tabActiva];
-    filas = items.map(b => {
-      const marca = b.reclasificado
+    const items = activeTab === 'haberes_sin_contabilizar'
+      ? data.banco_sin_contabilizar.filter(m => m.es_haberes)
+      : activeTab === 'banco_sin_contabilizar'
+        ? data.banco_sin_contabilizar.filter(m => !m.es_haberes)
+        : data[activeTab];
+    rows = items.map(b => {
+      const tag = b.reclasificado
         ? ` <span class="metodo" title="Transferido a mano: ${esc(b.reclasificado)}">reclasificado</span>` : '';
-      const chipCargado = b.cargado_fbs
+      const loadedChip = b.cargado_fbs
         ? ` <span class="chip-cargado" title="Marcado como cargado en el FBS el ${esc(b.cargado_fbs)}">cargado en FBS</span>` : '';
       const f = [b.fecha, b.comprobante,
-        { html: esc(b.descripcion) + marca + chipCargado, texto: b.descripcion }, b.detalle,
+        { html: esc(b.descripcion) + tag + loadedChip, texto: b.descripcion }, b.detalle,
         { num: b.debito }, { num: b.credito }, b.archivo];
-      // marca de control del operador: no mueve el movimiento, pinta la fila
-      let botones = b.cargado_fbs
+      // the operator's control mark: it doesn't move the movement, it paints the row
+      let buttons = b.cargado_fbs
         ? `<button class="secundario btn-fila"
             title="Quitar la marca: vuelve a figurar como pendiente de cargar"
             onclick="marcarCargado(${jsArg(b.id)}, false)">Desmarcar</button>`
         : `<button class="secundario btn-fila"
             title="Ya cargué este movimiento en el FBS. Queda pintado para el control (sigue en esta solapa hasta que cruce solo en la próxima conciliación)"
             onclick="marcarCargado(${jsArg(b.id)}, true)">Cargado</button>`;
-      botones += ` <button class="secundario btn-fila"
+      buttons += ` <button class="secundario btn-fila"
           title="Cambiar la clasificación de este movimiento, explicando el porqué (las próximas corridas lo respetan)"
           onclick="abrirTransfer(${jsArg(b.id)})">Transferir</button>`;
-      if (tabActiva === 'banco_sin_contabilizar')
-        botones += ` <button class="secundario btn-fila"
+      if (activeTab === 'banco_sin_contabilizar')
+        buttons += ` <button class="secundario btn-fila"
           title="Clasificar este concepto como gasto bancario, ahora y en conciliaciones futuras (aprende el término, no solo este movimiento)"
           onclick="marcarGasto(${jsArg(b.descripcion)})">→ gasto</button>`;
-      f.push({ html: botones });
+      f.push({ html: buttons });
       if (b.cargado_fbs) f._clase = 'cargado';
       return f;
     });
-  } else if (tabActiva === 'excluidos') {
+  } else if (activeTab === 'excluidos') {
     cols = ['Hoja', 'Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber', 'Motivo', ''];
-    filas = [];
-    (datos.contraasientos || []).forEach(p => {
-      [p.debe, p.haber].forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
+    rows = [];
+    (data.contraasientos || []).forEach(p => {
+      [p.debe, p.haber].forEach(a => rows.push([a.hoja, a.asiento, a.fecha, a.referencia,
         a.comentario, { num: a.debe }, { num: a.haber },
         { html: '<span class="metodo">contraasiento (auto)</span>' }, '']));
     });
-    (datos.excluidos_mayor || []).forEach(e => {
-      e.mayor.forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
+    (data.excluidos_mayor || []).forEach(e => {
+      e.mayor.forEach(a => rows.push([a.hoja, a.asiento, a.fecha, a.referencia,
         a.comentario, { num: a.debe }, { num: a.haber },
         { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}` },
         { html: `<button class="secundario btn-fila"
            onclick="deshacerExclusion(${jsArg(e.excl_id)})">Restaurar</button>` }]));
     });
-  } else if (tabActiva === 'e_sin_banco' || tabActiva === 'o_pendientes_sin_banco') {
+  } else if (activeTab === 'e_sin_banco' || activeTab === 'o_pendientes_sin_banco') {
     cols = ['Asiento', 'Fecha', 'Referencia', 'Comentario', 'Debe', 'Haber'];
-    const conIA = true;   // análisis IA disponible en E sin banco y O pendientes
-    if (conIA) cols.push('Análisis IA');
-    filas = datos[tabActiva].map(a => {
+    const withAi = true;   // AI analysis available for E without bank and pending O
+    if (withAi) cols.push('Análisis IA');
+    rows = data[activeTab].map(a => {
       const f = [a.asiento, a.fecha, a.referencia, a.comentario,
         { num: a.debe }, { num: a.haber }];
-      if (conIA) f.push({ html: celdaAnalisis(a) });
+      if (withAi) f.push({ html: analysisCell(a) });
       return f;
     });
-  } else if (tabActiva === 'nota_debito') {
+  } else if (activeTab === 'nota_debito') {
     cols = ['Período', 'Concepto', 'Cant.', 'Importe', 'Observación'];
-    filas = [];
-    datos.nota_debito.forEach(p => {
+    rows = [];
+    data.nota_debito.forEach(p => {
       p.categorias.forEach(c => {
         let obs = '';
         if (c.iva_esperado != null)
           obs = `IVA esperado $ ${fmt(c.iva_esperado)} (dif ${fmt(c.importe - c.iva_esperado)})`;
-        filas.push([p.periodo, c.categoria, c.cantidad, { num: c.importe }, obs]);
+        rows.push([p.periodo, c.categoria, c.cantidad, { num: c.importe }, obs]);
       });
-      filas.push([p.periodo, { html: '<b>TOTAL SEGÚN EXTRACTO</b>' }, '',
+      rows.push([p.periodo, { html: '<b>TOTAL SEGÚN EXTRACTO</b>' }, '',
                   { num: p.total_extracto }, '']);
       p.asientos_mayor.forEach(a => {
-        filas.push([p.periodo,
+        rows.push([p.periodo,
           { html: `<span class="metodo">mayor ${esc(a.hoja)}</span> ${esc(a.referencia)} — ${esc(a.comentario)}` },
           '', { num: (a.haber || -a.debe) }, 'asiento del mayor']);
       });
       if (p.total_mayor != null) {
-        filas.push([p.periodo, { html: '<b>TOTAL SEGÚN MAYOR</b>' }, '', { num: p.total_mayor }, '']);
-        filas.push([p.periodo, { html: '<b>DIFERENCIA</b>' }, '', { num: p.diferencia },
+        rows.push([p.periodo, { html: '<b>TOTAL SEGÚN MAYOR</b>' }, '', { num: p.total_mayor }, '']);
+        rows.push([p.periodo, { html: '<b>DIFERENCIA</b>' }, '', { num: p.diferencia },
                     'extracto − mayor']);
       }
-      filas.push(['', '', '', '', '']);
+      rows.push(['', '', '', '', '']);
     });
-  } else if (tabActiva === 'ia') {
+  } else if (activeTab === 'ia') {
     cols = ['Movimientos banco', 'Asientos mayor', 'Confianza', 'Motivo', 'Acción'];
-    filas = datos.ia.sugerencias.map((s, i) => [
+    rows = data.ia.sugerencias.map((s, i) => [
       s.ids_banco.join(', '), s.ids_mayor.join(', '),
       { html: `<span class="conf-${esc(s.confianza)}">${esc(s.confianza)}</span>` }, s.motivo,
       { html: s.aceptada ? '<span class="conf-alta">aceptada</span>'
@@ -1717,9 +1719,9 @@ function pintarTabla() {
   }
 
   thead.innerHTML = '<tr>' + cols.map(c => `<th scope="col">${c}</th>`).join('') + '</tr>';
-  tbody.innerHTML = filas
-    .filter(f => !filtro || f.some(c =>
-      String(typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
+  tbody.innerHTML = rows
+    .filter(f => !filter || f.some(c =>
+      String(c && typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filter)))
     .map(f => `<tr${f._clase ? ` class="${f._clase}"` : ''}>` + f.map(c => {
       if (c && typeof c === 'object') {
         if ('html' in c) return `<td>${c.html}</td>`;
@@ -1727,19 +1729,19 @@ function pintarTabla() {
       }
       return `<td>${esc(c)}</td>`;
     }).join('') + '</tr>').join('');
-  $('#extraTab').innerHTML = (tabActiva === 'excluidos' ? htmlVetos() : '') + htmlGlosario(tabActiva);
+  $('#extraTab').innerHTML = (activeTab === 'excluidos' ? vetoesHtml() : '') + glossaryHtml(activeTab);
 }
 
-/* ============ análisis IA de asientos pendientes ============ */
-let anId = null;
+/* ============ AI analysis of pending entries ============ */
+let analysisId = null;
 
-function celdaAnalisis(a) {
-  const est = (datos.analisis || {})[a.id];
+function analysisCell(a) {
+  const state = (data.analisis || {})[a.id];
   let badge = '';
-  if (est && est.veredicto === 'ok')
+  if (state && state.veredicto === 'ok')
     badge = '<span class="pill-an ok" title="Análisis confirmado: quedó como regla">regla</span>';
-  else if (est && est.veredicto === 'corregido')
-    badge = `<span class="pill-an corr" title="${esc(est.correccion)}">corregido</span>`;
+  else if (state && state.veredicto === 'corregido')
+    badge = `<span class="pill-an corr" title="${esc(state.correccion)}">corregido</span>`;
   else if (a.analisis_previo)
     badge = `<span class="pill-an ${a.analisis_previo.veredicto === 'ok' ? 'ok' : 'corr'}"
       title="${esc(a.analisis_previo.nota)}">${a.analisis_previo.veredicto === 'ok'
@@ -1750,9 +1752,9 @@ function celdaAnalisis(a) {
 }
 
 window.verAnalisis = async id => {
-  anId = id;
-  const a = datos.o_pendientes_sin_banco.find(x => x.id === id)
-         || datos.e_sin_banco.find(x => x.id === id);
+  analysisId = id;
+  const a = data.o_pendientes_sin_banco.find(x => x.id === id)
+         || data.e_sin_banco.find(x => x.id === id);
   $('#anAsiento').innerHTML = a ? `<b>[${esc(a.hoja)}] ${esc(a.referencia || 'sin ref.')}</b>
     — ${esc(a.comentario || '')}<br>${esc(a.fecha || '')} · Debe $ ${fmt(a.debe)} · Haber $ ${fmt(a.haber)}` : '';
   $('#anCuerpo').innerHTML = '<span class="spinner"></span>La IA está analizando este asiento…';
@@ -1760,30 +1762,30 @@ window.verAnalisis = async id => {
   $('#anCorreccion').classList.add('oculto');
   $('#anTexto').value = '';
   $('#anEstado').textContent = '';
-  abrirModal('modalAnalisis');
+  openModal('modalAnalisis');
   try {
-    const resp = await fetch(`${BASE}api/analizar/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/analizar/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_mayor: id, simular: MODO_SIMULACION }),
+      body: JSON.stringify({ id_mayor: id, simular: SIMULATION_MODE }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    mostrarAnalisis(json.analisis);
+    showAnalysis(json.analisis);
   } catch (err) {
     $('#anCuerpo').innerHTML = `<div class="aviso error" style="margin-top:0">${esc(err.message)}</div>`;
   }
 };
 
-function mostrarAnalisis(an) {
-  datos.analisis = datos.analisis || {};
-  datos.analisis[anId] = an;
-  const origen = {
+function showAnalysis(an) {
+  data.analisis = data.analisis || {};
+  data.analisis[analysisId] = an;
+  const source = {
     ia: 'Análisis con IA', cache: 'Análisis con IA (reutilizado de una corrida anterior, sin costo)',
     interno: 'Análisis interno sin IA', simulado: 'Simulación',
     aprendizaje: 'Ya resuelto antes para este tipo de asiento',
   }[an.origen] || '';
   $('#anCuerpo').innerHTML = `<div class="aviso info" style="margin-top:0">${esc(an.texto)}</div>` +
-    (origen ? `<div style="font-size:var(--fs-xs); color:var(--texto2); margin-top:6px;">${esc(origen)}</div>` : '');
+    (source ? `<div style="font-size:var(--fs-xs); color:var(--texto2); margin-top:6px;">${esc(source)}</div>` : '');
   if (an.veredicto) {
     $('#anVeredicto').classList.add('oculto');
     $('#anEstado').textContent = an.veredicto === 'ok'
@@ -1792,206 +1794,206 @@ function mostrarAnalisis(an) {
   } else {
     $('#anVeredicto').classList.remove('oculto');
   }
-  if (tabActiva === 'o_pendientes_sin_banco' || tabActiva === 'e_sin_banco') pintarTabla();
+  if (activeTab === 'o_pendientes_sin_banco' || activeTab === 'e_sin_banco') paintTable();
 }
 
-async function enviarVeredicto(ok, correccion) {
+async function sendVerdict(ok, correction) {
   try {
-    const resp = await fetch(`${BASE}api/analizar/${datos.job_id}/veredicto`, {
+    const resp = await fetch(`${BASE}api/analizar/${data.job_id}/veredicto`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_mayor: anId, ok, correccion }),
+      body: JSON.stringify({ id_mayor: analysisId, ok, correccion: correction }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    mostrarAnalisis(json.analisis);
+    showAnalysis(json.analisis);
   } catch (err) { $('#anEstado').textContent = err.message; }
 }
-$('#anSi').addEventListener('click', () => enviarVeredicto(true, ''));
+$('#anSi').addEventListener('click', () => sendVerdict(true, ''));
 $('#anNo').addEventListener('click', () => {
   $('#anCorreccion').classList.remove('oculto');
   $('#anTexto').focus();
 });
-$('#anEnviar').addEventListener('click', () => enviarVeredicto(false, $('#anTexto').value));
-$('#anCerrar').addEventListener('click', () => cerrarModal('modalAnalisis'));
+$('#anEnviar').addEventListener('click', () => sendVerdict(false, $('#anTexto').value));
+$('#anCerrar').addEventListener('click', () => closeModal('modalAnalisis'));
 $('#modalAnalisis').addEventListener('click', e => {
-  if (e.target.id === 'modalAnalisis') cerrarModal('modalAnalisis');
+  if (e.target.id === 'modalAnalisis') closeModal('modalAnalisis');
 });
 
-$('#buscador').addEventListener('input', pintarTabla);
+$('#buscador').addEventListener('input', paintTable);
 $('#btnExportar').addEventListener('click', () => {
-  // ruta relativa: funciona igual servida en la raíz que detrás del hub (/app/…)
-  if (datos) window.location = `${BASE}api/exportar/${datos.job_id}`;
+  // relative path: works the same served at the root or behind the hub (/app/…)
+  if (data) window.location = `${BASE}api/exportar/${data.job_id}`;
 });
 $('#btnCompartir').addEventListener('click', async () => {
-  if (!datos) return;
-  const url = `${location.origin}${conMarca(`${location.pathname}?job=${datos.job_id}`)}`;
+  if (!data) return;
+  const url = `${location.origin}${withBrand(`${location.pathname}?job=${data.job_id}`)}`;
   try { await navigator.clipboard.writeText(url); }
-  catch { avisar('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
+  catch { notify('No se pudo copiar solo. El link es: ' + url, 'info'); return; }
   const b = $('#btnCompartir');
   b.textContent = 'Link copiado';
   setTimeout(() => { b.textContent = 'Copiar link'; }, 2000);
 });
 
-/* ================= Conciliación manual ================= */
-let selBanco = new Set(), selMayor = new Set();
+/* ================= Manual reconciliation ================= */
+let selBank = new Set(), selLedger = new Set();
 
-function itemsBanco() {
-  let items = datos.banco_sin_contabilizar.map(x => ({ ...x, _origen: 'sin contabilizar' }));
+function bankItems() {
+  let items = data.banco_sin_contabilizar.map(x => ({ ...x, _origen: 'sin contabilizar' }));
   if ($('#chkGastos').checked)
-    items = items.concat(datos.gastos_bancarios.map(x => ({ ...x, _origen: 'gasto' })));
+    items = items.concat(data.gastos_bancarios.map(x => ({ ...x, _origen: 'gasto' })));
   return items;
 }
-function itemsMayor() {
-  return datos.e_sin_banco.map(x => ({ ...x, _origen: 'E' }))
-    .concat(datos.o_pendientes_sin_banco.map(x => ({ ...x, _origen: 'O pend.' })));
+function ledgerItems() {
+  return data.e_sin_banco.map(x => ({ ...x, _origen: 'E' }))
+    .concat(data.o_pendientes_sin_banco.map(x => ({ ...x, _origen: 'O pend.' })));
 }
 
-const DIAS_CERCA = 20 * 86400000;   // ventana de ±20 días alrededor de la selección
+const NEAR_MS = 20 * 86400000;   // ±20 day window around the selection
 
-function pintarManual() {
-  const focoItem = document.activeElement && document.activeElement.closest
+function paintManual() {
+  const focusItem = document.activeElement && document.activeElement.closest
     ? document.activeElement.closest('.item') : null;
-  const focoId = focoItem ? focoItem.dataset.id + '|' + focoItem.dataset.lado : null;
-  // Al seleccionar en una columna, la contraria se filtra por fechas cercanas
-  // y se ordena por el importe que CIERRA la diferencia de lo seleccionado
-  // (sirve también armando grupos N a M: siempre rankea "lo que falta").
-  const selItemsB = itemsBanco().filter(x => selBanco.has(x.id));
-  const selItemsM = itemsMayor().filter(x => selMayor.has(x.id));
-  const netoSelB = selItemsB.reduce((s, x) => s + x.credito - x.debito, 0);
-  const netoSelM = selItemsM.reduce((s, x) => s + x.debe - x.haber, 0);
+  const focusId = focusItem ? focusItem.dataset.id + '|' + focusItem.dataset.lado : null;
+  // When selecting in one column, the other one is filtered by close dates
+  // and sorted by the amount that CLOSES the difference of the selection
+  // (it also works building N to M groups: it always ranks "what's missing").
+  const selItemsB = bankItems().filter(x => selBank.has(x.id));
+  const selItemsM = ledgerItems().filter(x => selLedger.has(x.id));
+  const selNetB = selItemsB.reduce((s, x) => s + x.credito - x.debito, 0);
+  const selNetM = selItemsM.reduce((s, x) => s + x.debe - x.haber, 0);
 
-  const fechasDe = items => items.map(x => x.fecha).filter(Boolean)
+  const datesOf = items => items.map(x => x.fecha).filter(Boolean)
                                  .map(f => new Date(f).getTime());
-  const cercaDe = (x, fechas) => !fechas.length || !x.fecha ||
-    fechas.some(t => Math.abs(new Date(x.fecha).getTime() - t) <= DIAS_CERCA);
+  const nearTo = (x, dates) => !dates.length || !x.fecha ||
+    dates.some(t => Math.abs(new Date(x.fecha).getTime() - t) <= NEAR_MS);
 
-  // banco se guía por lo seleccionado en el mayor, y viceversa
+  // the bank side follows what's selected in the ledger, and vice versa
   const smartB = $('#smartBanco').checked && selItemsM.length > 0;
   const smartM = $('#smartMayor').checked && selItemsB.length > 0;
-  const fechasRefB = fechasDe(selItemsM), fechasRefM = fechasDe(selItemsB);
-  const restanteB = netoSelM - netoSelB;   // lo que le falta al lado banco
-  const restanteM = netoSelB - netoSelM;   // lo que le falta al lado mayor
+  const refDatesB = datesOf(selItemsM), refDatesM = datesOf(selItemsB);
+  const remainingB = selNetM - selNetB;   // what the bank side is missing
+  const remainingM = selNetB - selNetM;   // what the ledger side is missing
 
-  // "cierra": el importe del ítem completa exactamente la diferencia de la
-  // selección — esos siempre se muestran aunque la fecha esté lejos
-  const cierraB = x => smartB && !selBanco.has(x.id) && Math.abs(restanteB) > 0.005 &&
-    Math.abs((x.credito - x.debito) - restanteB) < 0.01;
-  const cierraM = x => smartM && !selMayor.has(x.id) && Math.abs(restanteM) > 0.005 &&
-    Math.abs((x.debe - x.haber) - restanteM) < 0.01;
+  // "closes": the item's amount completes exactly the selection's difference
+  // — those are always shown even if the date is far away
+  const closesB = x => smartB && !selBank.has(x.id) && Math.abs(remainingB) > 0.005 &&
+    Math.abs((x.credito - x.debito) - remainingB) < 0.01;
+  const closesM = x => smartM && !selLedger.has(x.id) && Math.abs(remainingM) > 0.005 &&
+    Math.abs((x.debe - x.haber) - remainingM) < 0.01;
 
   const fB = $('#filtroBanco').value.toLowerCase(), lB = $('#ladoBanco').value;
-  let listaB = itemsBanco().filter(x =>
+  let listB = bankItems().filter(x =>
     (!lB || (lB === 'debito' ? x.debito : x.credito)) &&
     (!fB || `${x.fecha} ${x.comprobante} ${x.descripcion} ${x.detalle}`.toLowerCase().includes(fB)) &&
-    (!smartB || selBanco.has(x.id) || cierraB(x) || cercaDe(x, fechasRefB)));
+    (!smartB || selBank.has(x.id) || closesB(x) || nearTo(x, refDatesB)));
   if (smartB) {
-    const neto = x => x.credito - x.debito;
-    listaB.sort((a, b) => {
-      const sa = selBanco.has(a.id), sb = selBanco.has(b.id);
-      if (sa !== sb) return sa ? -1 : 1;   // seleccionados siempre arriba
-      const d = Math.abs(neto(a) - restanteB) - Math.abs(neto(b) - restanteB);
+    const net = x => x.credito - x.debito;
+    listB.sort((a, b) => {
+      const sa = selBank.has(a.id), sb = selBank.has(b.id);
+      if (sa !== sb) return sa ? -1 : 1;   // selected always on top
+      const d = Math.abs(net(a) - remainingB) - Math.abs(net(b) - remainingB);
       if (Math.abs(d) > 0.005) return d;
-      return Math.abs(new Date(a.fecha || 0) - (fechasRefB[0] || 0))
-           - Math.abs(new Date(b.fecha || 0) - (fechasRefB[0] || 0));
+      return Math.abs(new Date(a.fecha || 0) - (refDatesB[0] || 0))
+           - Math.abs(new Date(b.fecha || 0) - (refDatesB[0] || 0));
     });
   } else {
-    const impB = x => x.credito || x.debito;
-    const ordB = $('#ordenBanco').value;
-    if (ordB === 'imp_desc') listaB.sort((a, b) => impB(b) - impB(a));
-    else if (ordB === 'imp_asc') listaB.sort((a, b) => impB(a) - impB(b));
-    else if (ordB === 'alfabetico') listaB.sort((a, b) =>
+    const amountB = x => x.credito || x.debito;
+    const orderB = $('#ordenBanco').value;
+    if (orderB === 'imp_desc') listB.sort((a, b) => amountB(b) - amountB(a));
+    else if (orderB === 'imp_asc') listB.sort((a, b) => amountB(a) - amountB(b));
+    else if (orderB === 'alfabetico') listB.sort((a, b) =>
       (a.descripcion || '').localeCompare(b.descripcion || '', 'es', { sensitivity: 'base' })
       || (a.fecha || '').localeCompare(b.fecha || ''));
-    else listaB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+    else listB.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
-  const cabecera = (total, mostrados, smart) =>
+  const header = (total, shown, smart) =>
     `<div style="padding:6px 10px;font-size:var(--fs-xs);color:var(--texto2);background:var(--th-bg);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;">
-      ${total} ítems${total > mostrados ? ` — mostrando ${mostrados}, usá el filtro` : ''}${smart ? ' · ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
+      ${total} ítems${total > shown ? ` — mostrando ${shown}, usá el filtro` : ''}${smart ? ' · ±20 días de la selección, ordenado por importe que cierra' : ''}</div>`;
 
-  $('#listaBanco').innerHTML = cabecera(listaB.length, Math.min(listaB.length, 400), smartB) +
-    (listaB.slice(0, 400).map(x => {
-    const imp = x.credito || x.debito;
+  $('#listaBanco').innerHTML = header(listB.length, Math.min(listB.length, 400), smartB) +
+    (listB.slice(0, 400).map(x => {
+    const amount = x.credito || x.debito;
     const cls = x.credito ? 'cred' : 'deb';
-    const signo = x.credito ? '+' : '−';
-    return `<div class="item ${selBanco.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="banco">
-      <input type="checkbox" aria-label="Seleccionar ${esc(x.descripcion)}, ${signo} ${fmt(imp)}" ${selBanco.has(x.id) ? 'checked' : ''}>
+    const sign = x.credito ? '+' : '−';
+    return `<div class="item ${selBank.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="banco">
+      <input type="checkbox" aria-label="Seleccionar ${esc(x.descripcion)}, ${sign} ${fmt(amount)}" ${selBank.has(x.id) ? 'checked' : ''}>
       <div class="cuerpo"><div class="desc">${esc(x.descripcion)}</div>
         <div class="meta">${esc(x.fecha ?? '')} · ${esc(x.comprobante ?? '')} ${esc(x.detalle || '')}</div></div>
-      ${cierraB(x) ? '<span class="badge cierra">= cierra</span>' : ''}
+      ${closesB(x) ? '<span class="badge cierra">= cierra</span>' : ''}
       <span class="badge">${esc(x._origen)}</span>
-      <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
+      <span class="imp ${cls}">${sign} ${fmt(amount)}</span></div>`;
   }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:var(--fs-md);">Sin ítems</div>');
 
   const fM = $('#filtroMayor').value.toLowerCase(), lM = $('#ladoMayor').value;
-  let listaM = itemsMayor().filter(x =>
+  let listM = ledgerItems().filter(x =>
     (!lM || (lM === 'debe' ? x.debe : x.haber)) &&
     (!fM || `${x.fecha} ${x.asiento} ${x.referencia} ${x.comentario}`.toLowerCase().includes(fM)) &&
-    (!smartM || selMayor.has(x.id) || cierraM(x) || cercaDe(x, fechasRefM)));
+    (!smartM || selLedger.has(x.id) || closesM(x) || nearTo(x, refDatesM)));
   if (smartM) {
-    const neto = x => x.debe - x.haber;
-    listaM.sort((a, b) => {
-      const sa = selMayor.has(a.id), sb = selMayor.has(b.id);
-      if (sa !== sb) return sa ? -1 : 1;   // seleccionados siempre arriba
-      const d = Math.abs(neto(a) - restanteM) - Math.abs(neto(b) - restanteM);
+    const net = x => x.debe - x.haber;
+    listM.sort((a, b) => {
+      const sa = selLedger.has(a.id), sb = selLedger.has(b.id);
+      if (sa !== sb) return sa ? -1 : 1;   // selected always on top
+      const d = Math.abs(net(a) - remainingM) - Math.abs(net(b) - remainingM);
       if (Math.abs(d) > 0.005) return d;
-      return Math.abs(new Date(a.fecha || 0) - (fechasRefM[0] || 0))
-           - Math.abs(new Date(b.fecha || 0) - (fechasRefM[0] || 0));
+      return Math.abs(new Date(a.fecha || 0) - (refDatesM[0] || 0))
+           - Math.abs(new Date(b.fecha || 0) - (refDatesM[0] || 0));
     });
   } else {
-    const impM = x => x.debe || x.haber;
-    const ordM = $('#ordenMayor').value;
-    if (ordM === 'imp_desc') listaM.sort((a, b) => impM(b) - impM(a));
-    else if (ordM === 'imp_asc') listaM.sort((a, b) => impM(a) - impM(b));
-    else if (ordM === 'alfabetico') listaM.sort((a, b) =>
+    const amountM = x => x.debe || x.haber;
+    const orderM = $('#ordenMayor').value;
+    if (orderM === 'imp_desc') listM.sort((a, b) => amountM(b) - amountM(a));
+    else if (orderM === 'imp_asc') listM.sort((a, b) => amountM(a) - amountM(b));
+    else if (orderM === 'alfabetico') listM.sort((a, b) =>
       (a.comentario || a.referencia || '').localeCompare(
         b.comentario || b.referencia || '', 'es', { sensitivity: 'base' })
       || (a.fecha || '').localeCompare(b.fecha || ''));
-    else listaM.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+    else listM.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   }
-  $('#listaMayor').innerHTML = cabecera(listaM.length, Math.min(listaM.length, 400), smartM) +
-    (listaM.slice(0, 400).map(x => {
-    const imp = x.debe || x.haber;
+  $('#listaMayor').innerHTML = header(listM.length, Math.min(listM.length, 400), smartM) +
+    (listM.slice(0, 400).map(x => {
+    const amount = x.debe || x.haber;
     const cls = x.debe ? 'cred' : 'deb';
-    const signo = x.debe ? '+' : '−';
-    return `<div class="item ${selMayor.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="mayor">
-      <input type="checkbox" aria-label="Seleccionar ${esc(x.referencia)}, ${signo} ${fmt(imp)}" ${selMayor.has(x.id) ? 'checked' : ''}>
+    const sign = x.debe ? '+' : '−';
+    return `<div class="item ${selLedger.has(x.id) ? 'sel' : ''}" data-id="${esc(x.id)}" data-lado="mayor">
+      <input type="checkbox" aria-label="Seleccionar ${esc(x.referencia)}, ${sign} ${fmt(amount)}" ${selLedger.has(x.id) ? 'checked' : ''}>
       <div class="cuerpo"><div class="desc">${esc(x.referencia)} — ${esc(x.comentario)}</div>
         <div class="meta">${esc(x.fecha ?? '')} · asiento ${esc(x.asiento)}</div></div>
-      ${cierraM(x) ? '<span class="badge cierra">= cierra</span>' : ''}
+      ${closesM(x) ? '<span class="badge cierra">= cierra</span>' : ''}
       <span class="badge">${esc(x._origen)}</span>
-      <span class="imp ${cls}">${signo} ${fmt(imp)}</span></div>`;
+      <span class="imp ${cls}">${sign} ${fmt(amount)}</span></div>`;
   }).join('') || '<div style="padding:14px;color:var(--texto2);font-size:var(--fs-md);">Sin ítems</div>');
 
-  if (focoId) {
-    const [id, lado] = focoId.split('|');
+  if (focusId) {
+    const [id, side] = focusId.split('|');
     const chk = [...document.querySelectorAll('.item')]
-      .find(x => x.dataset.id === id && x.dataset.lado === lado)?.querySelector('input');
+      .find(x => x.dataset.id === id && x.dataset.lado === side)?.querySelector('input');
     if (chk) chk.focus();
   }
-  actualizarBarra();
-  pintarMatchesManual();
+  updateSelectionBar();
+  paintManualMatches();
 }
 
-function actualizarBarra() {
-  const b = itemsBanco().filter(x => selBanco.has(x.id));
-  const m = itemsMayor().filter(x => selMayor.has(x.id));
-  const netoB = b.reduce((s, x) => s + x.credito - x.debito, 0);
-  const netoM = m.reduce((s, x) => s + x.debe - x.haber, 0);
-  const dif = netoB - netoM;
-  $('#selBancoTxt').textContent = `${b.length} ítems — $ ${fmt(netoB)}`;
-  $('#selMayorTxt').textContent = `${m.length} ítems — $ ${fmt(netoM)}`;
+function updateSelectionBar() {
+  const b = bankItems().filter(x => selBank.has(x.id));
+  const m = ledgerItems().filter(x => selLedger.has(x.id));
+  const netB = b.reduce((s, x) => s + x.credito - x.debito, 0);
+  const netM = m.reduce((s, x) => s + x.debe - x.haber, 0);
+  const diff = netB - netM;
+  $('#selBancoTxt').textContent = `${b.length} ítems — $ ${fmt(netB)}`;
+  $('#selMayorTxt').textContent = `${m.length} ítems — $ ${fmt(netM)}`;
   const el = $('#selDifTxt');
-  el.textContent = `$ ${fmt(dif)}`;
-  el.className = Math.abs(dif) < 0.01 ? 'dif-ok' : 'dif-no';
+  el.textContent = `$ ${fmt(diff)}`;
+  el.className = Math.abs(diff) < 0.01 ? 'dif-ok' : 'dif-no';
   $('#btnManual').disabled = !(b.length && m.length);
   $('#btnExcluir').disabled = !(m.length && !b.length);
 }
 
-function pintarMatchesManual() {
-  const lista = datos.conciliados_manual || [];
-  $('#tituloManual').textContent = lista.length ?
-    `Conciliaciones manuales (${lista.length})` : 'Todavía no hay conciliaciones manuales';
-  $('#listaMatchesManual').innerHTML = lista.slice().reverse().map(m => `
+function paintManualMatches() {
+  const matches = data.conciliados_manual || [];
+  $('#tituloManual').textContent = matches.length ?
+    `Conciliaciones manuales (${matches.length})` : 'Todavía no hay conciliaciones manuales';
+  $('#listaMatchesManual').innerHTML = matches.slice().reverse().map(m => `
     <div class="match-manual">
       <div class="detalle-m">
         ${m.banco.map(b => `<div class="fila-m">${esc(b.fecha ?? '')} ${esc(b.descripcion)}
@@ -2010,106 +2012,106 @@ function pintarMatchesManual() {
 document.addEventListener('click', e => {
   const item = e.target.closest('.item');
   if (!item) return;
-  const set_ = item.dataset.lado === 'banco' ? selBanco : selMayor;
+  const set_ = item.dataset.lado === 'banco' ? selBank : selLedger;
   set_.has(item.dataset.id) ? set_.delete(item.dataset.id) : set_.add(item.dataset.id);
-  pintarManual();
+  paintManual();
 });
 
 ['filtroBanco', 'filtroMayor'].forEach(id =>
-  $('#' + id).addEventListener('input', pintarManual));
+  $('#' + id).addEventListener('input', paintManual));
 ['ladoBanco', 'ladoMayor', 'chkGastos', 'smartBanco', 'smartMayor',
  'ordenBanco', 'ordenMayor'].forEach(id =>
-  $('#' + id).addEventListener('change', pintarManual));
+  $('#' + id).addEventListener('change', paintManual));
 
 $('#btnExcluir').addEventListener('click', async () => {
-  if (!(await confirmar({ titulo: `Excluir ${selMayor.size} asiento(s) del mayor`, texto: 'Salen de esta conciliación. Quedan referenciados en la solapa "Contraasientos y excluidos" y se pueden restaurar desde ahí.', ok: 'Excluir del mayor', peligro: true }))) return;
+  if (!(await askConfirm({ titulo: `Excluir ${selLedger.size} asiento(s) del mayor`, texto: 'Salen de esta conciliación. Quedan referenciados en la solapa "Contraasientos y excluidos" y se pueden restaurar desde ahí.', ok: 'Excluir del mayor', peligro: true }))) return;
   try {
-    const resp = await fetch(`${BASE}api/excluir/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/excluir/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids_mayor: [...selMayor], nota: $('#notaManual').value }),
+      body: JSON.stringify({ ids_mayor: [...selLedger], nota: $('#notaManual').value }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    selMayor.clear();
+    data = json;
+    selLedger.clear();
     $('#notaManual').value = '';
-    refrescarTrasManual('manual');
-  } catch (err) { avisar(err.message); }
+    refreshAfterManual('manual');
+  } catch (err) { notify(err.message); }
 });
 
 window.deshacerExclusion = async id => {
   try {
-    const resp = await fetch(`${BASE}api/excluir/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/excluir/${data.job_id}/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    const quedan = (datos.contraasientos || []).length + (datos.excluidos_mayor || []).length;
-    refrescarTrasManual(quedan ? 'excluidos' : 'e_sin_banco');
-  } catch (err) { avisar(err.message); }
+    data = json;
+    const remaining = (data.contraasientos || []).length + (data.excluidos_mayor || []).length;
+    refreshAfterManual(remaining ? 'excluidos' : 'e_sin_banco');
+  } catch (err) { notify(err.message); }
 };
 
 window.marcarGasto = async desc => {
-  if (!(await confirmar({ titulo: '¿Clasificar como gasto bancario?', texto: `"${desc}"\n\nSe aplica ahora a los movimientos que contengan este concepto y queda registrado para todas las conciliaciones futuras. Los números del texto se ignoran.`, ok: 'Sí, es gasto bancario' }))) return;
+  if (!(await askConfirm({ titulo: '¿Clasificar como gasto bancario?', texto: `"${desc}"\n\nSe aplica ahora a los movimientos que contengan este concepto y queda registrado para todas las conciliaciones futuras. Los números del texto se ignoran.`, ok: 'Sí, es gasto bancario' }))) return;
   try {
     const resp = await fetch(`${BASE}api/gastos`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ termino: desc, job_id: datos ? datos.job_id : null }),
+      body: JSON.stringify({ termino: desc, job_id: data ? data.job_id : null }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    gastosConf = json.gastos;
-    pintarGastos();
+    feeTerms = json.gastos;
+    paintFeeTerms();
     if (json.datos) {
-      datos = json.datos;
-      refrescarTrasManual('banco_sin_contabilizar');
+      data = json.datos;
+      refreshAfterManual('banco_sin_contabilizar');
     }
-    avisar(json.movidos ? `Listo: ${json.movidos} movimiento(s) pasaron a Gastos bancarios.`
+    notify(json.movidos ? `Listo: ${json.movidos} movimiento(s) pasaron a Gastos bancarios.`
                         : 'Concepto registrado para futuras conciliaciones.', 'info');
-  } catch (err) { avisar(err.message); }
+  } catch (err) { notify(err.message); }
 };
 $('#btnLimpiarSel').addEventListener('click', () => {
-  selBanco.clear(); selMayor.clear(); pintarManual();
+  selBank.clear(); selLedger.clear(); paintManual();
 });
 
-async function aplicarManual(cuerpo, volverA) {
+async function applyManual(body, backTo) {
   try {
-    const resp = await fetch(`${BASE}api/manual/${datos.job_id}`, {
+    const resp = await fetch(`${BASE}api/manual/${data.job_id}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo),
+      body: JSON.stringify(body),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    selBanco.clear(); selMayor.clear();
+    data = json;
+    selBank.clear(); selLedger.clear();
     $('#notaManual').value = '';
-    refrescarTrasManual(volverA);
+    refreshAfterManual(backTo);
   } catch (err) {
-    avisar(err.message);
+    notify(err.message);
   }
 }
 
-function refrescarTrasManual(volverA) {
-  const tab = volverA || tabActiva;
-  mostrarResultados();
+function refreshAfterManual(backTo) {
+  const tab = backTo || activeTab;
+  showResults();
   activarTab(tab);
 }
 
 $('#btnManual').addEventListener('click', () =>
-  aplicarManual({ ids_banco: [...selBanco], ids_mayor: [...selMayor],
-                  nota: $('#notaManual').value, fuente: 'manual' }, 'manual'));
+  applyManual({ ids_banco: [...selBank], ids_mayor: [...selLedger],
+                nota: $('#notaManual').value, fuente: 'manual' }, 'manual'));
 
 window.aceptarSugerencia = i => {
-  const s = datos.ia.sugerencias[i];
-  aplicarManual({ ids_banco: s.ids_banco, ids_mayor: s.ids_mayor,
-                  nota: s.motivo, fuente: 'ia', sugerencia_idx: i }, 'ia');
+  const s = data.ia.sugerencias[i];
+  applyManual({ ids_banco: s.ids_banco, ids_mayor: s.ids_mayor,
+                nota: s.motivo, fuente: 'ia', sugerencia_idx: i }, 'ia');
 };
 
-/* ============ diccionario de equivalencias ============ */
-let equivalencias = [];
+/* ============ equivalences dictionary ============ */
+let equivalences = [];
 
-function pintarEquiv() {
-  $('#btnEquiv').textContent = `Equivalencias (${equivalencias.length})`;
-  $('#eqLista').innerHTML = equivalencias.map(p => `
+function paintEquivalences() {
+  $('#btnEquiv').textContent = `Equivalencias (${equivalences.length})`;
+  $('#eqLista').innerHTML = equivalences.map(p => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(p.extracto)}</b><small>en el extracto</small></span>
       <span class="flecha">≈</span>
@@ -2119,69 +2121,69 @@ function pintarEquiv() {
     '<p style="color:var(--texto2);font-size:var(--fs-md);">Todavía no hay equivalencias cargadas.</p>';
 }
 
-async function cargarEquiv() {
+async function loadEquivalences() {
   try {
     const r = await fetch(`${BASE}api/equivalencias`);
-    equivalencias = (await r.json()).equivalencias || [];
-    pintarEquiv();
+    equivalences = (await r.json()).equivalencias || [];
+    paintEquivalences();
   } catch {}
 }
-cargarEquiv();
+loadEquivalences();
 
 $('#btnEquiv').addEventListener('click', () => {
   $('#eqError').textContent = '';
-  abrirModal('modalEquiv');
+  openModal('modalEquiv');
   $('#eqExtracto').focus();
 });
-$('#eqCerrar').addEventListener('click', () => cerrarModal('modalEquiv'));
+$('#eqCerrar').addEventListener('click', () => closeModal('modalEquiv'));
 $('#modalEquiv').addEventListener('click', e => {
-  if (e.target.id === 'modalEquiv') cerrarModal('modalEquiv');
+  if (e.target.id === 'modalEquiv') closeModal('modalEquiv');
 });
 
-async function agregarEquiv() {
-  const extracto = $('#eqExtracto').value.trim(), sistema = $('#eqSistema').value.trim();
+async function addEquivalence() {
+  const statement = $('#eqExtracto').value.trim(), system = $('#eqSistema').value.trim();
   $('#eqError').textContent = '';
   try {
     const resp = await fetch(`${BASE}api/equivalencias`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ extracto, sistema }),
+      body: JSON.stringify({ extracto: statement, sistema: system }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    equivalencias = json.equivalencias;
+    equivalences = json.equivalencias;
     $('#eqExtracto').value = ''; $('#eqSistema').value = '';
     $('#eqExtracto').focus();
-    pintarEquiv();
+    paintEquivalences();
   } catch (err) { $('#eqError').textContent = err.message; }
 }
-$('#eqAgregar').addEventListener('click', agregarEquiv);
+$('#eqAgregar').addEventListener('click', addEquivalence);
 ['eqExtracto', 'eqSistema'].forEach(id =>
-  $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') agregarEquiv(); }));
+  $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') addEquivalence(); }));
 
 window.eliminarEquiv = async id => {
   try {
     const resp = await fetch(`${BASE}api/equivalencias/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    equivalencias = json.equivalencias;
-    pintarEquiv();
+    equivalences = json.equivalencias;
+    paintEquivalences();
   } catch (err) { $('#eqError').textContent = err.message; }
 };
 
-/* ============ gastos bancarios configurables ============ */
-let gastosConf = [];
+/* ============ configurable bank fees ============ */
+let feeTerms = [];
 
-let gastosExc = [];
+let feeExceptions = [];
 
-function pintarGastos() {
-  $('#btnGastos').textContent = `Gastos (${gastosConf.length})`;
-  $('#gasLista').innerHTML = gastosConf.map(t => `
+function paintFeeTerms() {
+  $('#btnGastos').textContent = `Gastos (${feeTerms.length})`;
+  $('#gasLista').innerHTML = feeTerms.map(t => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(t.termino)}</b><small>se clasifica como gasto bancario</small></span>
       <button class="quitar" title="Eliminar" onclick="eliminarGasto(${jsArg(t.id)})">×</button>
     </div>`).join('') ||
     '<p style="color:var(--texto2);font-size:var(--fs-md);">Todavía no cargaron conceptos propios. También podés usar el botón "→ gasto" en la solapa "Banco sin contabilizar".</p>';
-  $('#excLista').innerHTML = gastosExc.map(t => `
+  $('#excLista').innerHTML = feeExceptions.map(t => `
     <div class="eq-fila">
       <span class="lado-eq"><b>${esc(t.termino)}</b><small>nunca se clasifica como gasto bancario</small></span>
       <button class="quitar" title="Eliminar la excepción" onclick="eliminarExcepcion(${jsArg(t.id)})">×</button>
@@ -2192,70 +2194,70 @@ function pintarGastos() {
 window.eliminarExcepcion = async id => {
   try {
     const r = await fetch(`${BASE}api/gastos/excepciones/${id}`, { method: 'DELETE' });
-    gastosExc = (await r.json()).excepciones || [];
-    pintarGastos();
+    feeExceptions = (await r.json()).excepciones || [];
+    paintFeeTerms();
   } catch {}
 };
 
-async function cargarGastos() {
+async function loadFeeTerms() {
   try {
     const r = await fetch(`${BASE}api/gastos`);
     const j = await r.json();
-    gastosConf = j.gastos || [];
-    gastosExc = j.excepciones || [];
-    pintarGastos();
+    feeTerms = j.gastos || [];
+    feeExceptions = j.excepciones || [];
+    paintFeeTerms();
   } catch {}
 }
-cargarGastos();
+loadFeeTerms();
 
 $('#btnGastos').addEventListener('click', () => {
   $('#gasError').textContent = '';
-  abrirModal('modalGastos');
+  openModal('modalGastos');
   $('#gasTermino').focus();
 });
-$('#gasCerrar').addEventListener('click', () => cerrarModal('modalGastos'));
+$('#gasCerrar').addEventListener('click', () => closeModal('modalGastos'));
 $('#modalGastos').addEventListener('click', e => {
-  if (e.target.id === 'modalGastos') cerrarModal('modalGastos');
+  if (e.target.id === 'modalGastos') closeModal('modalGastos');
 });
 
-async function agregarGasto() {
+async function addFeeTerm() {
   $('#gasError').textContent = '';
   try {
     const resp = await fetch(`${BASE}api/gastos`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ termino: $('#gasTermino').value,
-                             job_id: datos ? datos.job_id : null }),
+                             job_id: data ? data.job_id : null }),
     });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    gastosConf = json.gastos;
+    feeTerms = json.gastos;
     $('#gasTermino').value = '';
-    pintarGastos();
-    if (json.datos) { datos = json.datos; refrescarTrasManual(tabActiva); }
+    paintFeeTerms();
+    if (json.datos) { data = json.datos; refreshAfterManual(activeTab); }
   } catch (err) { $('#gasError').textContent = err.message; }
 }
-$('#gasAgregar').addEventListener('click', agregarGasto);
-$('#gasTermino').addEventListener('keydown', e => { if (e.key === 'Enter') agregarGasto(); });
+$('#gasAgregar').addEventListener('click', addFeeTerm);
+$('#gasTermino').addEventListener('keydown', e => { if (e.key === 'Enter') addFeeTerm(); });
 
 window.eliminarGasto = async id => {
   try {
     const resp = await fetch(`${BASE}api/gastos/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    gastosConf = json.gastos;
-    pintarGastos();
+    feeTerms = json.gastos;
+    paintFeeTerms();
   } catch (err) { $('#gasError').textContent = err.message; }
 };
 
 window.deshacerManual = async id => {
   try {
-    const resp = await fetch(`${BASE}api/manual/${datos.job_id}/${id}`, { method: 'DELETE' });
+    const resp = await fetch(`${BASE}api/manual/${data.job_id}/${id}`, { method: 'DELETE' });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
-    datos = json;
-    refrescarTrasManual('manual');
+    data = json;
+    refreshAfterManual('manual');
   } catch (err) {
-    avisar(err.message);
+    notify(err.message);
   }
 };
 </script>
