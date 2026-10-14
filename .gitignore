@@ -16,3 +16,7 @@ venv/
 # Configuración con datos reales (el ejemplo .example sí se versiona)
 config/cuentas_semilla.json
 config/*.local.json
+
+# Archivos de variables con secretos (el ejemplo config/entorno.example.env sí se versiona)
+*.env
+!config/entorno.example.env
