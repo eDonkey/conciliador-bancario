@@ -210,3 +210,16 @@ lectura, el conciliador se negaba a consultar. Para pasar el tiempo hasta crear 
 - No cambia nada del resto de la garantía: la app solo ejecuta una consulta SELECT validada (una sola sentencia, sin palabras
   de escritura ni EXEC) y deshace cualquier efecto con rollback. El override solo afloja el chequeo de los permisos del login.
 - Se quita borrando la variable cuando exista el login con db_datareader.
+
+## Variables desde un archivo fuera del repo (14/10/2026)
+
+En vez de poner `APP_PASSWORD`, `HUB_CLAVE` y `FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA` en cada consola, el conciliador lee un
+archivo `NOMBRE=valor` al arrancar (`engine/entorno.py`, primera línea ejecutable de `app.py`).
+
+- Ubicación: `CONCILIADOR_ENV=<ruta>`, o por defecto `<carpeta padre>\<nombre de la carpeta>.env` (para `C:\apps\conciladorfbs`:
+  `C:\apps\conciladorfbs.env`). Si no existe, arranca igual con lo que haya en el entorno.
+- Las variables que ya están en el entorno **ganan** sobre el archivo. Se aceptan comentarios `#`, comillas y `set NOMBRE=valor`.
+- Solo se imprimen y se muestran en `GET /api/diagnostico` (`entorno_archivo`) los **nombres**, nunca los valores.
+- El modelo en `config/entorno.example.env`; `scripts/restringir_entorno.bat <archivo>` deja el archivo legible solo por SYSTEM, los
+  administradores y el usuario actual. Hay que reiniciar el conciliador al cambiar el archivo.
+
