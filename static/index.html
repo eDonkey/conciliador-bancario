@@ -1593,6 +1593,18 @@ window.confirmarTodos = async valor => {
   } catch (err) { avisar(err.message); }
 };
 
+// Texto por el que se busca una celda. OJO con las celdas vacías: en JS
+// typeof null es 'object', así que tratarlas como objeto rompía el filtro
+// entero (una sola fila sin comprobante y la tabla quedaba sin filtrar).
+// Los importes se comparan también como se ven en pantalla, para poder
+// escribir "2.500.000" y que encuentre.
+function textoCelda(c) {
+  if (c == null) return '';
+  if (typeof c !== 'object') return String(c).toLowerCase();
+  if (c.num != null && c.num !== '') return `${c.num} ${fmt(c.num)}`.toLowerCase();
+  return String(c.texto ?? '').toLowerCase();
+}
+
 function pintarTabla() {
   const filtro = $('#buscador').value.toLowerCase();
   const thead = $('#tabla thead'), tbody = $('#tabla tbody');
@@ -1608,7 +1620,7 @@ function pintarTabla() {
         m.banco.fecha, m.banco.comprobante, m.banco.descripcion,
         { num: m.banco.debito }, { num: m.banco.credito },
         m.asiento.asiento, m.asiento.fecha, m.asiento.referencia, m.asiento.comentario,
-        { html: `<span class="metodo">${esc(m.metodo)}</span>` }];
+        { html: `<span class="metodo">${esc(m.metodo)}</span>`, texto: m.metodo }];
       if (tabActiva === 'conciliados_o')
         f.push({ html: m.confirmado
           ? `<button class="mini" style="background:var(--verde)"
@@ -1661,12 +1673,14 @@ function pintarTabla() {
     (datos.contraasientos || []).forEach(p => {
       [p.debe, p.haber].forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
         a.comentario, { num: a.debe }, { num: a.haber },
-        { html: '<span class="metodo">contraasiento (auto)</span>' }, '']));
+        { html: '<span class="metodo">contraasiento (auto)</span>',
+          texto: 'contraasiento (auto)' }, '']));
     });
     (datos.excluidos_mayor || []).forEach(e => {
       e.mayor.forEach(a => filas.push([a.hoja, a.asiento, a.fecha, a.referencia,
         a.comentario, { num: a.debe }, { num: a.haber },
-        { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}` },
+        { html: `<span class="metodo">excluido manual</span>${e.nota ? ' ' + esc(e.nota) : ''}`,
+          texto: `excluido manual ${e.nota || ''}` },
         { html: `<button class="secundario btn-fila"
            onclick="deshacerExclusion('${e.excl_id}')">Restaurar</button>` }]));
     });
@@ -1694,7 +1708,8 @@ function pintarTabla() {
                   { num: p.total_extracto }, '']);
       p.asientos_mayor.forEach(a => {
         filas.push([p.periodo,
-          { html: `<span class="metodo">mayor ${esc(a.hoja)}</span> ${esc(a.referencia)} — ${esc(a.comentario)}` },
+          { html: `<span class="metodo">mayor ${esc(a.hoja)}</span> ${esc(a.referencia)} — ${esc(a.comentario)}`,
+            texto: `mayor ${a.hoja} ${a.referencia} ${a.comentario}` },
           '', { num: (a.haber || -a.debe) }, 'asiento del mayor']);
       });
       if (p.total_mayor != null) {
@@ -1708,15 +1723,14 @@ function pintarTabla() {
     cols = ['Movimientos banco', 'Asientos mayor', 'Confianza', 'Motivo', 'Acción'];
     filas = datos.ia.sugerencias.map((s, i) => [
       s.ids_banco.join(', '), s.ids_mayor.join(', '),
-      { html: `<span class="conf-${s.confianza}">${s.confianza}</span>` }, s.motivo,
+      { html: `<span class="conf-${s.confianza}">${s.confianza}</span>`, texto: s.confianza }, s.motivo,
       { html: s.aceptada ? '<span class="conf-alta">aceptada</span>'
              : `<button class="mini" onclick="aceptarSugerencia(${i})">Aceptar</button>` }]);
   }
 
   thead.innerHTML = '<tr>' + cols.map(c => `<th scope="col">${c}</th>`).join('') + '</tr>';
   tbody.innerHTML = filas
-    .filter(f => !filtro || f.some(c =>
-      String(typeof c === 'object' ? (c.num ?? c.texto ?? '') : (c ?? '')).toLowerCase().includes(filtro)))
+    .filter(f => !filtro || f.some(c => textoCelda(c).includes(filtro)))
     .map(f => `<tr${f._clase ? ` class="${f._clase}"` : ''}>` + f.map(c => {
       if (c && typeof c === 'object') {
         if ('html' in c) return `<td>${c.html}</td>`;
