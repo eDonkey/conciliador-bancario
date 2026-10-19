@@ -24,6 +24,11 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Variables desde un archivo fuera del repo (ver engine/entorno.py): tiene que ser lo primero, porque varios
+# módulos leen el entorno al importarse.
+from engine import entorno as _entorno
+_entorno.cargar()
+
 from parsers.santander_pdf import parse_extracto
 from parsers.mayor_xlsx import parse_mayor
 from engine.matcher import conciliar
@@ -425,6 +430,8 @@ def api_diagnostico():
         "ia_uso": ia_log.resumen(),
         # monitoreo (New Relic): si está activo, con qué grupo y qué versión
         "monitor": telemetria.estado(),
+        # archivo de variables fuera del repo: cuál se leyó y qué NOMBRES cargó (nunca valores)
+        "entorno_archivo": _entorno.estado(),
     }
 
 
