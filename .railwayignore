@@ -1,0 +1,7 @@
+# Nunca subir al deploy: datos reales, credenciales y archivos locales
+datos/
+config/
+.env
+*.xlsx
+*.pdf
+*.xls
