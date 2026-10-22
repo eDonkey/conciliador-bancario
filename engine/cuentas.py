@@ -138,6 +138,11 @@ def _cargar_local(ruta: str) -> list[dict]:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             pass
+    # despliegues para otros grupos (DARC, etc.): CUENTAS_SEMILLA=off evita
+    # sembrar las cuentas de Nave; las cuentas salen de la base o se asignan
+    # a mano
+    if os.environ.get("CUENTAS_SEMILLA", "").lower() in ("off", "no", "0"):
+        return []
     cuentas = [{
         "id": f"{banco}-{_digits(numero)}-{moneda.lower()}",
         "empresa": empresa, "banco": banco, "numero": numero, "moneda": moneda,

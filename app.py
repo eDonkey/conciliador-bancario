@@ -176,31 +176,65 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
     }
 
 
+def _parsear_mayor_archivos(archivos):
+    """El libro mayor puede venir como un único Excel con las hojas de la
+    cuenta E y la O (export clásico del FES), o como reportes del FBS
+    "Consulta del Mayor" por separado (un archivo para la E y otro para la O,
+    o un xlsx con ambas hojas)."""
+    res = {"hojas": []}
+    for nombre, data in archivos:
+        info = diarios.identificar(nombre, data)
+        if info.get("tipo") == "fbs":
+            for a in info.get("asientos", []):
+                res.setdefault(a.hoja, {"asientos": [], "saldo_inicial": None})
+                res[a.hoja]["asientos"].append(a)
+            letras = "+".join(sorted({a.hoja for a in info.get("asientos", [])}))
+            res["hojas"].append(f'{nombre} ({letras or "sin asientos"})')
+            continue
+        if info.get("tipo") == "extracto":
+            return {"error": f'"{nombre}" parece un extracto bancario: '
+                             "va en el campo de extractos, no en el del mayor."}
+        try:
+            p = parse_mayor(data)
+        except Exception as exc:  # noqa: BLE001 — error legible por archivo
+            return {"error": f'No pude leer "{nombre}" como libro mayor ({exc})'}
+        for k in ("E", "O"):
+            if k in p:
+                res[k] = p[k]
+        res["hojas"].extend(p.get("hojas", []))
+    # ids únicos aunque la misma hoja venga repartida en varios archivos
+    for letra in ("E", "O"):
+        for i, a in enumerate(res.get(letra, {}).get("asientos", []), 1):
+            a.id = f"{letra}#{i}"
+    return res
+
+
 @app.post("/api/conciliar")
 async def api_conciliar(
     extractos: list[UploadFile] = File(...),
-    mayor: UploadFile = File(...),
+    mayor: list[UploadFile] = File(...),
     usar_ia: str = Form("no"),
     marca: str = Form(""),
 ):
     """Recibe los archivos, arranca el procesamiento en segundo plano y
     devuelve el job_id de inmediato. El avance se consulta en /api/progreso."""
     archivos = [(up.filename, await up.read()) for up in extractos]
-    data_mayor = await mayor.read()
+    archivos_mayor = [(up.filename, await up.read()) for up in mayor]
 
     job_id = uuid.uuid4().hex[:12]
-    total_mb = (sum(len(b) for _, b in archivos) + len(data_mayor)) / 1_000_000
+    total_mb = (sum(len(b) for _, b in archivos)
+                + sum(len(b) for _, b in archivos_mayor)) / 1_000_000
     est_base = 10 + total_mb * 14   # parseo + cruce, calibrado con datos reales
     PROGRESO[job_id] = {"estado": "procesando", "fase": "Preparando el análisis",
                         "porcentaje": 2, "eta_seg": round(est_base),
                         "inicio": time.time()}
     threading.Thread(target=_procesar_job,
-                     args=(job_id, archivos, data_mayor, usar_ia, est_base, marca),
+                     args=(job_id, archivos, archivos_mayor, usar_ia, est_base, marca),
                      daemon=True).start()
     return {"job_id": job_id, "estado": "procesando"}
 
 
-def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
+def _procesar_job(job_id, archivos, archivos_mayor, usar_ia, est_base, marca=""):
     inicio = PROGRESO[job_id]["inicio"]
 
     def prog(fase, pct, eta=None):
@@ -252,13 +286,17 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
         parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
         movs = [m for e in parseados for m in e["movimientos"]]
 
-        # --- parsear mayor -----------------------------------------------
+        # --- parsear mayor (uno o más archivos) ----------------------------
         prog("Leyendo el libro mayor", 38)
-        mayor_parsed = parse_mayor(data_mayor)
+        mayor_parsed = _parsear_mayor_archivos(archivos_mayor)
+        if "error" in mayor_parsed:
+            PROGRESO[job_id] = {"estado": "error", "mensaje": mayor_parsed["error"]}
+            return
         if "E" not in mayor_parsed or "O" not in mayor_parsed:
             PROGRESO[job_id] = {"estado": "error", "mensaje":
-                "El Excel debe tener una hoja de la cuenta E y una de la cuenta O "
-                f"(hojas encontradas: {mayor_parsed['hojas']})"}
+                "Falta la cuenta E o la cuenta O del mayor: subí el Excel con "
+                "las dos hojas, o los dos reportes FBS (uno E y uno O). "
+                f"Recibido: {', '.join(map(str, mayor_parsed.get('hojas', []))) or 'nada legible'}"}
             return
 
         # --- conciliar ----------------------------------------------------
@@ -334,6 +372,16 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca=""):
                             "fase": "Conciliación terminada", "inicio": inicio}
     except Exception as exc:  # noqa: BLE001 — que el error llegue a la UI
         PROGRESO[job_id] = {"estado": "error", "mensaje": str(exc)}
+
+
+# nombre del grupo/cliente del despliegue (env GRUPO_NOMBRE): la misma app
+# sirve a Nave, DARC u otro grupo cambiando solo variables de entorno
+GRUPO_NOMBRE = os.environ.get("GRUPO_NOMBRE", "Nave Motors")
+
+
+@app.get("/api/grupo")
+def api_grupo():
+    return {"nombre": GRUPO_NOMBRE}
 
 
 @app.get("/api/diagnostico")

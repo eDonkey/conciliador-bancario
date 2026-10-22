@@ -334,9 +334,9 @@
         <ul class="archivos" id="listaPdf"></ul>
       </div>
       <div class="zona" id="zonaXls">
-        <h3> Libro mayor (Excel)</h3>
-        <p>Arrastrá o hacé clic — el .xlsx con las hojas de la cuenta E y la cuenta O</p>
-        <input type="file" id="inputXls" accept=".xlsx,.xls" hidden>
+        <h3> Libro mayor</h3>
+        <p>Arrastrá o hacé clic — el Excel con las hojas E y O, o los reportes FBS de la cuenta E y la cuenta O por separado</p>
+        <input type="file" id="inputXls" accept=".xlsx,.xls" multiple hidden>
         <ul class="archivos" id="listaXls"></ul>
       </div>
     </div>
@@ -552,7 +552,7 @@ fetch('/api/demo/estado').then(r => r.json()).then(j => {
     $('#kitDemo').classList.remove('oculto');
   }).catch(() => {});
 }).catch(() => {});
-let archivosPdf = [], archivoXls = null, datos = null, tabActiva = null;
+let archivosPdf = [], archivosXls = [], datos = null, tabActiva = null;
 
 // ?marca=X etiqueta la conciliación con esa marca y mantiene los links dentro
 // del contexto (el hub puede linkear una página por marca)
@@ -560,6 +560,13 @@ const MARCA = new URLSearchParams(location.search).get('marca') || '';
 const conMarca = (url) => MARCA
   ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
   : url;
+
+// nombre del grupo del despliegue (Nave, DARC, ...) desde el servidor
+fetch('/api/grupo').then(r => r.json()).then(g => {
+  if (!g.nombre) return;
+  document.title = `Conciliador bancario — ${g.nombre}`;
+  if (!MARCA) $('#subtitulo').textContent = `Extractos vs. libro mayor — ${g.nombre}`;
+}).catch(() => {});
 if (MARCA) {
   $('#linkDiario').href = conMarca('/diario');
   fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
@@ -608,20 +615,19 @@ configurarZona($('#zonaPdf'), $('#inputPdf'), true, files => {
   pintarListas();
 });
 configurarZona($('#zonaXls'), $('#inputXls'), false, files => {
-  const f = files.find(f => /\.xlsx?$/i.test(f.name));
-  if (f) archivoXls = f;
+  archivosXls = archivosXls.concat(files.filter(f => /\.xlsx?$/i.test(f.name)));
   pintarListas();
 });
 
 function pintarListas() {
   $('#listaPdf').innerHTML = archivosPdf.map((f, i) =>
     `<li><span>${f.name}</span><button onclick="quitarPdf(${i}, event)">×</button></li>`).join('');
-  $('#listaXls').innerHTML = archivoXls ?
-    `<li><span>${archivoXls.name}</span><button onclick="quitarXls(event)">×</button></li>` : '';
-  $('#btnConciliar').disabled = !(archivosPdf.length && archivoXls);
+  $('#listaXls').innerHTML = archivosXls.map((f, i) =>
+    `<li><span>${f.name}</span><button onclick="quitarXls(${i}, event)">×</button></li>`).join('');
+  $('#btnConciliar').disabled = !(archivosPdf.length && archivosXls.length);
 }
 window.quitarPdf = (i, e) => { e.stopPropagation(); archivosPdf.splice(i, 1); pintarListas(); };
-window.quitarXls = e => { e.stopPropagation(); archivoXls = null; pintarListas(); };
+window.quitarXls = (i, e) => { e.stopPropagation(); archivosXls.splice(i, 1); pintarListas(); };
 
 const fmt = n => n == null || n === '' ? '' :
   Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -639,7 +645,7 @@ $('#btnConciliar').addEventListener('click', async () => {
   }
   const fd = new FormData();
   archivosPdf.forEach(f => fd.append('extractos', f));
-  fd.append('mayor', archivoXls);
+  archivosXls.forEach(f => fd.append('mayor', f));
   fd.append('usar_ia', $('#chkIa').checked ? (MODO_SIMULACION ? 'simular' : 'si') : 'no');
   fd.append('marca', MARCA);
   $('#btnConciliar').disabled = true;

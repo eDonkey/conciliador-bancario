@@ -263,6 +263,15 @@ const conMarca = (url) => MARCA
   ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
   : url;
 
+// nombre del grupo del despliegue (Nave, DARC, ...) desde el servidor
+fetch('/api/grupo').then(r => r.json()).then(g => {
+  if (!g.nombre) return;
+  if (!MARCA) {
+    document.title = `Conciliación diaria — ${g.nombre}`;
+    $('#subtitulo').textContent = `Extractos + reportes FBS por cuenta — ${g.nombre}`;
+  }
+}).catch(() => {});
+
 fetch(conMarca('/api/cuentas')).then(r => r.json()).then(j => {
   cuentas = j.cuentas;
   if (MARCA) {
