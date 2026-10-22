@@ -25,8 +25,8 @@ GASTO_RE = re.compile(
     # del BBVA/Francés; 25413 suelto cubre el "DBCR 25413 S/DB" del Macro;
     # "inter." cubre los intereses abreviados ("INTER.ADEL.CC S/ACUERD")
     r'comision|(?<![a-z])iva(?![a-z])|impuesto|(?<![a-z])sirc|percepcion|iibb|'
-    r'ley ?2[57]\.?[47]?\d*|(?<!\d)25\.?413(?!\d)|mantenimiento|sellados|'
-    r'intereses|(?<![a-z])inter\.|(?<![a-z])com\.? ',
+    r'ing\.?\s*brutos|ley ?2[57]\.?[47]?\d*|(?<!\d)25\.?413(?!\d)|mantenimiento|'
+    r'sellados|intereses|(?<![a-z])inter\.|(?<![a-z])com\.? ',
     re.IGNORECASE,
 )
 
