@@ -38,6 +38,52 @@ from parsers import diarios
 app = FastAPI(title="Conciliador bancario")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- control de acceso opcional ---------------------------------------------
+# Si el entorno trae CLAVE_ACCESO, todo el sitio pide esa clave una vez por
+# navegador (cookie de 30 días). Sin la variable no cambia nada: los deploys
+# internos siguen abiertos. La cookie es un hash de la clave, así rotar la
+# clave en Railway invalida todas las sesiones.
+CLAVE_ACCESO = os.environ.get("CLAVE_ACCESO", "").strip()
+COOKIE_ACCESO = "conciliador_acceso"
+
+
+def _cookie_acceso_esperada() -> str:
+    import hashlib
+    return hashlib.sha256(f"conciliador|{CLAVE_ACCESO}".encode()).hexdigest()
+
+
+@app.middleware("http")
+async def _control_acceso(request, call_next):
+    if CLAVE_ACCESO and request.url.path not in ("/acceso", "/api/acceso"):
+        import hmac as _hmac
+        cookie = request.cookies.get(COOKIE_ACCESO, "")
+        if not _hmac.compare_digest(cookie, _cookie_acceso_esperada()):
+            if request.url.path.startswith("/api/"):
+                return JSONResponse(status_code=401,
+                                    content={"error": "Acceso restringido"})
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse("/acceso", status_code=303)
+    return await call_next(request)
+
+
+@app.get("/acceso")
+def pagina_acceso():
+    return FileResponse(os.path.join(BASE_DIR, "static", "acceso.html"),
+                        headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/acceso")
+def api_acceso(cuerpo: dict = Body(...)):
+    import hmac as _hmac
+    if not CLAVE_ACCESO:
+        return JSONResponse(status_code=404, content={"error": "Sin control de acceso"})
+    if not _hmac.compare_digest(str(cuerpo.get("clave") or ""), CLAVE_ACCESO):
+        return JSONResponse(status_code=401, content={"error": "Clave incorrecta"})
+    resp = JSONResponse(content={"ok": True})
+    resp.set_cookie(COOKIE_ACCESO, _cookie_acceso_esperada(), max_age=30 * 24 * 3600,
+                    httponly=True, samesite="lax")
+    return resp
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
 DEMO_DIR = os.path.join(DATOS_DIR, "demo")
 os.makedirs(DATOS_DIR, exist_ok=True)

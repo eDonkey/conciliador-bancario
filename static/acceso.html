@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acceso — Conciliador bancario</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --acento: #38bdf8;
+    --fondo1: #070b18; --fondo2: #0d1430;
+    --panel: rgba(255, 255, 255, 0.055);
+    --border: rgba(255, 255, 255, 0.12);
+    --texto: #e8ecf8; --texto2: #94a0c2; --rojo: #ff8896;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    background: radial-gradient(ellipse at 50% 0%, var(--fondo2), var(--fondo1) 70%) fixed;
+    color: var(--texto); min-height: 100vh;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  body::before {
+    content: ""; position: fixed; inset: -2px; z-index: -1; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(148, 163, 216, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 216, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 20%, black 15%, transparent 80%);
+  }
+  .tarjeta {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    padding: 34px 32px; width: 100%; max-width: 380px; backdrop-filter: blur(14px);
+    text-align: center;
+  }
+  .logo {
+    width: 12px; height: 12px; border-radius: 50%; background: var(--acento);
+    box-shadow: 0 0 14px var(--acento), 0 0 4px var(--acento);
+    display: inline-block; margin-bottom: 14px;
+  }
+  h1 { font-family: "Sora", sans-serif; font-size: 17px; font-weight: 800; letter-spacing: 0.03em; }
+  p.sub { font-size: 11px; color: var(--texto2); letter-spacing: 0.1em; text-transform: uppercase; margin: 6px 0 22px; }
+  input {
+    width: 100%; font-family: inherit; font-size: 14px; color: var(--texto);
+    background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+    border-radius: 10px; padding: 11px 14px; outline: none; text-align: center;
+  }
+  input:focus { border-color: color-mix(in srgb, var(--acento) 65%, transparent); }
+  button {
+    width: 100%; margin-top: 12px; font-family: inherit; border: none; color: #fff;
+    background: linear-gradient(160deg, var(--acento), color-mix(in srgb, var(--acento) 55%, #1a2447));
+    padding: 11px; border-radius: 10px; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: filter .2s; box-shadow: 0 6px 24px rgba(56, 189, 248, 0.25);
+  }
+  button:hover { filter: brightness(1.15); }
+  #error { color: var(--rojo); font-size: 12.5px; margin-top: 12px; min-height: 17px; }
+</style>
+</head>
+<body>
+<form class="tarjeta" id="form">
+  <span class="logo" aria-hidden="true"></span>
+  <h1>Conciliador bancario</h1>
+  <p class="sub" id="grupo">Acceso restringido</p>
+  <input type="password" id="clave" placeholder="Clave de acceso" autofocus autocomplete="current-password">
+  <button type="submit">Entrar</button>
+  <div id="error"></div>
+</form>
+<script>
+document.getElementById('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const err = document.getElementById('error');
+  err.textContent = '';
+  try {
+    const r = await fetch('/api/acceso', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clave: document.getElementById('clave').value }),
+    });
+    if (r.ok) { location.href = '/'; return; }
+    const d = await r.json().catch(() => ({}));
+    err.textContent = d.error || 'No se pudo validar la clave';
+    document.getElementById('clave').value = '';
+    document.getElementById('clave').focus();
+  } catch { err.textContent = 'No se pudo conectar con el servidor'; }
+});
+</script>
+</body>
+</html>
