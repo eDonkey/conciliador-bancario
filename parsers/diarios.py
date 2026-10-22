@@ -121,27 +121,71 @@ def _parse_ciudad(nombre, data):
 
 # --- Galicia: .xlsx, hoja 'Movimientos' (sin número de cuenta adentro) ------
 
+def _norm_col(v) -> str:
+    """Nombre de columna comparable: minúsculas y sin acentos."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(v or '').strip().lower())
+    return "".join(c for c in t if not unicodedata.combining(c))
+
+
+def _num_celda(x) -> float:
+    """Importe que puede venir como número, '1999181.58' o '1.042.426,58'."""
+    if x in (None, ''):
+        return 0.0
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = str(x).strip()
+    try:
+        return float(s)
+    except ValueError:
+        return _importe_ar(s)
+
+
 def _parse_galicia(nombre, data):
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    ws = wb['Movimientos'] if 'Movimientos' in wb.sheetnames else wb.worksheets[0]
-    filas = list(ws.iter_rows(values_only=True))
-    hdr = {str(v).strip(): i for i, v in enumerate(filas[0]) if v}
-    movs = []
-    for seq, f in enumerate(filas[1:], start=1):
-        fecha = _fecha(f[hdr['Fecha']])
-        if fecha is None:
+    # export clásico: hoja 'Movimientos'. Export nuevo del home banking: una o
+    # más hojas 'EXTRACTO_...' — las demás hojas suelen ser pivots manuales
+    # del cliente (p. ej. "GTOS") que REPITEN movimientos y no deben sumarse.
+    hojas = [ws for ws in wb.worksheets if ws.title.upper().startswith('EXTRACTO')]
+    if not hojas:
+        hojas = [wb['Movimientos'] if 'Movimientos' in wb.sheetnames
+                 else wb.worksheets[0]]
+    cuenta = None
+    movs, seq = [], 0
+    for ws in hojas:
+        if cuenta is None:
+            m = re.search(r'EXTRACTO[_ ]+(\d+)', ws.title.upper())
+            cuenta = m.group(1) if m else None
+        filas = list(ws.iter_rows(values_only=True))
+        hdr_i, hdr = None, {}
+        for i, f in enumerate(filas[:10]):
+            nombres = {_norm_col(v): j for j, v in enumerate(f) if v}
+            if 'fecha' in nombres and ('debitos' in nombres or 'creditos' in nombres):
+                hdr_i, hdr = i, nombres
+                break
+        if hdr_i is None:
             continue
-        deb = float(f[hdr['Débitos']] or 0)
-        cre = float(f[hdr['Créditos']] or 0)
-        detalle = ' '.join(str(f[hdr[k]]).strip() for k in
-                           ('Concepto', 'Leyendas Adicionales 1', 'Leyendas Adicionales 2')
-                           if k in hdr and f[hdr[k]])
-        movs.append(_mov(seq, nombre, fecha, str(f[hdr['Descripción']] or ''),
-                         cre - deb, float(f[hdr['Saldo']] or 0),
-                         comprobante=str(f[hdr['Número de Comprobante']] or '') or None,
-                         detalle=detalle))
-    return {"banco": "galicia", "cuenta": None, "moneda": None,
+        def celda(f, col):
+            j = hdr.get(col)
+            return f[j] if j is not None and j < len(f) else None
+        for f in filas[hdr_i + 1:]:
+            fecha = _fecha(celda(f, 'fecha'))
+            if fecha is None:
+                continue
+            deb = _num_celda(celda(f, 'debitos'))
+            cre = _num_celda(celda(f, 'creditos'))
+            detalle = ' '.join(str(celda(f, k)).strip() for k in
+                               ('concepto', 'leyendas adicionales 1',
+                                'leyendas adicionales 2', 'observaciones cliente')
+                               if celda(f, k))
+            comp = str(celda(f, 'numero de comprobante') or '').strip()
+            seq += 1
+            movs.append(_mov(seq, nombre, fecha, str(celda(f, 'descripcion') or ''),
+                             cre - deb, _num_celda(celda(f, 'saldo')),
+                             comprobante=comp if comp not in ('', '0', '0.0') else None,
+                             detalle=detalle))
+    return {"banco": "galicia", "cuenta": cuenta, "moneda": None,
             "movimientos": movs}
 
 
@@ -251,24 +295,49 @@ def _parse_rio_xlsx(nombre, wb):
 
 def _parse_fbs(nombre, wb):
     hoja = wb.sheets()[0]
-    m = FBS_HOJA_RE.search(hoja.name)
+    # Excel trunca el nombre de hoja a 31 caracteres ("Cuenta: GALICIA ($) (E)
+    # (114105"): la letra, el código y el rango completos están en la fila
+    # "Cuenta: ..." del encabezado — buscarlos ahí primero
+    texto_cuenta = hoja.name
+    for r in range(min(hoja.nrows, 12)):
+        c0 = str(hoja.cell_value(r, 0) or '')
+        if c0.strip().startswith('Cuenta:'):
+            texto_cuenta = c0
+            break
+    m = FBS_HOJA_RE.search(texto_cuenta) or FBS_HOJA_RE.search(hoja.name)
     letra = m.group(1) if m else None
     codigo = m.group(2) if m else None
-    nom = re.search(r'Cuenta:\s*([^\n(]+)', hoja.name)
-    rango = re.search(r'(\d{2}/\d{2}/\d{4})\s+AL\s+(\d{2}/\d{2}/\d{4})', hoja.name)
+    nom = re.search(r'Cuenta:\s*([^\n(]+)', texto_cuenta) \
+        or re.search(r'Cuenta:\s*([^\n(]+)', hoja.name)
+    rango = re.search(r'(\d{2}/\d{2}/\d{4})\s+AL\s+(\d{2}/\d{2}/\d{4})', texto_cuenta)
+
+    # cada FBS exporta las columnas en otra posición: si hay fila de
+    # encabezados, mapear por nombre; si no, las posiciones clásicas
+    cols = {"asiento": 0, "fecha": 1, "referencia": 2, "comentario": 3,
+            "debe": 4, "haber": 5}
+    for r in range(min(hoja.nrows, 20)):
+        fila = [str(hoja.cell_value(r, c) or '').strip().lower()
+                for c in range(hoja.ncols)]
+        if 'asiento' in fila and 'debe' in fila:
+            cols = {k: fila.index(k) for k in cols if k in fila} | \
+                   {k: v for k, v in cols.items() if k not in fila}
+            break
     asientos, seq = [], 0
     for r in range(hoja.nrows):
-        v = [hoja.cell_value(r, c) for c in range(min(hoja.ncols, 8))]
-        if not isinstance(v[1], float) or str(v[0]).startswith('Saldo'):
+        def v(k):
+            c = cols[k]
+            return hoja.cell_value(r, c) if c < hoja.ncols else ''
+        if not isinstance(v("fecha"), float) or str(v("asiento")).startswith('Saldo'):
             continue
         seq += 1
+        a0 = v("asiento")
         asientos.append(AsientoMayor(
             id=f"{letra or 'E'}#{seq}", hoja=letra or 'E',
-            asiento=int(v[0]) if isinstance(v[0], float) else str(v[0]),
-            fecha=_fecha(v[1]), referencia=str(v[2] or '').strip(),
-            comentario=str(v[3] or '').strip(),
-            debe=round(float(v[4] or 0.0), 2),
-            haber=round(float(v[5] or 0.0), 2)))
+            asiento=int(a0) if isinstance(a0, float) else str(a0),
+            fecha=_fecha(v("fecha")), referencia=str(v("referencia") or '').strip(),
+            comentario=str(v("comentario") or '').strip(),
+            debe=round(float(v("debe") or 0.0), 2),
+            haber=round(float(v("haber") or 0.0), 2)))
     return {"tipo": "fbs", "hoja": letra, "codigo_fbs": codigo,
             "codigos": {letra or "E": codigo} if codigo else {},
             "nombre_fbs": (nom.group(1).strip() if nom else hoja.name[:60]),
