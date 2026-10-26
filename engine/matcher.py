@@ -37,6 +37,28 @@ NUM_RE = re.compile(r'\d{5,}')
 # operaciones distintas del mismo monto que la misma.
 TOL_CIEGO_DIAS = 10
 
+# Gastos bancarios y pagos de sueldos: tienen solapa propia y el cliente los
+# quiere ahí, no pegados al asiento de un proveedor que da parecido. Pueden
+# cruzar por comprobante (pase 1) y, sin comprobante, solo con el importe
+# EXACTO y prácticamente el mismo día. Nunca por importe aproximado.
+TOL_ETIQUETADO_DIAS = 3
+
+# Pagos de sueldos. Tienen solapa propia: con esa lista se arma el asiento de
+# sueldos en el FBS y al día siguiente cruzan solos por comprobante.
+TERMINOS_HABERES = ("haber", "sueldo", "nomina")
+
+
+def sin_acentos(texto: str) -> str:
+    import unicodedata
+    plano = unicodedata.normalize("NFD", (texto or "").lower())
+    return "".join(c for c in plano if not unicodedata.combining(c))
+
+
+def es_haberes_texto(texto: str) -> bool:
+    """'pago haberes', 'acred. sueldos', 'acreditación de nómina'…"""
+    plano = sin_acentos(texto)
+    return any(t in plano for t in TERMINOS_HABERES)
+
 # --- Nota de débito mensual de gastos bancarios -----------------------------
 # Los gastos no se contabilizan día por día: se agrupan en una sola nota de
 # débito mensual, separando comisiones gravadas al 21%, intereses al 10,5%
@@ -177,18 +199,27 @@ def resumen_nota_debito(gastos, asientos_libres):
 TOL_ABS = 100.0     # piso: ±$100
 TOL_PCT = 0.001     # 0,1% del importe
 TOL_TOPE = 2000.0   # techo absoluto
-TOL_DIAS = 45
+# La comisión descontada o el redondeo pasan EN la misma operación: el asiento
+# está el mismo día o ahí nomás. Con 45 días esto emparejaba cualquier par de
+# importes parecidos del mes (feedback del cliente: "se acerca un poquito el
+# monto y ya te hace una sugerencia"). Si además comparten texto, se afloja.
+TOL_DIAS = 7
+TOL_DIAS_CON_TEXTO = 45
 
 
 def _tolerancia(importe: float) -> float:
     return min(max(TOL_ABS, importe * TOL_PCT), TOL_TOPE)
 
 
-def match_tolerancia(banco_libres, asiento_libres):
+def match_tolerancia(banco_libres, asiento_libres, etiquetados=frozenset()):
     """Matches 1 a 1 con diferencia chica de importe. Devuelve
-    (pares, ids_banco_usados, ids_mayor_usados)."""
+    (pares, ids_banco_usados, ids_mayor_usados).
+
+    Los movimientos de `etiquetados` (gastos bancarios y pagos de sueldos)
+    no entran: tienen su propia solapa y no se cruzan por parecido de importe."""
     import bisect
 
+    banco_libres = [m for m in banco_libres if m.id not in etiquetados]
     por_lado_a = {"credito": [], "debito": []}
     for a in asiento_libres:
         lado_banco = 'credito' if a.lado == 'debe' else 'debito'
@@ -202,28 +233,32 @@ def match_tolerancia(banco_libres, asiento_libres):
     imps_a = {k: [a.importe for a in v] for k, v in por_lado_a.items()}
     imps_b = {k: [m.importe for m in v] for k, v in por_lado_b.items()}
 
-    def cerca(f1, f2):
-        return f1 and f2 and abs((f1 - f2).days) <= TOL_DIAS
+    def cerca(x, y):
+        f1, f2 = x.fecha, y.fecha
+        if not f1 or not f2:
+            return False
+        tope = TOL_DIAS_CON_TEXTO if _afinidad_par(x, y) else TOL_DIAS
+        return abs((f1 - f2).days) <= tope
 
-    def candidatos(importe, fecha, lista, imps):
-        tol = _tolerancia(importe)
+    def candidatos(ref, lista, imps):
+        tol = _tolerancia(ref.importe)
         out = []
-        i = bisect.bisect_left(imps, importe - tol)
-        while i < len(lista) and imps[i] <= importe + tol:
+        i = bisect.bisect_left(imps, ref.importe - tol)
+        while i < len(lista) and imps[i] <= ref.importe + tol:
             x = lista[i]
-            if abs(x.importe - importe) > 0.005 and cerca(fecha, x.fecha):
+            if abs(x.importe - ref.importe) > 0.005 and cerca(ref, x):
                 out.append(x)
             i += 1
         return out
 
     pares, usados_b, usados_a = [], set(), set()
     for m in banco_libres:
-        cands = candidatos(m.importe, m.fecha, por_lado_a[m.lado], imps_a[m.lado])
+        cands = candidatos(m, por_lado_a[m.lado], imps_a[m.lado])
         if len(cands) != 1 or cands[0].id in usados_a:
             continue
         a = cands[0]
         # el asiento también debe tener a este movimiento como único candidato
-        reversos = candidatos(a.importe, a.fecha, por_lado_b[m.lado], imps_b[m.lado])
+        reversos = candidatos(a, por_lado_b[m.lado], imps_b[m.lado])
         if len(reversos) != 1 or reversos[0].id != m.id:
             continue
         dif = round(m.importe - a.importe, 2)
@@ -249,14 +284,24 @@ def _palabras(texto: str) -> set[str]:
     return set(PALABRA_RE.findall(t)) - VACIAS
 
 
+def _texto_item(x) -> str:
+    """Texto buscable, sirva un movimiento del banco o un asiento del mayor."""
+    if hasattr(x, "descripcion"):
+        return f"{x.descripcion} {x.detalle}"
+    return f"{x.referencia} {x.comentario}"
+
+
+def _afinidad_par(x, y) -> int:
+    return len(_palabras(_texto_item(x)) & _palabras(_texto_item(y)))
+
+
 def _afinidad(m, a) -> int:
     """Cuánto se parecen los textos de un movimiento y un asiento (palabras en
-    común). Solo se usa para DESEMPATAR entre candidatos que ya coinciden en
-    importe y fecha: el mayor del FBS casi nunca repite el texto del banco,
-    así que exigirlo perdería cruces buenos, pero cuando dos candidatos empatan
-    gana el que además comparte el nombre o el concepto."""
-    return len(_palabras(f"{m.descripcion} {m.detalle}")
-               & _palabras(f"{a.referencia} {a.comentario}"))
+    común). No alcanza por sí sola para cruzar: el mayor del FBS casi nunca
+    repite el texto del banco, así que exigirla perdería cruces buenos. Se usa
+    para desempatar entre candidatos y para decidir cuánto se puede estirar la
+    fecha: compartiendo texto, lejos; a ciegas, al lado."""
+    return _afinidad_par(m, a)
 
 
 def _numeros(texto: str) -> set[str]:
@@ -316,11 +361,17 @@ def netear_cuenta_o(asientos_o):
     return pendientes, cancelados
 
 
-def _match_pases(movs_banco, asientos, tolerancia_dias=45):
+def _match_pases(movs_banco, asientos, tolerancia_dias=45, etiquetados=frozenset()):
     """Concilia movimientos del banco contra asientos del mayor.
 
     Devuelve (matches, banco_sin_match, asientos_sin_match) donde matches es
     una lista de dicts {banco, asiento, metodo}.
+
+    `etiquetados` son ids de gastos bancarios y pagos de sueldos: cruzan por
+    comprobante como cualquiera, pero sin comprobante solo con el importe
+    exacto y casi el mismo día. Sin esto, un IVA o un pago de haberes se
+    llevaba puesto el asiento de un proveedor del mismo importe de otra
+    semana, y encima lo consumía para siempre.
     """
     matches = []
     banco_libres = list(movs_banco)
@@ -354,6 +405,11 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
     banco_libres = [m for m in banco_libres if m.id not in usados_b]
     asiento_libres = [a for a in asiento_libres if a.id not in usados_a]
 
+    # De acá en adelante se cruza sin comprobante en común: a los gastos y a
+    # los pagos de sueldos se les achica la ventana a unos días.
+    def tope_dias(m, base):
+        return min(base, TOL_ETIQUETADO_DIAS) if m.id in etiquetados else base
+
     # --- Pase 2: importe único (un solo candidato de cada lado) ------------
     idx = indexar(asiento_libres)
     idx_b = defaultdict(list)
@@ -364,9 +420,14 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
         lista_a = idx.get(clave, [])
         if len(lista_b) == 1 and len(lista_a) == 1:
             m, a = lista_b[0], lista_a[0]
-            if m.fecha and a.fecha and abs((m.fecha - a.fecha).days) > tolerancia_dias:
+            # para un movimiento común la ventana no se achica: que el importe
+            # sea único en los dos lados de TODO el período ya es evidencia
+            # fuerte, y en la mensual el asiento aparece semanas después.
+            if m.fecha and a.fecha and abs((m.fecha - a.fecha).days) > tope_dias(m, tolerancia_dias):
                 continue
-            matches.append({"banco": m, "asiento": a, "metodo": "importe único"})
+            detalle = "" if _afinidad(m, a) else " · sin comprobante ni texto en común"
+            matches.append({"banco": m, "asiento": a,
+                            "metodo": f"importe único{detalle}"})
             usados_b.add(m.id)
             usados_a.add(a.id)
     banco_libres = [m for m in banco_libres if m.id not in usados_b]
@@ -396,7 +457,7 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
                 # la ventana se achica. Con 45 días terminaba cruzando un pago
                 # con un asiento ajeno del mismo importe de dos semanas antes
                 # (feedback del cliente) y consumiéndolo para siempre.
-                if d <= (tolerancia_dias if af else TOL_CIEGO_DIAS):
+                if d <= tope_dias(m, tolerancia_dias if af else TOL_CIEGO_DIAS):
                     pares.append((d, -af, m, a))
         pares.sort(key=lambda p: (p[0], p[1], p[2].id, p[3].id))
         for d, menos_af, m, a in pares:
@@ -409,10 +470,34 @@ def _match_pases(movs_banco, asientos, tolerancia_dias=45):
                             "metodo": f"importe+fecha (±{d}d){detalle}"})
             usados_b.add(m.id)
             usados_a.add(a.id)
-    banco_libres = [m for m in banco_libres if m.id not in usados_b]
     asiento_libres = [a for a in asiento_libres if a.id not in usados_a]
 
+    # los apartados (gastos, haberes) nunca se perdieron: vuelven a la lista de
+    # pendientes en su orden original, que es donde el cliente los espera
+    cruzados = {m["banco"].id for m in matches}
+    banco_libres = [m for m in movs_banco if m.id not in cruzados]
+
     return matches, banco_libres, asiento_libres
+
+
+def _etiqueta_previa(m, terminos_gasto=None, excepciones_gasto=None):
+    """'gasto', 'haberes' o None, mirando SOLO el movimiento del banco.
+
+    Es la misma decisión que después arma las solapas, adelantada al cruce:
+    lo que va a terminar en Gastos bancarios o en Haberes no se cruza a ciegas
+    contra un asiento cualquiera del mismo importe."""
+    from engine import gastos_conf
+
+    forzado = getattr(m, "_forzar_gasto", None)
+    if forzado is True:          # reclasificado a mano: pisa todo
+        return "gasto"
+    if forzado is None and not gastos_conf.es_gasto(m.descripcion, excepciones_gasto) \
+            and (GASTO_RE.search(m.descripcion)
+                 or gastos_conf.es_gasto(m.descripcion, terminos_gasto)):
+        return "gasto"
+    if es_haberes_texto(f"{m.descripcion} {m.detalle}"):
+        return "haberes"
+    return None
 
 
 def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
@@ -424,11 +509,20 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
 
     pendientes_o, cancelados_o = netear_cuenta_o(asientos_o)
 
+    # 0) qué es cada movimiento del banco ANTES de cruzar. Los gastos e
+    # impuestos bancarios y los pagos de sueldos van a su propia solapa: se
+    # pueden cruzar por comprobante, pero nunca "porque el importe da".
+    etiquetas = {m.id: _etiqueta_previa(m, terminos_gasto, excepciones_gasto)
+                 for m in movs_banco}
+    etiquetados = {i for i, e in etiquetas.items() if e}
+
     # 1) extracto vs cuenta E
-    matches_e, banco_sin_e, e_sin_banco = _match_pases(movs_banco, asientos_e)
+    matches_e, banco_sin_e, e_sin_banco = _match_pases(
+        movs_banco, asientos_e, etiquetados=etiquetados)
 
     # 2) lo que no está en E se busca en la O pendiente de confirmación
-    matches_o, banco_sin_nada, o_pend_sin_banco = _match_pases(banco_sin_e, pendientes_o)
+    matches_o, banco_sin_nada, o_pend_sin_banco = _match_pases(
+        banco_sin_e, pendientes_o, etiquetados=etiquetados)
 
     # 2b) reglas aprendidas de conciliaciones manuales anteriores
     pares_regla, usados_b, usados_a = reglas_mod.aplicar(
@@ -454,7 +548,8 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
 
     # 2d) tolerancia estricta de importe (comisiones/redondeos), sin ambigüedad
     pares_tol, usados_b, usados_a = match_tolerancia(
-        banco_sin_nada, e_sin_banco + o_pend_sin_banco)
+        banco_sin_nada, e_sin_banco + o_pend_sin_banco,
+        etiquetados=etiquetados)
     aproximados = len(pares_tol)
     if pares_tol:
         banco_sin_nada = [m for m in banco_sin_nada if m.id not in usados_b]
@@ -469,7 +564,11 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     gastos_bancarios, sin_contabilizar = [], []
     for m in banco_sin_nada:
         forzado = getattr(m, "_forzar_gasto", None)
-        if forzado is not None:
+        if m.id in etiquetas:
+            # misma decisión que se tomó antes de cruzar: lo apartado del
+            # cruce a ciegas es exactamente lo que termina en esta solapa
+            es_gasto = etiquetas[m.id] == "gasto"
+        elif forzado is not None:
             # decisión manual sobre ESTE movimiento: pisa todo
             es_gasto = forzado
         elif gastos_conf.es_gasto(m.descripcion, excepciones_gasto):

@@ -31,7 +31,7 @@ _entorno.cargar()
 
 from parsers.santander_pdf import parse_extracto
 from parsers.mayor_xlsx import parse_mayor
-from engine.matcher import conciliar
+from engine.matcher import conciliar, es_haberes_texto
 from engine import ai_assist
 from engine import fbs_sql
 from engine import ia_log
@@ -85,16 +85,10 @@ def _obtener(job_id):
     return RESULTADOS.get(job_id)
 
 
-TERMINOS_HABERES = ("haber", "sueldo", "nomina")   # "pago haberes",
-# "acred. sueldos", "acreditación (de) nómina", etc. — sin acentos ni mayúsc.
-
-
 def _es_haberes(m: dict) -> bool:
-    import unicodedata
-    texto = f'{m.get("descripcion") or ""} {m.get("detalle") or ""}'
-    plano = unicodedata.normalize("NFD", texto.lower())
-    plano = "".join(c for c in plano if not unicodedata.combining(c))
-    return any(t in plano for t in TERMINOS_HABERES)
+    """Un único detector de haberes, el del matcher: es el mismo que decide
+    que estos pagos no se crucen a ciegas contra el asiento de un proveedor."""
+    return es_haberes_texto(f'{m.get("descripcion") or ""} {m.get("detalle") or ""}')
 
 
 def _recalcular_resumen(datos):
