@@ -1584,13 +1584,33 @@ def api_diario_memoria_borrar():
             "movs_olvidados": movs, "asientos_olvidados": asientos}
 
 
+def _nombre_archivo(texto: str) -> str:
+    """Etiqueta de cuenta -> nombre de archivo usable en Windows."""
+    limpio = re.sub(r'[\\/:*?"<>|]+', "-", str(texto or "cuenta"))
+    return re.sub(r"\s+", " ", limpio).strip()[:90] or "cuenta"
+
+
+def _cabecera_adjunto(nombre: str) -> dict:
+    """Content-Disposition que soporta acentos y guiones largos: el encabezado
+    HTTP es latin-1, así que va un nombre ASCII y al lado el real en UTF-8
+    (RFC 5987), que es el que muestran los navegadores."""
+    import unicodedata
+    from urllib.parse import quote
+    plano = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode()
+    plano = re.sub(r"\s+", " ", plano).strip() or "conciliacion.xlsx"
+    return {"Content-Disposition":
+            f'attachment; filename="{plano}"; filename*=UTF-8\'\'{quote(nombre)}'}
+
+
 @app.get("/api/diario/{grupo_id}/excel")
 def api_diario_excel(grupo_id: str):
-    """Exporta el tablero de una corrida diaria completo a Excel: resumen por
-    cuenta + listas consolidadas de todas las cuentas (pendientes del banco,
-    haberes, gastos y pendientes del mayor), con la columna Cuenta en cada
-    hoja. El detalle completo de UNA cuenta se sigue exportando desde adentro
-    de esa conciliación."""
+    """Exporta una corrida diaria.
+
+    Cada cuenta se baja como el libro con el que se arma la conciliación
+    (Conciliación, Extracto y Mayor en crudo, Mov Pendientes y Cont
+    Pendientes, y atrás una hoja por solapa). Si la corrida tiene una sola
+    cuenta, se baja ese libro; si tiene varias, un ZIP con un libro por cuenta
+    más el tablero consolidado del día."""
     ruta = os.path.join(DATOS_DIR, f"grupo_{grupo_id}.json")
     if not os.path.exists(ruta):
         return JSONResponse(status_code=404, content={"error": "Tablero no encontrado"})
@@ -1646,11 +1666,35 @@ def api_diario_excel(grupo_id: str):
 
     buf = io.BytesIO()
     wb.save(buf)
-    nombre = f"Conciliacion_diaria_{grupo.get('procesado') or grupo_id}.xlsx"
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{nombre}"'})
+    dia = grupo.get("procesado") or grupo_id
+    XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    con_job = [c for c in grupo.get("cuentas", []) if c.get("job_id")]
+    # una sola cuenta: su libro, que ya trae todo
+    if len(con_job) == 1 and _obtener(con_job[0]["job_id"]):
+        datos = _obtener(con_job[0]["job_id"])
+        nombre = f"{_nombre_archivo(con_job[0].get('etiqueta'))} {dia}.xlsx"
+        return Response(content=_generar_excel(datos).getvalue(), media_type=XLSX,
+                        headers=_cabecera_adjunto(nombre))
+
+    import zipfile
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"Tablero del dia {dia}.xlsx", buf.getvalue())
+        usados = set()
+        for c in con_job:
+            datos = _obtener(c["job_id"])
+            if not datos:
+                continue
+            base = _nombre_archivo(c.get("etiqueta"))
+            nombre = base
+            n = 2
+            while nombre in usados:      # dos cuentas con la misma etiqueta
+                nombre, n = f"{base} ({n})", n + 1
+            usados.add(nombre)
+            z.writestr(f"{nombre}.xlsx", _generar_excel(datos).getvalue())
+    return Response(content=zbuf.getvalue(), media_type="application/zip",
+                    headers=_cabecera_adjunto(f"Conciliacion diaria {dia}.zip"))
 
 
 @app.get("/api/diario/{grupo_id}")
@@ -2078,10 +2122,15 @@ def api_exportar(job_id: str):
     if not datos:
         return JSONResponse(status_code=404, content={"error": "Resultado no encontrado"})
     buffer = _generar_excel(datos)
+    # nombre con cuenta y período: guardan un archivo por cuenta y por mes
+    ext = datos.get("extractos") or [{}]
+    hasta = max([e["hasta"] for e in ext if e.get("hasta")], default="")
+    cuenta = (datos.get("cuenta") or {}).get("etiqueta") or ext[0].get("cuenta") or "Conciliacion"
+    nombre = f"{_nombre_archivo(cuenta)}{f' {hasta}' if hasta else ''}.xlsx"
     return StreamingResponse(
         buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="conciliacion.xlsx"'},
+        headers=_cabecera_adjunto(nombre),
     )
 
 
