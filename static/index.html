@@ -531,6 +531,22 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
     <div id="avisos" aria-live="polite"></div>
   </section>
 
+  <!-- Conciliaciones mensuales guardadas: antes solo se podía volver a la
+       última (la del navegador) y el resto quedaba enterrado. -->
+  <section class="tarjeta oculto" id="histCard">
+    <h2 class="seccion">Conciliaciones anteriores <span id="histMarca" style="font-weight:400;color:var(--texto2);font-size:var(--fs-md);"></span></h2>
+    <p style="font-size:var(--fs-sm); color:var(--texto2); margin-bottom:10px; max-width:80ch;">
+      Cada conciliación mensual queda guardada: se puede volver a abrir con todo lo que
+      se hizo adentro (cruces a mano, reclasificaciones, marcas de cargado) y exportarla
+      de nuevo. Buscá por cuenta, banco, archivo o fecha.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">
+      <input class="buscador" id="histBuscar" type="search" style="margin-bottom:0;"
+             placeholder="Buscar por cuenta, banco, archivo…" aria-label="Buscar conciliación">
+      <span id="histEstado" role="status" aria-live="polite" style="font-size:var(--fs-sm); color:var(--texto2);"></span>
+    </div>
+    <div class="contenedor-tabla"><table id="tablaHist"><thead></thead><tbody></tbody></table></div>
+  </section>
+
   <section id="resultados" class="oculto">
     <div class="resumen" id="kpis"></div>
     <nav class="tabs" id="tabs" role="tablist" aria-label="Resultados de la conciliación"></nav>
@@ -1121,6 +1137,8 @@ async function cargarResultado(jobId) {
    ahí se podía disparar una conciliación mensual sin querer. */
 function modoDetalle() {
   $('#cargaCard').classList.add('oculto');
+  enDetalle = true;
+  $('#histCard').classList.add('oculto');   // en el detalle no va la lista
   const barra = $('#barraDetalle');
   const esDiaria = datos && datos.cuenta;
   $('#detalleQue').innerHTML = esDiaria
@@ -1167,12 +1185,72 @@ function avisarCobertura() {
 }
 
 $('#btnNuevaConc').addEventListener('click', () => {
+  enDetalle = false;
   $('#cargaCard').classList.remove('oculto');
+  cargarHistorial();   // en el detalle no se pintó: se trae ahora
   $('#barraDetalle').classList.add('oculto');
   $('#cargaCard').scrollIntoView(SCROLL);
 });
 
 // Al entrar: primero un ?job compartido por link; si no, el último trabajo propio
+/* ============ historial de conciliaciones mensuales ============ */
+let histTimer = null;
+// cada búsqueda lleva número: si llega tarde la respuesta de una anterior, se
+// descarta en vez de pisar la lista que corresponde a lo que está escrito
+let histPedido = 0;
+// el detalle de una conciliación oculta la lista; como el historial se carga
+// en paralelo, hay que acordarse para que no la vuelva a mostrar al llegar
+let enDetalle = false;
+
+async function cargarHistorial() {
+  const q = $('#histBuscar').value.trim();
+  const mio = ++histPedido;
+  try {
+    const url = conMarca(`${BASE}api/historial${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const lista = (await r.json()).conciliaciones || [];
+    if (enDetalle || mio !== histPedido) return;
+    $('#histCard').classList.remove('oculto');
+    $('#histMarca').textContent = MARCA ? `— ${MARCA}` : '';
+    $('#histEstado').textContent = `${lista.length} guardada${lista.length === 1 ? '' : 's'}`;
+    const dia = iso => iso ? iso.split('-').reverse().join('/') : '';
+    if (!lista.length) {
+      $('#tablaHist thead').innerHTML = '';
+      $('#tablaHist tbody').innerHTML = `<tr><td style="color:var(--texto2)">
+        ${q ? 'Ninguna coincide con esa búsqueda.'
+            : `Todavía no hay conciliaciones mensuales guardadas${MARCA ? ' de esta marca' : ''}.`}</td></tr>`;
+      return;
+    }
+    $('#tablaHist thead').innerHTML = `<tr><th scope="col">Procesada</th><th scope="col">Cuenta</th>
+      <th scope="col">Período del extracto</th><th scope="col" class="num">Movimientos</th>
+      <th scope="col" class="num">Conciliados</th><th scope="col" class="num">Pendientes</th>
+      <th scope="col" class="num">% explicado</th><th scope="col"></th></tr>`;
+    $('#tablaHist tbody').innerHTML = lista.map(c => {
+      const p = c.porcentaje_explicado;
+      const cls = p == null ? '' : (p >= 85 ? 'alto' : (p >= 60 ? 'medio' : 'bajo'));
+      return `<tr${c.job_id === (datos && datos.job_id) ? ' style="background:color-mix(in srgb, var(--acento) 7%, transparent);"' : ''}>
+        <td style="white-space:nowrap">${dia(c.procesado)}${c.marca ? `<br><small style="color:var(--texto2)">${esc(c.marca)}</small>` : ''}</td>
+        <td>${esc((c.cuentas || []).join(', ')) || '<span style="color:var(--texto2)">sin número en el archivo</span>'}
+          ${c.bancos && c.bancos.length ? `<br><small style="color:var(--texto2)">${esc(c.bancos.join(', '))}</small>` : ''}</td>
+        <td style="white-space:nowrap">${dia(c.desde)}${c.hasta && c.hasta !== c.desde ? ' → ' + dia(c.hasta) : ''}
+          ${c.archivos && c.archivos.length ? `<br><small style="color:var(--texto2)" title="${esc(c.archivos.join(', '))}">${esc(c.archivos[0])}${c.archivos.length > 1 ? ` +${c.archivos.length - 1}` : ''}</small>` : ''}</td>
+        <td class="num">${c.movimientos ?? ''}</td>
+        <td class="num">${c.conciliados ?? ''}</td>
+        <td class="num">${c.pendientes ?? ''}</td>
+        <td class="num ${cls ? 'pct ' + cls : ''}">${p == null ? '' : p + '%'}</td>
+        <td><a href="${conMarca(`${BASE}?job=${esc(c.job_id)}`)}" style="color:var(--azul); white-space:nowrap">Abrir →</a></td>
+      </tr>`;
+    }).join('');
+  } catch {}
+}
+
+$('#histBuscar').addEventListener('input', () => {
+  clearTimeout(histTimer);
+  histTimer = setTimeout(cargarHistorial, 350);
+});
+cargarHistorial();
+
 (async function retomarUltimoJob() {
   const compartido = new URLSearchParams(location.search).get('job');
   if (compartido) {

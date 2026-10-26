@@ -112,7 +112,24 @@ def test_la_identidad_se_lee_decodificada(monkeypatch):
     h.update(seg.firmar(h, "GET", RUTA, CLAVE_FIRMA))
     req = type("R", (), {"headers": h, "method": "GET", "scope": {"raw_path": RUTA.encode(), "query_string": b""},
                          "url": type("U", (), {"path": RUTA})()})()
-    assert seg.identidad_hub(req) == {"usuario": "jperez (Juan Pérez)", "permisos": ["cargar", "admin"]}
+    assert seg.identidad_hub(req) == {"usuario": "jperez (Juan Pérez)",
+                                      "permisos": ["cargar", "admin"], "marca": ""}
+
+
+def test_la_marca_de_la_ruta_por_marca_llega_firmada(monkeypatch):
+    """El hub manda la marca de la ruta en X-Orbit-Marca; la pantalla la usa
+    para no mostrar las cuentas de las otras marcas."""
+    monkeypatch.setenv("HUB_FIRMA_CLAVE", CLAVE_FIRMA.decode())
+    h = {"x-orbit": "1", "x-orbit-usuario": USUARIO, "x-orbit-permisos": "cargar",
+         "x-orbit-marca": "LEAP%20-%20Lemans"}
+    h.update(seg.firmar(h, "GET", RUTA, CLAVE_FIRMA))
+    req = type("R", (), {"headers": h, "method": "GET", "scope": {"raw_path": RUTA.encode(), "query_string": b""},
+                         "url": type("U", (), {"path": RUTA})()})()
+    assert seg.identidad_hub(req)["marca"] == "LEAP - Lemans"
+
+    # cambiarla sin volver a firmar invalida todo el pedido
+    h["x-orbit-marca"] = "Fiat%20-%20Verona"
+    assert seg.identidad_hub(req) is None
 
 
 # ---- sin firma valida solo vale el login propio ---------------------------------

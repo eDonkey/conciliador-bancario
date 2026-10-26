@@ -797,10 +797,24 @@ async function refrescarFbsSql() {
         $('#fbsSqlEstado').textContent =
           `Configurado en el hub (${(j.conexiones_hub || []).join(', ')}) — ` +
           'elegí qué cuentas traer y el rango: la consulta se arma sola.';
-        cont.innerHTML = j.cuentas.map(c =>
+        // con pocas cuentas (las de una marca) vienen tildadas; con muchas
+        // —entrando sin marca se ven las de todo el grupo— no, para no
+        // dispararle al FBS una consulta de 40 cuentas sin querer
+        const tildadas = j.cuentas.length <= 8;
+        cont.innerHTML =
+          `<div style="flex-basis:100%; display:flex; gap:10px; align-items:center; margin-bottom:2px;">
+             <button type="button" class="secundario btn-chico" id="fbsTodas">${tildadas ? 'Destildar todas' : 'Tildar todas'}</button>
+             <span style="color:var(--texto2)">${j.cuentas.length} cuenta${j.cuentas.length === 1 ? '' : 's'}${MARCA ? ' de esta marca' : ' (todas las marcas)'}</span>
+           </div>` +
+          j.cuentas.map(c =>
           `<label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
-             <input type="checkbox" class="fbsCta" value="${esc(c.cuenta_id)}" checked>
+             <input type="checkbox" class="fbsCta" value="${esc(c.cuenta_id)}" ${tildadas ? 'checked' : ''}>
              ${esc(c.etiqueta)}</label>`).join('');
+        $('#fbsTodas').addEventListener('click', () => {
+          const marcar = !document.querySelector('.fbsCta:checked');
+          document.querySelectorAll('.fbsCta').forEach(x => { x.checked = marcar; });
+          $('#fbsTodas').textContent = marcar ? 'Destildar todas' : 'Tildar todas';
+        });
       } else {
         $('#fbsSqlEstado').innerHTML = `<span style="color:var(--rojo)">Ninguna cuenta
           ${MARCA ? 'de esta marca ' : ''}tiene FBS configurado en el hub — cargale la
@@ -1115,7 +1129,7 @@ $('#btnCopiarTablero').addEventListener('click', async () => {
 // Para el control que antes no se podía hacer: un movimiento figura "sin
 // asiento" y en el FBS está — acá se ve si ese asiento ya se había consumido
 // en otra corrida, y con qué movimiento se cruzó.
-let histTimer = null;
+let histTimer = null, histPedido = 0;   // descarta respuestas que llegan tarde
 
 function pintarHistConc(json) {
   const thead = $('#tablaHistConc thead'), tbody = $('#tablaHistConc tbody');
@@ -1149,12 +1163,14 @@ function pintarHistConc(json) {
 async function cargarHistConc() {
   const cuenta = $('#histCuenta').value || '';
   const q = $('#histBuscar').value.trim();
+  const mio = ++histPedido;
   $('#histEstado').innerHTML = '<span class="spinner"></span>Buscando…';
   try {
     const url = `${BASE}api/diario/conciliados?cuenta=${encodeURIComponent(cuenta)}&q=${encodeURIComponent(q)}`;
     const resp = await fetch(url);
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || 'Error del servidor');
+    if (mio !== histPedido) return;
     $('#histEstado').textContent =
       `${json.total} resultado${json.total === 1 ? '' : 's'} en las últimas ${json.corridas} corrida${json.corridas === 1 ? '' : 's'}`;
     pintarHistConc(json);

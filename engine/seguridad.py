@@ -355,9 +355,13 @@ def ruta_de(request) -> str:
 
 
 def identidad_hub(request, ahora: float | None = None) -> dict | None:
-    """{'usuario': 'jperez (Juan Pérez)', 'permisos': [...]} si el pedido viene del hub: X-Orbit: 1,
-    firma válida (clave configurada, método y ruta de ESTE pedido, 60 s) y un X-Orbit-Usuario.
-    None en cualquier otro caso (entonces solo vale el login propio)."""
+    """{'usuario': 'jperez (Juan Pérez)', 'permisos': [...], 'marca': 'LEAP - Lemans'} si el
+    pedido viene del hub: X-Orbit: 1, firma válida (clave configurada, método y ruta de ESTE
+    pedido, 60 s) y un X-Orbit-Usuario.
+    None en cualquier otro caso (entonces solo vale el login propio).
+
+    La marca es la de la ruta por marca del hub (X-Orbit-Marca). Viene dentro
+    de la firma, así que no se puede inventar desde afuera."""
     h = request.headers
     if h.get(_PREFIJO_ORBIT) != "1":
         return None
@@ -367,4 +371,5 @@ def identidad_hub(request, ahora: float | None = None) -> dict | None:
     if not usuario:
         return None
     permisos = [p.strip() for p in (h.get("x-orbit-permisos") or "").split(",") if p.strip()]
-    return {"usuario": usuario, "permisos": permisos}
+    marca = "".join(c for c in unquote(h.get("x-orbit-marca", "")[:200]) if c.isprintable()).strip()[:80]
+    return {"usuario": usuario, "permisos": permisos, "marca": marca}

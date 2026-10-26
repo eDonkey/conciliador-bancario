@@ -1514,6 +1514,69 @@ def _texto_fila(f: dict) -> str:
         a.get("comentario"), a.get("debe"), a.get("haber")) if x)
 
 
+@app.get("/api/historial")
+def api_historial(marca: str = "", q: str = "", limite: int = 60):
+    """Las conciliaciones MENSUALES guardadas, de la más reciente a la más
+    vieja: qué cuenta, qué período, cuánto explicó y el link para abrirla.
+    Antes solo se podía volver a la última (la del navegador) y el resto
+    quedaba enterrado aunque el archivo siguiera ahí.
+
+    Las corridas del modo diario no entran: tienen su propio tablero."""
+    todas = cuentas_mod.cargar() if marca else []
+    nums_marca = {cuentas_mod.numero_cuenta(c["id"])
+                  for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
+    salida = []
+    for nombre in os.listdir(DATOS_DIR):
+        if not nombre.endswith(".json") or len(nombre) != 17:
+            continue      # los tableros son grupo_*.json y los datos, nombres largos
+        ruta = os.path.join(DATOS_DIR, nombre)
+        try:
+            with open(ruta, encoding="utf-8") as f:
+                j = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(j, dict) or "resumen" not in j or j.get("cuenta"):
+            continue      # sin resumen no es un job; con cuenta es del diario
+        ext = j.get("extractos") or [{}]
+        fechas = [e[k] for e in ext for k in ("desde", "hasta") if e.get(k)]
+        cuentas_ext = sorted({e.get("cuenta") for e in ext if e.get("cuenta")})
+        bancos = sorted({(e.get("banco") or "").title() for e in ext if e.get("banco")})
+        r = j.get("resumen") or {}
+        fila = {
+            "job_id": j.get("job_id") or nombre[:-5],
+            "marca": j.get("marca"),
+            "cuentas": cuentas_ext,
+            "bancos": bancos,
+            "archivos": [e.get("archivo") for e in ext if e.get("archivo")],
+            "desde": min(fechas) if fechas else None,
+            "hasta": max(fechas) if fechas else None,
+            "movimientos": r.get("movimientos_banco"),
+            "conciliados": (r.get("conciliados_e", 0) + r.get("en_o_pendientes_confirmar", 0)
+                            + r.get("conciliados_manual", 0)),
+            "pendientes": (r.get("banco_sin_contabilizar", {}).get("cantidad", 0)
+                           + r.get("e_sin_banco", {}).get("cantidad", 0)
+                           + r.get("o_pendientes_sin_banco", {}).get("cantidad", 0)),
+            "porcentaje_explicado": r.get("porcentaje_explicado", r.get("porcentaje_conciliado")),
+            "procesado": date.fromtimestamp(os.path.getmtime(ruta)).isoformat(),
+            "_orden": os.path.getmtime(ruta),
+        }
+        if marca:
+            # por número de cuenta, que no cambia si renombran la marca o el banco
+            nums = {re.sub(r"\D", "", c).lstrip("0") for c in cuentas_ext} - {""}
+            if not (cuentas_mod.misma_marca(fila["marca"], marca) or (nums & nums_marca)):
+                continue
+        if q:
+            t = " ".join(str(x) for x in (fila["marca"], *cuentas_ext, *bancos,
+                                          *fila["archivos"], fila["desde"], fila["hasta"]))
+            if q.strip().lower() not in t.lower():
+                continue
+        salida.append(fila)
+    salida.sort(key=lambda x: x["_orden"], reverse=True)
+    for f in salida:
+        f.pop("_orden")
+    return {"conciliaciones": salida[:max(1, limite)]}
+
+
 @app.get("/api/diario/conciliados")
 def api_diario_conciliados(cuenta: str = "", q: str = "", corridas: int = 40,
                            limite: int = 1500):
@@ -2688,17 +2751,39 @@ if DEMO_MODE:
         return resp
 
 
-@app.get("/diario")
-def pagina_diario():
-    return FileResponse(os.path.join(BASE_DIR, "static", "diario.html"),
+def _pagina(request, archivo: str):
+    """Sirve una pantalla, sin caché (tras cada deploy el navegador trae la
+    interfaz nueva).
+
+    Si el pedido entró por la ruta por marca del hub, la marca llega firmada
+    en X-Orbit-Marca pero la URL no la trae, y la pantalla terminaba mostrando
+    las cuentas de TODAS las marcas. Se redirige una vez con ?marca=: de ahí
+    en adelante la pantalla entera (cuentas, FBS, historial) queda acotada.
+    El Location es solo la query, así resuelve igual detrás del prefijo del
+    hub que en la raíz."""
+    marca = ""
+    try:
+        marca = (seguridad.identidad_hub(request) or {}).get("marca") or ""
+    except Exception:      # noqa: BLE001 — sin identidad del hub se sirve igual
+        marca = ""
+    if marca and not request.query_params.get("marca"):
+        from urllib.parse import urlencode
+        qs = dict(request.query_params)
+        qs["marca"] = marca
+        return Response(status_code=302, headers={"Location": f"?{urlencode(qs)}",
+                                                  "Cache-Control": "no-store"})
+    return FileResponse(os.path.join(BASE_DIR, "static", archivo),
                         headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/diario")
+def pagina_diario(request: Request):
+    return _pagina(request, "diario.html")
 
 
 @app.get("/")
-def index():
-    # sin caché: tras cada deploy el navegador debe traer la interfaz nueva
-    return FileResponse(os.path.join(BASE_DIR, "static", "index.html"),
-                        headers={"Cache-Control": "no-cache"})
+def index(request: Request):
+    return _pagina(request, "index.html")
 
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
