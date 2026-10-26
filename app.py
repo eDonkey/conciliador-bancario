@@ -2829,9 +2829,14 @@ def _pagina(request, archivo: str):
 
 @app.get("/api/version")
 def api_version():
-    """Qué versión está corriendo. Barata a propósito: la pantalla la muestra
-    abajo de todo para poder confirmar un deploy de un vistazo."""
-    return _VERSION
+    """Qué versión está corriendo y cuál hay en el disco. Barata a propósito:
+    la pantalla la muestra abajo de todo para confirmar un deploy de un
+    vistazo. Si difieren, se actualizó el código pero no se reinició el
+    servicio: el proceso sigue con el viejo en memoria."""
+    en_disco = _commit_instalado()
+    return {**_VERSION, "en_disco": en_disco,
+            "falta_reiniciar": bool(en_disco and _VERSION["commit"]
+                                    and en_disco != _VERSION["commit"])}
 
 
 @app.get("/diario")

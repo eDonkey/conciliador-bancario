@@ -2356,12 +2356,26 @@ window.deshacerManual = async id => {
 };
 
 /* ============ versión corriendo ============ */
+// Si el proceso es viejo, esto es justamente lo que hay que ver: quedarse en
+// blanco ante el error sería esconder el diagnóstico.
 (async function pieVersion() {
+  const pie = $('#pieVersion');
   try {
-    const v = await (await fetch(`${BASE}api/version`)).json();
+    const resp = await fetch(`${BASE}api/version`);
+    if (resp.status === 404) {
+      pie.innerHTML = '<b>Esta pantalla es nueva pero el servicio sigue corriendo la versión anterior.</b> ' +
+        'Hay que reiniciarlo: con <code>git pull</code> solo se actualizan los archivos, el código ya cargado sigue en memoria.';
+      pie.style.color = 'var(--ambar)';
+      return;
+    }
+    const v = await resp.json();
     if (!v.commit && !v.arrancado) return;
-    $('#pieVersion').textContent =
-      `Versión ${v.commit || 'sin git'} · en marcha desde ${v.arrancado || '—'}`;
+    pie.textContent = `Versión ${v.commit || 'sin git'} · en marcha desde ${v.arrancado || '—'}`;
+    if (v.falta_reiniciar) {
+      pie.innerHTML = `Corriendo la versión <b>${v.commit}</b> (desde ${v.arrancado}), pero en el disco ya está la ` +
+        `<b>${v.en_disco}</b>: falta reiniciar el servicio para que tome la nueva.`;
+      pie.style.color = 'var(--ambar)';
+    }
   } catch {}
 })();
 </script>
