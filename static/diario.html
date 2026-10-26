@@ -486,6 +486,12 @@ const BASE = location.pathname.replace(/\/[^/]*$/, '/');
   </section>
 </main>
 
+<!-- Versión corriendo: después de un git pull sin reiniciar, el HTML se
+     sirve del disco (parece actualizado) pero el código sigue siendo el
+     viejo. Acá se ve lo que de verdad está en memoria. -->
+<footer id="pieVersion" style="text-align:center; padding:18px 16px 28px; font-size:var(--fs-xs,12px); color:var(--texto2); opacity:.75;"></footer>
+
+
 <div id="modalConfirmar" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modalConfirmarTitulo" aria-describedby="modalConfirmarTexto">
   <div class="modal-card" style="width: 480px;">
     <h3 id="modalConfirmarTitulo"></h3>
@@ -1293,6 +1299,16 @@ window.eliminarGrupo = async (id, fecha) => {
     document.querySelector('main').insertAdjacentHTML('afterbegin',
       `<div class="aviso error">No se pudo cargar el tablero del link: ${esc(err.message)}</div>`);
   }
+})();
+
+/* ============ versión corriendo ============ */
+(async function pieVersion() {
+  try {
+    const v = await (await fetch(`${BASE}api/version`)).json();
+    if (!v.commit && !v.arrancado) return;
+    $('#pieVersion').textContent =
+      `Versión ${v.commit || 'sin git'} · en marcha desde ${v.arrancado || '—'}`;
+  } catch {}
 })();
 </script>
 </body>

@@ -55,6 +55,33 @@ acceso.instalar(app)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
+
+
+def _commit_instalado() -> str:
+    """El commit que tenía el disco CUANDO ARRANCÓ este proceso. Se lee del
+    .git sin invocar a git. Es lo que de verdad está corriendo: después de un
+    git pull sin reiniciar, el disco ya tiene el commit nuevo pero el código
+    en memoria sigue siendo el viejo (y el HTML, que se sirve del disco, hace
+    parecer que la actualización entró)."""
+    try:
+        cabeza = open(os.path.join(BASE_DIR, ".git", "HEAD"), encoding="utf-8").read().strip()
+        if not cabeza.startswith("ref: "):
+            return cabeza[:7]
+        ref = cabeza[5:].strip()
+        suelta = os.path.join(BASE_DIR, ".git", *ref.split("/"))
+        if os.path.exists(suelta):
+            return open(suelta, encoding="utf-8").read().strip()[:7]
+        empacadas = os.path.join(BASE_DIR, ".git", "packed-refs")
+        for linea in open(empacadas, encoding="utf-8"):
+            if linea.rstrip().endswith(" " + ref):
+                return linea.split()[0][:7]
+    except (OSError, IndexError):
+        pass
+    return ""
+
+
+_VERSION = {"commit": _commit_instalado(),
+            "arrancado": time.strftime("%Y-%m-%d %H:%M")}
 os.makedirs(DATOS_DIR, exist_ok=True)
 RESULTADOS = {}  # job_id -> resultado serializado
 PROGRESO = {}    # job_id -> {estado, fase, porcentaje, eta_seg, ...}
@@ -404,6 +431,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
 def api_diagnostico():
     """Qué ve el servidor del entorno de IA, sin exponer secretos. Sirve para
     verificar que la clave llegó al proceso (p. ej. tras un deploy)."""
+    # (la versión que está corriendo se agrega al final, ver _VERSION)
     clave = os.environ.get("ANTHROPIC_API_KEY") or ""
     token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
     return {
@@ -429,6 +457,10 @@ def api_diagnostico():
         "monitor": telemetria.estado(),
         # archivo de variables fuera del repo: cuál se leyó y qué NOMBRES cargó (nunca valores)
         "entorno_archivo": _entorno.estado(),
+        # qué versión está CORRIENDO (se lee al arrancar el proceso): un
+        # git pull sin reiniciar deja el código viejo en memoria y la
+        # pantalla parece nueva porque el HTML sí se sirve del disco
+        "version": _VERSION,
     }
 
 
@@ -2544,11 +2576,30 @@ def _generar_excel(datos):
          [fila_match(m) + ("SÍ" if m.get("confirmado") else "",)
           for m in datos["conciliados_o"]])
 
+    # "Por qué acá": la pregunta que vuelve siempre es por qué un impuesto
+    # quedó en banco sin contabilizar (o al revés). Las razones posibles,
+    # dichas en la fila, para no tener que adivinar.
+    from engine import matcher as matcher_mod
+    terminos_g = gastos_conf.cargar()
+    excepciones_g = gastos_conf.cargar_excepciones()
+
+    def por_que(b):
+        if b.get("reclasificado"):
+            return f'movido a mano — {b["reclasificado"]}'
+        d = b.get("descripcion") or ""
+        if gastos_conf.es_gasto(d, excepciones_g):
+            return 'el concepto está marcado como "nunca es gasto bancario"'
+        if matcher_mod.GASTO_RE.search(d):
+            return "reconocido como gasto/impuesto bancario"
+        if gastos_conf.es_gasto(d, terminos_g):
+            return "concepto aprendido como gasto bancario"
+        return ""
+
     cols_banco = ["Fecha", "Comprobante", "Descripción", "Detalle", "Débito", "Crédito",
-                  "Archivo", "Cargado en FBS"]
+                  "Archivo", "Cargado en FBS", "Por qué acá"]
     fila_banco = lambda b: (b["fecha"], b["comprobante"], b["descripcion"], b["detalle"],
                             b["debito"] or "", b["credito"] or "", b["archivo"],
-                            b.get("cargado_fbs") or "")
+                            b.get("cargado_fbs") or "", por_que(b))
     habs = [b for b in datos["banco_sin_contabilizar"] if b.get("es_haberes")]
     resto = [b for b in datos["banco_sin_contabilizar"] if not b.get("es_haberes")]
     # hoja dedicada: con este listado se arma el asiento de sueldos en el FBS
@@ -2774,6 +2825,13 @@ def _pagina(request, archivo: str):
                                                   "Cache-Control": "no-store"})
     return FileResponse(os.path.join(BASE_DIR, "static", archivo),
                         headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/version")
+def api_version():
+    """Qué versión está corriendo. Barata a propósito: la pantalla la muestra
+    abajo de todo para poder confirmar un deploy de un vistazo."""
+    return _VERSION
 
 
 @app.get("/diario")
