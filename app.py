@@ -365,6 +365,9 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         prog("Preparando los resultados", 96, eta=4)
         salida = _serializar(resultado, parseados, ia_sugerencias, ia_estado)
         salida["mayor_origen"] = mayor_origen
+        # el saldo inicial que trae el reporte del mayor: con él, la hoja
+        # Conciliación del export sale sin tener que cargar nada a mano
+        salida["mayor_saldo_inicial"] = mayor_parsed.get("E", {}).get("saldo_inicial")
         salida["marca"] = marca or None
         if marca:
             # aviso si un extracto parece de una cuenta de OTRA marca
@@ -2082,6 +2085,284 @@ def api_exportar(job_id: str):
     )
 
 
+# --- hojas con el formato con el que el cliente arma la conciliación --------
+# Replica el libro que usan a mano: el extracto y el mayor en crudo, las dos
+# listas de pendientes y la hoja Conciliación con las fórmulas que atan todo
+# (saldo del mayor ± pendientes = saldo del extracto). La hoja de gastos
+# bancarios no va: la siguen llevando ellos.
+MONEDA = '#,##0.00'
+FECHA = 'dd/mm/yyyy'
+MESES_NOMBRE = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo",
+                6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre",
+                10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
+
+
+def _todos_los_movimientos(datos):
+    """El extracto entero que entró a esta conciliación, sin importar en qué
+    solapa terminó cada movimiento."""
+    vistos, out = set(), []
+    def add(b):
+        if b and b.get("id") not in vistos:
+            vistos.add(b.get("id"))
+            out.append(b)
+    for m in datos.get("conciliados_e", []) + datos.get("conciliados_o", []):
+        add(m["banco"])
+    for m in datos.get("conciliados_manual", []):
+        for b in m.get("banco", []):
+            add(b)
+    for k in ("banco_sin_contabilizar", "gastos_bancarios"):
+        for b in datos.get(k, []):
+            add(b)
+    return sorted(out, key=lambda b: (b.get("fecha") or "", str(b.get("id") or "")))
+
+
+def _todos_los_asientos(datos):
+    """El mayor entero (E y O) que entró a esta conciliación."""
+    vistos, out = set(), []
+    def add(a):
+        if a and a.get("id") not in vistos:
+            vistos.add(a.get("id"))
+            out.append(a)
+    for m in datos.get("conciliados_e", []) + datos.get("conciliados_o", []):
+        add(m["asiento"])
+    for m in datos.get("conciliados_manual", []):
+        for a in m.get("mayor", []):
+            add(a)
+    for k in ("e_sin_banco", "o_pendientes_sin_banco"):
+        for a in datos.get(k, []):
+            add(a)
+    for p in datos.get("contraasientos", []):
+        add(p["debe"])
+        add(p["haber"])
+    for e in datos.get("excluidos_mayor", []):
+        for a in e.get("mayor", []):
+            add(a)
+    for p in datos.get("nota_debito", []):
+        for a in p.get("asientos_mayor", []):
+            add(a)
+    return sorted(out, key=lambda a: (a.get("hoja") or "", a.get("fecha") or "",
+                                      str(a.get("asiento") or "")))
+
+
+def _hojas_contables(wb, datos):
+    """Crea, al principio del libro, las hojas del formato del cliente.
+    Devuelve nada: deja todo listo con sus fórmulas."""
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    negrita = Font(bold=True)
+    extractos = datos.get("extractos") or [{}]
+    ext_meta = extractos[0]
+    cuenta = (datos.get("cuenta") or {}).get("etiqueta") or ext_meta.get("cuenta") or ""
+    banco = (ext_meta.get("banco") or "").title()
+    # el período es el de TODOS los extractos de la corrida, no el del primero
+    fechas = [e[k] for e in extractos for k in ("desde", "hasta") if e.get(k)]
+    desde, hasta = (min(fechas), max(fechas)) if fechas else ("", "")
+    movs = _todos_los_movimientos(datos)
+    asientos = _todos_los_asientos(datos)
+
+    def encabezar(ws, titulos, fila=1):
+        for i, t in enumerate(titulos, 1):
+            c = ws.cell(row=fila, column=i, value=t)
+            c.font = negrita
+
+    def anchos(ws, medidas):
+        for i, w in enumerate(medidas, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    def fecha_celda(ws, fila, col, iso):
+        c = ws.cell(row=fila, column=col, value=_fecha_py(iso))
+        c.number_format = FECHA
+        return c
+
+    def plata(ws, fila, col, valor):
+        c = ws.cell(row=fila, column=col, value=valor)
+        c.number_format = MONEDA
+        return c
+
+    # ---------- Extracto (crudo) ----------
+    ws_ext = wb.create_sheet("Extracto", 1)
+    ws_ext["A1"] = f"Extracto {banco} {cuenta}".strip()
+    ws_ext["A1"].font = negrita
+    ws_ext["A2"] = "Saldo inicial"
+    plata(ws_ext, 2, 8, extractos[0].get("saldo_inicial"))
+    ws_ext["A3"] = "Saldo final"
+    ws_ext["A3"].font = negrita
+    encabezar(ws_ext, ["Fecha", "Comprobante", "Concepto", "Detalle", "Débito",
+                       "Crédito", "Importe", "Saldo", "Archivo"], fila=4)
+    for i, b in enumerate(movs, start=5):
+        fecha_celda(ws_ext, i, 1, b.get("fecha"))
+        ws_ext.cell(row=i, column=2, value=b.get("comprobante"))
+        ws_ext.cell(row=i, column=3, value=b.get("descripcion"))
+        ws_ext.cell(row=i, column=4, value=b.get("detalle"))
+        plata(ws_ext, i, 5, b.get("debito") or None)
+        plata(ws_ext, i, 6, b.get("credito") or None)
+        plata(ws_ext, i, 7, f"=N({get_column_letter(6)}{i})-N({get_column_letter(5)}{i})")
+        plata(ws_ext, i, 8, b.get("saldo"))
+        ws_ext.cell(row=i, column=9, value=b.get("archivo"))
+    # Saldo final del extracto: el que declara el propio resumen bancario; si
+    # el archivo no lo trae, el saldo de la última línea; si tampoco hay
+    # (bancos que no publican saldo), queda para cargar a mano.
+    ultimo = extractos[-1].get("saldo_final")
+    if ultimo is None and movs and movs[-1].get("saldo"):
+        ultimo = f"=H{4 + len(movs)}"
+    plata(ws_ext, 3, 8, ultimo)
+    if ultimo is None:
+        ws_ext["I3"] = "← cargar el saldo final del extracto"
+    anchos(ws_ext, [12, 14, 46, 34, 14, 14, 14, 16, 34])
+
+    # ---------- Mayor (crudo) ----------
+    ws_may = wb.create_sheet("Mayor", 2)
+    ws_may["A1"] = "Consulta del Mayor"
+    ws_may["A1"].font = negrita
+    ws_may["A2"] = f"Cuenta: {cuenta}"
+    ws_may["E3"] = "Saldo inicial"
+    ws_may["E3"].font = negrita
+    saldo_may = datos.get("mayor_saldo_inicial")
+    plata(ws_may, 3, 7, saldo_may)
+    if saldo_may is None:   # el mayor vino del SQL, que trae solo el rango
+        ws_may["H3"] = "← completar con el saldo inicial del mayor"
+    encabezar(ws_may, ["Asiento", "Fecha", "Referencia", "Comentario", "Debe",
+                       "Haber", "Saldo", "Hoja"], fila=4)
+    for i, a in enumerate(asientos, start=5):
+        ws_may.cell(row=i, column=1, value=a.get("asiento"))
+        fecha_celda(ws_may, i, 2, a.get("fecha"))
+        ws_may.cell(row=i, column=3, value=a.get("referencia"))
+        ws_may.cell(row=i, column=4, value=a.get("comentario"))
+        plata(ws_may, i, 5, a.get("debe") or None)
+        plata(ws_may, i, 6, a.get("haber") or None)
+        # la primera arranca del saldo inicial (G3), no del título de la columna
+        anterior = i - 1 if i > 5 else 3
+        plata(ws_may, i, 7, f"=N(G{anterior})+N(E{i})-N(F{i})")
+        ws_may.cell(row=i, column=8, value=a.get("hoja"))
+    fila_saldo_may = 4 + len(asientos) if asientos else 3
+    anchos(ws_may, [11, 12, 16, 58, 14, 14, 18, 7])
+
+    # ---------- Mov Pendientes (banco sin asiento, por mes) ----------
+    ws_mp = wb.create_sheet("Mov Pendientes", 3)
+    ws_mp["B1"] = "PENDIENTES DE CONTABILIZAR"
+    ws_mp["B1"].font = negrita
+    encabezar(ws_mp, ["Fecha", "Comprobante", "Concepto", "Detalle", "DEB",
+                      "CRED", "Archivo"], fila=3)
+    pendientes = sorted(datos.get("banco_sin_contabilizar", []),
+                        key=lambda b: (b.get("fecha") or "", str(b.get("id") or "")))
+    por_mes = {}
+    for b in pendientes:
+        por_mes.setdefault((b.get("fecha") or "")[:7], []).append(b)
+    fila = 4
+    filas_total_mes = []
+    for mes in sorted(por_mes):
+        titulo = mes
+        if len(mes) == 7:
+            titulo = f"{MESES_NOMBRE.get(int(mes[5:7]), mes)} {mes[:4]}"
+        ws_mp.cell(row=fila, column=2, value=titulo).font = negrita
+        fila += 1
+        desde_fila = fila
+        for b in por_mes[mes]:
+            fecha_celda(ws_mp, fila, 1, b.get("fecha"))
+            ws_mp.cell(row=fila, column=2, value=b.get("comprobante"))
+            ws_mp.cell(row=fila, column=3, value=b.get("descripcion"))
+            ws_mp.cell(row=fila, column=4, value=b.get("detalle"))
+            plata(ws_mp, fila, 5, b.get("debito") or None)
+            plata(ws_mp, fila, 6, b.get("credito") or None)
+            ws_mp.cell(row=fila, column=7, value=b.get("archivo"))
+            fila += 1
+        plata(ws_mp, fila, 5, f"=SUM(E{desde_fila}:E{fila - 1})").font = negrita
+        plata(ws_mp, fila, 6, f"=SUM(F{desde_fila}:F{fila - 1})").font = negrita
+        ws_mp.cell(row=fila, column=8, value=f"Total {titulo}")
+        plata(ws_mp, fila, 9, f"=F{fila}-E{fila}").font = negrita
+        filas_total_mes.append(fila)
+        fila += 2
+    fila_total_mp = fila
+    ws_mp.cell(row=fila_total_mp, column=8, value="TOTAL PENDIENTE").font = negrita
+    suma = "+".join(f"I{f}" for f in filas_total_mes) or "0"
+    plata(ws_mp, fila_total_mp, 9, f"={suma}").font = negrita
+    anchos(ws_mp, [12, 14, 46, 34, 15, 15, 32, 20, 16])
+
+    # ---------- Cont Pendientes (mayor sin banco) ----------
+    ws_cp = wb.create_sheet("Cont Pendientes", 4)
+    ws_cp["C1"] = "CONTABILIZADOS PENDIENTES"
+    ws_cp["C1"].font = negrita
+    encabezar(ws_cp, ["Hoja", "Asiento", "Fecha", "Referencia", "Comentario",
+                      "Cred", "Deb", "Neto"], fila=3)
+    # Cred = Debe del mayor, Deb = Haber: visto desde el banco, un Debe del
+    # mayor es plata que entra. Es la convención de su propia planilla.
+    sin_banco = sorted(datos.get("e_sin_banco", []) + datos.get("o_pendientes_sin_banco", []),
+                       key=lambda a: (a.get("fecha") or "", str(a.get("asiento") or "")))
+    fila = 4
+    for a in sin_banco:
+        ws_cp.cell(row=fila, column=1, value=a.get("hoja"))
+        ws_cp.cell(row=fila, column=2, value=a.get("asiento"))
+        fecha_celda(ws_cp, fila, 3, a.get("fecha"))
+        ws_cp.cell(row=fila, column=4, value=a.get("referencia"))
+        ws_cp.cell(row=fila, column=5, value=a.get("comentario"))
+        plata(ws_cp, fila, 6, a.get("debe") or None)
+        plata(ws_cp, fila, 7, a.get("haber") or None)
+        plata(ws_cp, fila, 8, f"=N(F{fila})-N(G{fila})")
+        fila += 1
+    fila_total_cp = fila + 1
+    ws_cp.cell(row=fila_total_cp, column=7, value="TOTAL").font = negrita
+    plata(ws_cp, fila_total_cp, 8,
+          f"=SUM(H4:H{fila - 1})" if sin_banco else 0).font = negrita
+    anchos(ws_cp, [7, 11, 12, 18, 58, 15, 15, 16])
+
+    # ---------- Conciliación (las fórmulas que atan todo) ----------
+    ws = wb.create_sheet("Conciliación", 0)
+    ws["C2"] = f"CUENTA: {cuenta}"
+    ws["C2"].font = negrita
+    ws["C3"] = f"BANCO: {banco or (ext_meta.get('titular') or '')}"
+    ws["C4"] = f"PERÍODO: {_fecha_ar(desde)} al {_fecha_ar(hasta)}"
+    ws["C6"] = "Saldo final"
+    ws["D6"] = f"Según mayor al {_fecha_ar(hasta)}"
+    plata(ws, 6, 5, f"=Mayor!G{fila_saldo_may}" if asientos else 0)
+    ws["C8"] = "MOVIMIENTOS PENDIENTES DE CONTABILIZAR"
+    ws["C8"].font = negrita
+    ws["D9"] = "TOTAL"
+    plata(ws, 9, 5, f"='Mov Pendientes'!I{fila_total_mp}")
+    ws["C11"] = "MOV. EN MAYOR PENDIENTES DE CONCILIAR"
+    ws["C11"].font = negrita
+    ws["D12"] = "TOTAL"
+    plata(ws, 12, 5, f"='Cont Pendientes'!H{fila_total_cp}")
+    ws["C14"] = "SALDO S/LIBROS (+ -) MOV. PEND"
+    ws["C14"].font = negrita
+    plata(ws, 14, 5, "=+E6+E9-E12").font = negrita
+    ws["C16"] = f"SALDO S/EXTRACTO AL {_fecha_ar(hasta)}"
+    ws["C16"].font = negrita
+    plata(ws, 16, 5, "=Extracto!H3").font = negrita
+    ws["C18"] = "DIFERENCIA NO LOCALIZADA"
+    ws["C18"].font = negrita
+    plata(ws, 18, 5, "=+E14-E16").font = negrita
+    # informativo, fuera de la cuenta: si los gastos del mes todavía no se
+    # contabilizaron (no hay nota de débito en el mayor), explican parte de la
+    # diferencia de arriba. Si ya están contabilizados, no suman acá.
+    gastos = sum((b.get("credito") or 0) - (b.get("debito") or 0)
+                 for b in datos.get("gastos_bancarios", []))
+    ws["C20"] = "Gastos bancarios del extracto (informativo)"
+    plata(ws, 20, 5, round(gastos, 2))
+    ws["C21"] = ("Si la nota de débito del mes todavía no se contabilizó, "
+                 "esta cifra explica parte de la diferencia.")
+    ws["C23"] = ("El saldo del mayor arranca del saldo inicial de la hoja Mayor "
+                 "(celda G3) y el del extracto sale de la hoja Extracto (H3).")
+    anchos(ws, [4, 4, 42, 30, 20])
+
+    # las cinco quedan juntas y primeras; el resto del libro va detrás
+    if "Resumen" in wb.sheetnames:
+        wb.move_sheet("Resumen", offset=4)
+
+
+def _fecha_py(iso):
+    """ISO -> date, para que el Excel la trate como fecha y no como texto."""
+    try:
+        return date.fromisoformat(iso) if iso else None
+    except (TypeError, ValueError):
+        return iso
+
+
+def _fecha_ar(iso):
+    d = _fecha_py(iso)
+    return d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else (iso or "")
+
+
 def _generar_excel(datos):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
@@ -2233,6 +2514,10 @@ def _generar_excel(datos):
              ["IDs banco", "IDs mayor", "Confianza", "Motivo"],
              [(", ".join(s["ids_banco"]), ", ".join(s["ids_mayor"]),
                s["confianza"], s["motivo"]) for s in datos["ia"]["sugerencias"]])
+
+    # adelante de todo, el libro como lo arman ellos (va último para que las
+    # hojas queden primero sin pelearse con el resto)
+    _hojas_contables(wb, datos)
 
     buffer = io.BytesIO()
     wb.save(buffer)
