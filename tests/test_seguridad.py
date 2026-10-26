@@ -73,6 +73,14 @@ def test_con_clave_exige_login(monkeypatch):
     assert c.get("/login").status_code == 200
 
 
+def test_version_sin_sesion_desde_la_propia_maquina(monkeypatch):
+    # el script de procesos la usa para identificar cada app que escucha
+    monkeypatch.setenv("APP_PASSWORD", CLAVE)
+    r = cliente(LOCAL).get("/api/version")
+    assert r.status_code == 200 and "commit" in r.json()
+    assert cliente(REMOTO).get("/api/version").status_code == 401
+
+
 def test_login_ok_y_cookie(monkeypatch):
     monkeypatch.setenv("APP_PASSWORD", CLAVE)
     c = cliente()

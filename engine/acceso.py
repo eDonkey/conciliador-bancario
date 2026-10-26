@@ -72,6 +72,13 @@ def instalar(app: FastAPI):
         if path == "/health":
             return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
+        # /api/version la pregunta scripts/procesos.ps1 para saber qué app es
+        # cada proceso: en el server conviven varias en Python y sin
+        # privilegios no se ve la línea de comando. Desde la propia máquina se
+        # responde sin sesión; solo dice el commit y desde cuándo corre.
+        if path == "/api/version" and seg.es_local(request):
+            return await call_next(request)
+
         # Identidad del hub: el hub (Orbit) ya autenticó al usuario y firma sus cabeceras
         # X-Orbit-* (hub/docs/FIRMA_ORBIT.md). Con firma válida y un usuario no hace falta
         # la contraseña; sin firma válida (o sin clave de firma) esas cabeceras no cuentan y
