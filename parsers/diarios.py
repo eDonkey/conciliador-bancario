@@ -191,8 +191,26 @@ def _parse_galicia(nombre, data):
 
 # --- BBVA / Francés: .xls binario -------------------------------------------
 
+def _saldo_rotulado(fila, etiquetas) -> float | None:
+    """El número que sigue a un rótulo tipo 'Saldo:' en esa fila."""
+    for j, celda in enumerate(fila):
+        rotulo = str(celda or '').strip().rstrip(':').lower()
+        if rotulo in etiquetas:
+            for v in fila[j + 1:]:
+                if isinstance(v, (int, float)) and v != '':
+                    return float(v)
+                if isinstance(v, str) and re.fullmatch(r'[-\d.,()]{3,}', v.strip()):
+                    return _num_celda(v)
+    return None
+
+
 def _parse_bbva(nombre, wb):
     cuenta = moneda = None
+    # El .xls del BBVA trae el saldo con el que arranca el período ("Saldo:",
+    # arriba) y el del cierre ("Saldo Final", al pie). Con esos dos la hoja
+    # Conciliación del export cierra sola: el saldo del extracto era lo último
+    # que quedaba para cargar a mano.
+    saldo_inicial = saldo_final = None
     movs = []
     seq = 0
     for hoja in wb.sheets():
@@ -209,6 +227,10 @@ def _parse_bbva(nombre, wb):
                 hdr_i = i
                 cols = {str(v).strip(): j for j, v in enumerate(f) if str(v).strip()}
                 continue
+            if hdr_i is None and saldo_inicial is None:
+                saldo_inicial = _saldo_rotulado(f, ('saldo',))
+            if hdr_i is not None and not _fecha(f[0]):
+                saldo_final = _saldo_rotulado(f, ('saldo final',)) or saldo_final
             if hdr_i is None or not _fecha(f[0]):
                 continue
             fecha = _fecha(f[0])
@@ -225,6 +247,7 @@ def _parse_bbva(nombre, wb):
                              cre - deb, comprobante=comp.strip() or None,
                              detalle=detalle))
     return {"banco": "frances", "cuenta": cuenta, "moneda": moneda,
+            "saldo_inicial": saldo_inicial, "saldo_final": saldo_final,
             "movimientos": movs}
 
 
