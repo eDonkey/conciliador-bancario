@@ -335,3 +335,48 @@ def test_login_limpio_con_override_no_avisa(monkeypatch, capsys):
     monkeypatch.setenv("FBS_SQL_PERMITIR_LOGIN_ESCRITURA_HASTA", _en(5))
     fbs_sql._verificar_login_solo_lectura(_conf_login())
     assert "ADVERTENCIA" not in capsys.readouterr().out
+
+
+# ---- saldo inicial del mayor ------------------------------------------------
+
+CFG_CUENTA = {"cuenta_id": "c1", "empresa": "Lumiere", "conexion_id": 1,
+              "conexion": {"servidor": "192.168.1.5", "puerto": 1433, "base": "b"},
+              "conexion_nombre": "FBS", "plan_e": "1141162", "plan_o": "1141161",
+              "etiqueta": "Santander 393-000691/6"}
+
+
+def test_saldo_previo_del_mayor_sale_del_fbs(monkeypatch):
+    visto = {}
+    monkeypatch.setattr(fbs_sql, "cuentas_fbs", lambda: [CFG_CUENTA])
+
+    def falso(conf, query, params):
+        visto.update(query=query, params=params)
+        return [{"hoja": "E", "saldo": 1500.5}, {"HOJA": "O", "SALDO": -200.0}]
+    monkeypatch.setattr(fbs_sql, "_consultar", falso)
+
+    assert fbs_sql.saldos_previos("c1", "2026-09-01") == {"E": 1500.5, "O": -200.0}
+    # todo lo anterior al 1/9, en el formato de fecha que SQL Server lee igual
+    # en cualquier idioma
+    assert visto["params"] == {"desde": "20260901"}
+    assert "DetFecha < %(desde)s" in visto["query"]
+    assert "1141162" in visto["query"] and "1141161" in visto["query"]
+
+
+def test_sin_saldo_previo_no_se_rompe_nada(monkeypatch):
+    monkeypatch.setattr(fbs_sql, "cuentas_fbs", lambda: [CFG_CUENTA])
+
+    def explota(conf, query, params):
+        raise RuntimeError("el FBS no contesta")
+    monkeypatch.setattr(fbs_sql, "_consultar", explota)
+    assert fbs_sql.saldos_previos("c1", "2026-09-01") == {}
+    # cuenta de otra marca: tampoco se consulta
+    monkeypatch.setattr(fbs_sql, "_consultar", explota)
+    assert fbs_sql.saldos_previos("c1", "2026-09-01", marca="Nave") == {}
+
+
+def test_el_saldo_inicial_del_export_suma_las_dos_cuentas():
+    # la hoja Mayor lleva UN saldo corrido sobre los asientos de E y O
+    mayor = {"E": {"saldo_inicial": 1000.0}, "O": {"saldo_inicial": -250.5}}
+    assert app_mod._saldo_inicial_mayor(mayor) == 749.5
+    mayor["O"]["saldo_inicial"] = None
+    assert app_mod._saldo_inicial_mayor(mayor) is None

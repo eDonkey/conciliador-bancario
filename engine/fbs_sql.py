@@ -844,6 +844,57 @@ def _query_detmov(planes: list[tuple[str, int]]) -> str:
     return "\nUNION ALL\n".join(bloques)
 
 
+def _query_saldo_previo(planes: list[tuple[str, int]]) -> str:
+    """Lo contabilizado en cada cuenta ANTES de la fecha, en una sola consulta."""
+    bloques = [
+        (f"SELECT '{hoja}' AS hoja, "
+         "SUM(ISNULL(DetDebe, 0)) - SUM(ISNULL(DetHaber, 0)) AS saldo "
+         f"FROM DetMov WHERE DetPlan = {plan} AND DetFecha < %(desde)s")
+        for hoja, plan in planes]
+    return "\nUNION ALL\n".join(bloques)
+
+
+def saldos_previos(cuenta_id: str, desde: str, marca: str = "") -> dict:
+    """Saldo con el que llega el mayor a `desde` (ISO), por hoja: el saldo de
+    la ultima linea del mes anterior en la Consulta del Mayor. Con el, la hoja
+    Mayor del export sale con la columna Saldo ya corrida, sin cargar nada.
+
+    Es la suma de todo lo contabilizado en la cuenta hasta ese dia. Contrastado
+    contra SaldosPorAnioMesCuentaCentro, la tabla de saldos por mes del propio
+    FBS: el mismo numero al centavo.
+
+    Devuelve {} cuando no se puede saber (query manual del modal, demo, o la
+    consulta falla). Es un dato de mas: nunca corta la conciliacion, y sin el
+    la celda queda para completar a mano como hasta ahora."""
+    try:
+        todas = cuentas_fbs()
+        if not todas:
+            return {}
+        cfgs = [c for c in _filtrar_cfgs(todas, marca)
+                if c["cuenta_id"] == cuenta_id]
+        if not cfgs or simulado():
+            return {}
+        c = cfgs[0]
+        planes = [(hoja, int(plan)) for hoja, plan in
+                  (("E", c["plan_e"]), ("O", c["plan_o"])) if plan]
+        if not planes:
+            return {}
+        query = _query_saldo_previo(planes)
+        _validar_solo_lectura(query)
+        filas = _consultar(c["conexion"], query,
+                           {"desde": desde.replace("-", "")})
+    except Exception as exc:  # noqa: BLE001 - sin saldo previo se sigue igual
+        print(f"[fbs] No pude traer el saldo inicial del mayor: {exc}", flush=True)
+        return {}
+    out = {}
+    for f in filas:
+        f = {str(k).lower(): v for k, v in f.items()}
+        hoja = str(f.get("hoja") or "").strip().upper()[:1]
+        if hoja in ("E", "O") and f.get("saldo") is not None:
+            out[hoja] = round(_importe(f["saldo"]), 2)
+    return out
+
+
 def _traer_hub(cfgs: list[dict], desde: str, hasta: str) -> list[dict]:
     """Una consulta generada por conexión FBS, con todos sus pares E/O."""
     por_conexion: dict = {}

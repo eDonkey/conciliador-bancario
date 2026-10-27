@@ -172,6 +172,18 @@ def _recalcular_resumen(datos):
         min(100.0, 100.0 * (conciliados + gastos_expl) / max(1, r["movimientos_banco"])), 1)
 
 
+def _saldo_inicial_mayor(mayor_parsed) -> float | None:
+    """El saldo con el que arranca la hoja Mayor del export: la suma de las
+    DOS cuentas (E y O), porque esa hoja lleva un solo saldo corrido sobre los
+    asientos de ambas y de ahi sale el "saldo final segun mayor" de la hoja
+    Conciliacion. Si falta el de alguna no se inventa: la celda queda vacia
+    con su aviso, mejor que un saldo corrido que arranque mal."""
+    saldos = [(mayor_parsed.get(h) or {}).get("saldo_inicial") for h in ("E", "O")]
+    if any(s is None for s in saldos):
+        return None
+    return round(sum(saldos), 2)
+
+
 def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
     def match_dict(m):
         return {"banco": m["banco"].to_dict(), "asiento": m["asiento"].to_dict(),
@@ -330,6 +342,13 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                             "E": {"asientos": []}, "O": {"asientos": []}}
             for i in infos:
                 mayor_parsed[i["hoja"]]["asientos"].extend(i["asientos"])
+            # el saldo con el que arranca el mayor: el FBS lo sabe (es lo
+            # contabilizado hasta el dia anterior), asi la hoja Mayor del
+            # export sale con la columna Saldo corrida y no hay que buscar el
+            # saldo del ultimo movimiento del mes anterior a mano
+            for hoja, saldo in fbs_sql.saldos_previos(
+                    fbs_mayor["cuenta"], d1.isoformat(), marca).items():
+                mayor_parsed[hoja]["saldo_inicial"] = saldo
             mayor_origen = {
                 "tipo": "fbs", "cuenta_id": fbs_mayor["cuenta"],
                 "desde": d1.isoformat(), "hasta": d2.isoformat(),
@@ -394,7 +413,7 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
         salida["mayor_origen"] = mayor_origen
         # el saldo inicial que trae el reporte del mayor: con él, la hoja
         # Conciliación del export sale sin tener que cargar nada a mano
-        salida["mayor_saldo_inicial"] = mayor_parsed.get("E", {}).get("saldo_inicial")
+        salida["mayor_saldo_inicial"] = _saldo_inicial_mayor(mayor_parsed)
         salida["marca"] = marca or None
         if marca:
             # aviso si un extracto parece de una cuenta de OTRA marca
@@ -2364,8 +2383,11 @@ def _hojas_contables(wb, datos):
     ws_may["E3"].font = negrita
     saldo_may = datos.get("mayor_saldo_inicial")
     plata(ws_may, 3, 7, saldo_may)
-    if saldo_may is None:   # el mayor vino del SQL, que trae solo el rango
+    if saldo_may is None:
+        # el reporte del mayor no lo trajo (o lo trajo de una sola cuenta)
         ws_may["H3"] = "← completar con el saldo inicial del mayor"
+    else:
+        ws_may["H3"] = "← saldo anterior de las cuentas E y O"
     encabezar(ws_may, ["Asiento", "Fecha", "Referencia", "Comentario", "Debe",
                        "Haber", "Saldo", "Hoja"], fila=4)
     for i, a in enumerate(asientos, start=5):
