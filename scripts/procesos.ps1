@@ -1,4 +1,4 @@
-﻿﻿# Qué está corriendo del conciliador y en qué puerto, para poder bajarlo.
+﻿# Qué está corriendo del conciliador y en qué puerto, para poder bajarlo.
 #
 # Uso:  powershell -ExecutionPolicy Bypass -File scripts\procesos.ps1
 #       powershell -ExecutionPolicy Bypass -File scripts\procesos.ps1 -Matar 8766
@@ -84,22 +84,25 @@ function BajarFamilia($objetivos) {
       if ($familia.Contains([int]$h.ParentProcessId)) { [void]$familia.Add([int]$h.ProcessId) }
     }
   }
-  ""
+  # Write-Host y no texto suelto: lo que la funcion escribe en la salida se lo
+  # lleva el [void](...) de quien la llama, junto con el valor de retorno, y
+  # entonces no se ve cual bajo y cual no.
+  Write-Host ""
   $fallaron = @()
   foreach ($elPid in $familia) {
     Stop-Process -Id $elPid -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 300
     if (Get-Process -Id $elPid -ErrorAction SilentlyContinue) {
-      "PID $elPid NO se pudo bajar"
+      Write-Host "PID $elPid NO se pudo bajar"
       $fallaron += $elPid
     } else {
-      "PID $elPid bajado"
+      Write-Host "PID $elPid bajado"
     }
   }
   if ($fallaron) {
-    ""
-    "Esos procesos son de otro usuario o sesion: abri PowerShell como"
-    "administrador (boton derecho > Ejecutar como administrador) y repeti."
+    Write-Host ""
+    Write-Host "Esos procesos son de otro usuario o sesion: abri PowerShell como"
+    Write-Host "administrador (boton derecho > Ejecutar como administrador) y repeti."
   }
   return $fallaron
 }
