@@ -199,6 +199,11 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
                           for m in resultado["matches_o"]],
         "banco_sin_contabilizar": [m.to_dict() for m in resultado["banco_sin_contabilizar"]],
         "gastos_bancarios": [m.to_dict() for m in resultado["gastos_bancarios"]],
+        "retenciones": [m.to_dict() for m in resultado["retenciones"]],
+        "retencion_periodos": [
+            {**p, "asientos_mayor": [a.to_dict() for a in p["asientos_mayor"]]}
+            for p in resultado["retencion_periodos"]
+        ],
         "e_sin_banco": [a.to_dict() for a in resultado["e_sin_banco"]],
         "o_pendientes_sin_banco": [a.to_dict() for a in resultado["o_pendientes_sin_banco"]],
         "nota_debito": [
@@ -314,7 +319,10 @@ def _procesar_job(job_id, archivos, data_mayor, usar_ia, est_base, marca="",
                               "cuenta": info.get("cuenta"),
                               "banco": info.get("banco"),
                               "desde": info.get("desde"), "hasta": info.get("hasta"),
-                              "saldo_inicial": None, "saldo_final": None,
+                              # los trae el que los publica (BBVA); con el
+                              # saldo final la hoja Conciliación cierra sola
+                              "saldo_inicial": info.get("saldo_inicial"),
+                              "saldo_final": info.get("saldo_final"),
                               "movimientos": info["movimientos"]})
         parseados.sort(key=lambda e: (e["desde"] or e["hasta"] or date.min))
         movs = [m for e in parseados for m in e["movimientos"]]
@@ -2528,6 +2536,13 @@ def _fecha_ar(iso):
     return d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else (iso or "")
 
 
+def _mes_corto(iso):
+    """'2026-09-14' -> 'SEP/26': la etiqueta de período que arma el matcher."""
+    from engine.matcher import MESES
+    d = _fecha_py(iso)
+    return f"{MESES.get(d.month, '?')}/{d.strftime('%y')}" if hasattr(d, "month")         else "sin fecha"
+
+
 def _generar_excel(datos):
     import openpyxl
     from openpyxl.styles import Font, PatternFill
@@ -2667,6 +2682,33 @@ def _generar_excel(datos):
         filas_nd.append(("", "", "", "", ""))
     hoja("Gastos por mes (ND)",
          ["Período", "Concepto", "Cant.", "Importe", "Observación"], filas_nd)
+
+    # Retenciones SIRCREB: no van en la ND, va un recibo aparte (se recuperan
+    # contra el impuesto). Acá va el detalle del mes con su total, que es lo
+    # que hace falta para armarlo, y si el recibo ya está en el mayor.
+    filas_ret = []
+    for p in datos.get("retencion_periodos", []):
+        for m in sorted(datos.get("retenciones", []),
+                        key=lambda m: (m.get("fecha") or "", str(m.get("id") or ""))):
+            if _mes_corto(m.get("fecha")) != p["periodo"]:
+                continue
+            filas_ret.append((p["periodo"], m.get("fecha"), m.get("descripcion"),
+                              m.get("detalle"), round((m.get("debito") or 0)
+                                                      - (m.get("credito") or 0), 2), ""))
+        filas_ret.append((p["periodo"], "", "TOTAL DEL MES", "",
+                          p["total_extracto"], "esto es lo que va al recibo"))
+        for a in p["asientos_mayor"]:
+            filas_ret.append((p["periodo"], a["fecha"],
+                              f'Mayor [{a["hoja"]}] {a["referencia"]} — {a["comentario"]}',
+                              "", a["haber"] or -a["debe"], "el recibo, ya contabilizado"))
+        if p["total_mayor"] is None:
+            filas_ret.append((p["periodo"], "", "SIN RECIBO EN EL MAYOR", "", "",
+                              "hay que hacerlo: quedan como pendientes de contabilizar"
+                              + (" (hay más de un asiento por ese importe)"
+                                 if p.get("ambiguo") else "")))
+        filas_ret.append(("", "", "", "", "", ""))
+    hoja("Retenciones (SIRCREB)",
+         ["Período", "Fecha", "Concepto", "Detalle", "Importe", "Observación"], filas_ret)
 
     # Detalle de conceptos por período (para investigar diferencias)
     filas_con = []

@@ -14,6 +14,7 @@ Convención de signos:
 """
 import re
 from collections import defaultdict
+from datetime import date
 
 # Palabras clave de gastos/impuestos bancarios que usualmente no se registran
 # asiento por asiento en el mayor.
@@ -21,14 +22,26 @@ from collections import defaultdict
 # "cooperatIVA de seguros" y "com " matchea "teleCOM" (pasó con pagos a
 # proveedores reales que cayeron como gastos).
 GASTO_RE = re.compile(
-    # (?<![a-z])sirc cubre "SIRCREB" (Santander) y el abreviado "REG REC SIRC"
-    # del BBVA/Francés; 25413 suelto cubre el "DBCR 25413 S/DB" del Macro;
-    # "inter." cubre los intereses abreviados ("INTER.ADEL.CC S/ACUERD")
-    r'comision|(?<![a-z])iva(?![a-z])|impuesto|(?<![a-z])sirc|percepcion|iibb|'
+    # 25413 suelto cubre el "DBCR 25413 S/DB" del Macro; "inter." cubre los
+    # intereses abreviados ("INTER.ADEL.CC S/ACUERD")
+    r'comision|(?<![a-z])iva(?![a-z])|impuesto|percepcion|iibb|'
     r'ing\.?\s*brutos|ley ?2[57]\.?[47]?\d*|(?<!\d)25\.?413(?!\d)|mantenimiento|'
     r'sellados|intereses|(?<![a-z])inter\.|(?<![a-z])com\.? ',
     re.IGNORECASE,
 )
+
+# SIRCREB: la retencion de ingresos brutos que el banco aplica sobre cada
+# acreditacion. Parece un gasto bancario mas, pero NO entra en la nota de
+# debito mensual: se hace un recibo aparte, porque se recupera despues contra
+# el impuesto. Entonces queda como pendiente de contabilizar (hasta que hagan
+# el recibo) y ademas se lista aparte, con el total, para poder hacerlo.
+# (?<![a-z])sirc cubre "SIRCREB" (Santander) y el abreviado "REG REC SIRC"
+# del BBVA/Frances.
+RETENCION_RE = re.compile(r'(?<![a-z])sirc', re.IGNORECASE)
+
+
+def es_retencion_texto(texto: str) -> bool:
+    return bool(RETENCION_RE.search(texto or ""))
 
 NUM_RE = re.compile(r'\d{5,}')
 
@@ -115,6 +128,56 @@ def _mes_de_asiento(a) -> str | None:
     if m:
         return m.group(1)[:3].upper()
     return MESES.get(a.fecha.month) if a.fecha else None
+
+
+def _mes_retencion(r) -> str:
+    if not r.fecha:
+        return "sin fecha"
+    return f"{MESES.get(r.fecha.month, '?')}/{r.fecha.strftime('%y')}"
+
+
+def resumen_retenciones(retenciones, asientos_libres):
+    """Agrupa las retenciones (SIRCREB) por mes y busca en el mayor el recibo
+    que las registra.
+
+    El recibo no se puede identificar por el texto: sale con la misma
+    referencia que cualquier otro movimiento del mes (un "PO 03513" igual que
+    la nota de debito). Se identifica por el importe: que un asiento suelto
+    coincida al centavo con el total de las retenciones del mes es prueba de
+    sobra. Visto en una conciliacion real: 13 retenciones de septiembre,
+    16.210,58 en total, y un unico asiento libre por 16.210,58.
+
+    Devuelve (periodos, ids de asientos usados)."""
+    por_mes = defaultdict(list)
+    for r in retenciones:
+        if r.fecha:
+            por_mes[(r.fecha.year, r.fecha.month)].append(r)
+        else:
+            por_mes[(0, 0)].append(r)
+
+    periodos, usados = [], set()
+    for _, items in sorted(por_mes.items()):
+        total = round(sum(r.debito - r.credito for r in items), 2)
+        etiqueta = _mes_retencion(items[0])
+        hasta = max((r.fecha for r in items if r.fecha), default=None)
+        # el recibo se hace a fin de mes, a veces en los dias siguientes
+        candidatos = [a for a in asientos_libres
+                      if a.id not in usados and a.haber
+                      and abs(a.haber - total) <= 0.01
+                      and (not a.fecha or not hasta
+                           or -31 <= (a.fecha - hasta).days <= 40)]
+        recibo = candidatos[0] if len(candidatos) == 1 else None
+        if recibo:
+            usados.add(recibo.id)
+        periodos.append({
+            "periodo": etiqueta,
+            "movimientos": len(items),
+            "total_extracto": total,
+            "asientos_mayor": [recibo] if recibo else [],
+            "total_mayor": round(recibo.haber, 2) if recibo else None,
+            "ambiguo": len(candidatos) > 1,
+        })
+    return periodos, usados
 
 
 def resumen_nota_debito(gastos, asientos_libres):
@@ -493,6 +556,7 @@ def _etiqueta_previa(m, terminos_gasto=None, excepciones_gasto=None):
         return "gasto"
     if forzado is None and not gastos_conf.es_gasto(m.descripcion, excepciones_gasto) \
             and (GASTO_RE.search(m.descripcion)
+                 or RETENCION_RE.search(m.descripcion)
                  or gastos_conf.es_gasto(m.descripcion, terminos_gasto)):
         return "gasto"
     if es_haberes_texto(f"{m.descripcion} {m.detalle}"):
@@ -561,9 +625,15 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     # 3) clasificar restos del banco (patrón de fábrica + gastos del usuario).
     # Un movimiento reclasificado a mano trae _forzar_gasto (True/False) y esa
     # decisión pisa a los detectores — así la ND mensual también sale bien.
-    gastos_bancarios, sin_contabilizar = [], []
+    gastos_bancarios, retenciones, sin_contabilizar = [], [], []
     for m in banco_sin_nada:
         forzado = getattr(m, "_forzar_gasto", None)
+        if forzado is None and es_retencion_texto(m.descripcion):
+            # SIRCREB: no va a la ND, va un recibo. Queda entre los pendientes
+            # de contabilizar (es plata del banco que el mayor todavia no
+            # tiene) y repetido en su propia lista para hacer el recibo.
+            retenciones.append(m)
+            continue
         if m.id in etiquetas:
             # misma decisión que se tomó antes de cruzar: lo apartado del
             # cruce a ciegas es exactamente lo que termina en esta solapa
@@ -586,6 +656,20 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     e_sin_banco = [a for a in e_sin_banco if a.id not in ids_nd]
     o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in ids_nd]
 
+    # 4 bis) SIRCREB: lo mismo pero contra el recibo del mes. El mes que tiene
+    #        recibo queda explicado; el que no, vuelve a los pendientes de
+    #        contabilizar, que es lo que son hasta que lo hagan.
+    retencion_periodos, ids_ret = resumen_retenciones(
+        retenciones, e_sin_banco + o_pend_sin_banco)
+    e_sin_banco = [a for a in e_sin_banco if a.id not in ids_ret]
+    o_pend_sin_banco = [a for a in o_pend_sin_banco if a.id not in ids_ret]
+    meses_sin_recibo = {p["periodo"] for p in retencion_periodos
+                        if p["total_mayor"] is None}
+    if meses_sin_recibo:
+        sin_contabilizar.extend(r for r in retenciones
+                                if _mes_retencion(r) in meses_sin_recibo)
+        sin_contabilizar.sort(key=lambda m: (m.fecha or date(1900, 1, 1), str(m.id)))
+
     # 5) contraasientos: pares anulados dentro del residual del mayor (asiento
     #    y su contrapartida que nunca van a tener movimiento en el banco)
     e_sin_banco, contraasientos = netear_contraasientos(e_sin_banco)
@@ -598,7 +682,11 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
     # tengan asiento 1 a 1.
     gastos_explicados = sum(p["movimientos"] for p in nota_debito
                             if p["total_mayor"] is not None)
-    explicados = len(matches_e) + len(matches_o) + gastos_explicados
+    # idem las retenciones cuyo mes cruzo contra el recibo del mayor
+    retenciones_explicadas = sum(p["movimientos"] for p in retencion_periodos
+                                 if p["total_mayor"] is not None)
+    explicados = (len(matches_e) + len(matches_o)
+                  + gastos_explicados + retenciones_explicadas)
 
     return {
         "nota_debito": nota_debito,
@@ -607,6 +695,8 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
         "matches_o": matches_o,
         "banco_sin_contabilizar": sin_contabilizar,
         "gastos_bancarios": gastos_bancarios,
+        "retenciones": retenciones,
+        "retencion_periodos": retencion_periodos,
         "e_sin_banco": e_sin_banco,
         "o_pendientes_sin_banco": o_pend_sin_banco,
         "o_cancelados": len(cancelados_o),
@@ -619,8 +709,10 @@ def conciliar(movs_banco, asientos_e, asientos_o, reglas_aprendidas=None,
             "equivalencias_aplicadas": equivalencias_aplicadas,
             "aproximados": aproximados,
             "gastos_explicados": gastos_explicados,
+            "retenciones_explicadas": retenciones_explicadas,
             "contraasientos": len(contraasientos),
             "gastos_bancarios": {"cantidad": len(gastos_bancarios), "importe": tot(gastos_bancarios)},
+            "retenciones": {"cantidad": len(retenciones), "importe": tot(retenciones)},
             "banco_sin_contabilizar": {"cantidad": len(sin_contabilizar), "importe": tot(sin_contabilizar)},
             "e_sin_banco": {"cantidad": len(e_sin_banco), "importe": tot_a(e_sin_banco)},
             "o_pendientes_sin_banco": {"cantidad": len(o_pend_sin_banco), "importe": tot_a(o_pend_sin_banco)},

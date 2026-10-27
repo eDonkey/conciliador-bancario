@@ -1322,6 +1322,10 @@ const GLOSARIO_TABS = {
      <dt>TOTAL SEGÚN MAYOR</dt><dd>lo que registró el asiento de gastos bancarios del FBS.</dd>
      <dt>DIFERENCIA</dt><dd>extracto menos mayor; cero quiere decir que el asiento cierra.</dd>
      <dt>IVA esperado</dt><dd>el 21% o el 10,5% calculado sobre la base gravada, contra lo que el banco cobró de IVA.</dd>`],
+  retenciones: ['Retenciones de ingresos brutos (SIRCREB) que el banco descuenta de cada acreditación. No van en la nota de débito mensual: se registran con un recibo aparte, porque después se recuperan contra el impuesto. El sistema las agrupa por mes y busca en el mayor el asiento del recibo por ese total exacto.',
+    `<dt>TOTAL DEL MES</dt><dd>la suma de las retenciones: es el importe del recibo.</dd>
+     <dt>recibo encontrado</dt><dd>hay un asiento del mayor por ese total exacto; queda conciliado y no figura como pendiente.</dd>
+     <dt>sin recibo</dt><dd>todavía no está hecho: las retenciones quedan en "pendientes de contabilizar".</dd>`],
   e_sin_banco: ['Asientos de la cuenta E que no encontraron movimiento en el extracto. Suelen ser pagos cargados que el banco todavía no debitó, o cargados con otro importe o fecha. Tarea: buscar la contrapartida en "Conciliar a mano" o pedirle un análisis a la IA.',
     `<dt>Análisis IA</dt><dd>el botón "i" pide a la IA una hipótesis de por qué quedó pendiente. Consume API. Si está bien, "convertir en regla" la guarda para las próximas corridas.</dd>
      <dt>Excluir del mayor</dt><dd>desde "Conciliar a mano": saca de la conciliación un asiento anulado o un contraasiento; se puede restaurar.</dd>`],
@@ -1424,6 +1428,7 @@ function mostrarResultados() {
         <li><span>Libro mayor</span><b>${origen}</b></li>
         ${fila('Gastos e impuestos bancarios', r.gastos_bancarios.cantidad, r.gastos_bancarios.importe)}
         ${r.nota_debito && r.nota_debito.periodos ? fila('Diferencia vs. nota de débito del mayor', '', r.nota_debito.diferencia_total) : ''}
+        ${r.retenciones && r.retenciones.cantidad ? fila('Retenciones SIRCREB (van por recibo, no en la ND)', r.retenciones.cantidad, r.retenciones.importe) : ''}
         ${fila('Cruzados por reglas aprendidas', r.reglas_aplicadas || 0, null, !r.reglas_aplicadas)}
         ${fila('Cruzados por equivalencias', r.equivalencias_aplicadas || 0, null, !r.equivalencias_aplicadas)}
         <li${ia && (ia.estado === 'ok' || ia.estado === 'simulada') ? '' : ' class="suave"'}><span>IA</span><b>${iaTexto}</b></li>
@@ -1513,6 +1518,7 @@ function mostrarResultados() {
      datos.banco_sin_contabilizar.length - nHaberes],
     ['gastos_bancarios', 'Gastos bancarios', datos.gastos_bancarios.length],
     ['nota_debito', 'Nota de débito por mes', datos.nota_debito.length],
+    ['retenciones', 'Retenciones SIRCREB', (datos.retenciones || []).length],
     ['e_sin_banco', 'Asientos E sin banco', datos.e_sin_banco.length],
     ['o_pendientes_sin_banco', 'Asientos O sin banco', datos.o_pendientes_sin_banco.length],
     ['manual', 'Conciliar a mano', (datos.conciliados_manual || []).length],
@@ -1595,15 +1601,21 @@ const NOMBRES_CLASIF = {
   gastos_bancarios: 'Gastos bancarios',
   haberes_sin_contabilizar: 'Haberes sin asiento',
 };
+// las retenciones no son un destino al que mover algo a mano: salen del
+// concepto del extracto. Se puede sacar de ahí (a gasto o a sin asiento),
+// y para eso alcanza con que el nombre exista.
+NOMBRES_CLASIF.retenciones = 'Retenciones SIRCREB';
 let transferId = null;
 
 window.abrirTransfer = bancoId => {
-  const m = [...datos.banco_sin_contabilizar, ...datos.gastos_bancarios]
-    .find(x => x.id === bancoId);
+  const m = [...datos.banco_sin_contabilizar, ...datos.gastos_bancarios,
+             ...(datos.retenciones || [])].find(x => x.id === bancoId);
   if (!m) return;
   const actual = datos.gastos_bancarios.some(x => x.id === bancoId)
     ? 'gastos_bancarios'
-    : (m.es_haberes ? 'haberes_sin_contabilizar' : 'banco_sin_contabilizar');
+    : (datos.retenciones || []).some(x => x.id === bancoId)
+      ? 'retenciones'
+      : (m.es_haberes ? 'haberes_sin_contabilizar' : 'banco_sin_contabilizar');
   transferId = bancoId;
   $('#trMov').innerHTML = `<b>${esc(m.descripcion)}</b><br>
     ${esc(m.fecha || '')} · ${m.debito ? '− $ ' + fmt(m.debito) : '+ $ ' + fmt(m.credito)}
@@ -1718,13 +1730,13 @@ function pintarTabla() {
       return f;
     });
   } else if (tabActiva === 'banco_sin_contabilizar' || tabActiva === 'gastos_bancarios'
-             || tabActiva === 'haberes_sin_contabilizar') {
+             || tabActiva === 'haberes_sin_contabilizar' || tabActiva === 'retenciones') {
     cols = ['Fecha', 'Comprobante', 'Descripción', 'Detalle', 'Débito', 'Crédito', 'Archivo', ''];
     const items = tabActiva === 'haberes_sin_contabilizar'
       ? datos.banco_sin_contabilizar.filter(m => m.es_haberes)
       : tabActiva === 'banco_sin_contabilizar'
         ? datos.banco_sin_contabilizar.filter(m => !m.es_haberes)
-        : datos[tabActiva];
+        : (datos[tabActiva] || []);
     filas = items.map(b => {
       const marca = b.reclasificado
         ? ` <span class="metodo" title="Transferido a mano: ${esc(b.reclasificado)}">reclasificado</span>` : '';
