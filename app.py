@@ -221,6 +221,7 @@ def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
 
 @app.post("/api/conciliar")
 async def api_conciliar(
+    request: Request,
     extractos: list[UploadFile] = File(...),
     mayor: UploadFile | None = File(None),
     usar_ia: str = Form("no"),
@@ -238,6 +239,7 @@ async def api_conciliar(
             presupuesto_ia.verificar()
         except presupuesto_ia.PresupuestoExcedido as exc:
             return JSONResponse(status_code=429, content={"error": str(exc)})
+    marca = _marca_pedido(request, marca)
     archivos = [(up.filename, await up.read()) for up in extractos]
     data_mayor = await mayor.read() if mayor else b""
     if not data_mayor and not fbs_cuenta:
@@ -637,10 +639,26 @@ def api_equivalencias_eliminar(eq_id: str):
     return {"equivalencias": eq_mod.eliminar(eq_id)}
 
 
+def _marca_pedido(request, marca: str = "") -> str:
+    """La marca de este pedido.
+
+    Si entró por la ruta por marca del hub manda esa: viaja firmada en
+    X-Orbit-Marca, no se pierde al navegar y no se puede cambiar a mano. El
+    ?marca= de la URL queda para cuando la app se usa sin hub — y era el único
+    criterio hasta ahora, así que bastaba con que un link perdiera la query
+    para que la pantalla mostrara las cuentas de todas las marcas."""
+    try:
+        del_hub = (seguridad.identidad_hub(request) or {}).get("marca") or ""
+    except Exception:      # noqa: BLE001 — sin identidad del hub vale la query
+        del_hub = ""
+    return del_hub or marca
+
+
 @app.get("/api/cuentas")
-def api_cuentas(marca: str = ""):
+def api_cuentas(request: Request, marca: str = ""):
     """Cuentas bancarias del grupo con su etiqueta y mapeo FBS. Con ?marca=
     se limita a esa marca (nombre completo o abreviado)."""
+    marca = _marca_pedido(request, marca)
     todas = cuentas_mod.cargar()
     cuentas = cuentas_mod.filtrar_marca(todas, marca)
     return {"cuentas": [{**c, "etiqueta": cuentas_mod.etiqueta(c)} for c in cuentas],
@@ -701,13 +719,15 @@ def _agregar_a_staging(stag: dict, nombre: str, info: dict, cuentas: list[dict])
 
 
 @app.post("/api/diario/identificar")
-async def api_diario_identificar(archivos: list[UploadFile] = File(...),
+async def api_diario_identificar(request: Request,
+                                 archivos: list[UploadFile] = File(...),
                                  marca: str = "", staging: str = ""):
     """Modo diario, paso 1: detecta qué es cada archivo (banco/cuenta/FBS) y
     deja lo parseado en memoria para el paso de conciliación. Con ?marca= la
     identificación solo asigna cuentas de esa marca; con ?staging= los
     archivos se suman a una identificación previa (p. ej. al mayor ya traído
     del FBS por SQL) en vez de empezar de cero."""
+    marca = _marca_pedido(request, marca)
     staging_id, stag = _staging_destino(staging, marca)
     cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
                                         stag.get("marca") or marca)
@@ -720,10 +740,10 @@ async def api_diario_identificar(archivos: list[UploadFile] = File(...),
 
 
 @app.get("/api/fbs-sql")
-def api_fbs_sql_get(marca: str = ""):
+def api_fbs_sql_get(request: Request, marca: str = ""):
     """Configuración de la conexión directa al FBS (sin la clave). Con
     ?marca= las cuentas configuradas en el hub se limitan a esa marca."""
-    return fbs_sql.publica(marca)
+    return fbs_sql.publica(_marca_pedido(request, marca))
 
 
 @app.post("/api/fbs-sql")
@@ -748,7 +768,7 @@ def api_fbs_sql_probar():
 
 
 @app.post("/api/diario/fbs-sql")
-def api_diario_fbs_sql(cuerpo: dict = Body(...)):
+def api_diario_fbs_sql(request: Request, cuerpo: dict = Body(...)):
     """Trae el mayor E y O directo del SQL Server del FBS para un rango de
     fechas y lo suma al staging como si fueran reportes subidos: el resto del
     flujo (mapeos, conciliación, memoria, arrastre) es idéntico."""
@@ -762,14 +782,14 @@ def api_diario_fbs_sql(cuerpo: dict = Body(...)):
         d1, d2 = d2, d1
     try:
         infos = fbs_sql.traer(d1.isoformat(), d2.isoformat(),
-                              marca=cuerpo.get("marca") or "",
+                              marca=_marca_pedido(request, cuerpo.get("marca") or ""),
                               solo_cuentas=cuerpo.get("cuentas") or None)
     except ValueError as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
     if not infos:
         return JSONResponse(status_code=422, content={
             "error": "La query del FBS no devolvió asientos E/O en ese rango."})
-    marca = cuerpo.get("marca") or ""
+    marca = _marca_pedido(request, cuerpo.get("marca") or "")
     staging_id, stag = _staging_destino(cuerpo.get("staging_id") or "", marca)
     cuentas = cuentas_mod.filtrar_marca(cuentas_mod.cargar(),
                                         stag.get("marca") or marca)
@@ -1040,11 +1060,32 @@ def _veto_legible(v) -> dict:
             "fecha": v.get("fecha"), "mov": mov, "asiento": asiento}
 
 
+def _vetos_del_job(vetos: list, job_id: str) -> list:
+    """Los vetos que tienen que ver con ESTA conciliación.
+
+    El veto se guarda como un par de claves (movimiento, asiento) y vale para
+    todas las corridas, sin cuenta ni marca. La solapa los listaba todos, así
+    que en una cuenta chica aparecían cruces anulados de otras cuentas y de
+    otras empresas, que ahí no significan nada. Se muestran los que tocan un
+    movimiento y un asiento de este job: justo los que explican por qué algo
+    figura como pendiente acá."""
+    datos = _obtener(job_id)
+    if not datos:
+        return vetos
+    movs = {_clave_mov_dict(m) for m in _todos_los_movimientos(datos)}
+    asientos = {_clave_asiento_dict(a) for a in _todos_los_asientos(datos)}
+    return [v for v in vetos
+            if v.get("mov") in movs and v.get("asiento") in asientos]
+
+
 @app.get("/api/vetos")
-def api_vetos_listar():
+def api_vetos_listar(job: str = ""):
     """Cruces anulados por el usuario (vetos): pares que ninguna corrida
     vuelve a proponer, para que se puedan ver y revertir."""
-    return {"vetos": [_veto_legible(v) for v in _cargar_vetos()]}
+    vetos = _cargar_vetos()
+    if job:
+        vetos = _vetos_del_job(vetos, job)
+    return {"vetos": [_veto_legible(v) for v in vetos]}
 
 
 @app.delete("/api/vetos/{veto_id}")
@@ -1468,7 +1509,7 @@ def api_diario_conciliar(staging_id: str, cuerpo: dict = Body(...)):
 
 
 @app.get("/api/diario")
-def api_diario_historial(marca: str = ""):
+def api_diario_historial(request: Request, marca: str = ""):
     """La memoria diaria: todas las conciliaciones diarias guardadas, de la
     más reciente a la más vieja, con su resumen. Los tableros nunca se borran
     y los pendientes encadenan cada día con el siguiente.
@@ -1478,6 +1519,7 @@ def api_diario_historial(marca: str = ""):
     tolerando renombres (misma_marca) y las cuentas por número, no por el id
     completo (que cambia si renombran el banco). Una corrida que no es de
     ninguna marca conocida se muestra igual, para no perderla de vista."""
+    marca = _marca_pedido(request, marca)
     todas = cuentas_mod.cargar() if marca else []
     nums_marca = {cuentas_mod.numero_cuenta(c["id"])
                   for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
@@ -1570,13 +1612,14 @@ def _texto_fila(f: dict) -> str:
 
 
 @app.get("/api/historial")
-def api_historial(marca: str = "", q: str = "", limite: int = 60):
+def api_historial(request: Request, marca: str = "", q: str = "", limite: int = 60):
     """Las conciliaciones MENSUALES guardadas, de la más reciente a la más
     vieja: qué cuenta, qué período, cuánto explicó y el link para abrirla.
     Antes solo se podía volver a la última (la del navegador) y el resto
     quedaba enterrado aunque el archivo siguiera ahí.
 
     Las corridas del modo diario no entran: tienen su propio tablero."""
+    marca = _marca_pedido(request, marca)
     todas = cuentas_mod.cargar() if marca else []
     nums_marca = {cuentas_mod.numero_cuenta(c["id"])
                   for c in cuentas_mod.filtrar_marca(todas, marca)} - {""}
@@ -2277,7 +2320,9 @@ def _todos_los_movimientos(datos):
     for m in datos.get("conciliados_manual", []):
         for b in m.get("banco", []):
             add(b)
-    for k in ("banco_sin_contabilizar", "gastos_bancarios"):
+    # las retenciones no estan en banco_sin_contabilizar cuando el recibo del
+    # mes ya esta contabilizado, y la hoja Extracto es el extracto ENTERO
+    for k in ("banco_sin_contabilizar", "gastos_bancarios", "retenciones"):
         for b in datos.get(k, []):
             add(b)
     return sorted(out, key=lambda b: (b.get("fecha") or "", str(b.get("id") or "")))
@@ -2304,9 +2349,10 @@ def _todos_los_asientos(datos):
     for e in datos.get("excluidos_mayor", []):
         for a in e.get("mayor", []):
             add(a)
-    for p in datos.get("nota_debito", []):
-        for a in p.get("asientos_mayor", []):
-            add(a)
+    for k in ("nota_debito", "retencion_periodos"):
+        for p in datos.get(k, []):
+            for a in p.get("asientos_mayor", []):
+                add(a)
     return sorted(out, key=lambda a: (a.get("hoja") or "", a.get("fecha") or "",
                                       str(a.get("asiento") or "")))
 

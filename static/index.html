@@ -1127,6 +1127,7 @@ async function cargarResultado(jobId) {
   const json = await r.json();
   if (!r.ok) throw new Error(json.error || 'Error al cargar el resultado');
   datos = json;
+  await cargarVetos(jobId);   // los de esta conciliación, no los de todas
   // la URL identifica la conciliación: se puede compartir con otro usuario
   const params = new URLSearchParams(location.search);
   params.set('job', jobId);
@@ -1285,8 +1286,14 @@ cargarHistorial();
 
 // cruces anulados (vetos): se listan en la solapa de excluidos y se pueden revertir
 let vetos = [];
-async function cargarVetos() {
-  try { vetos = (await (await fetch(`${BASE}api/vetos`)).json()).vetos || []; } catch {}
+async function cargarVetos(jobId) {
+  // Solo los de ESTA conciliación. El veto es un par (movimiento, asiento) y
+  // vale para todas las corridas, así que la solapa listaba también cruces
+  // anulados de otras cuentas y de otras empresas, que acá no significan nada.
+  const job = jobId || (datos && datos.job_id)
+    || new URLSearchParams(location.search).get('job') || '';
+  const url = `${BASE}api/vetos${job ? `?job=${encodeURIComponent(job)}` : ''}`;
+  try { vetos = (await (await fetch(url)).json()).vetos || []; } catch {}
 }
 cargarVetos();
 const METODOS = `
