@@ -703,13 +703,19 @@ const conMarca = (url) => MARCA
   ? url + (url.includes('?') ? '&' : '?') + 'marca=' + encodeURIComponent(MARCA)
   : url;
 
+// El link a la mensual lleva la marca DESDE EL ARRANQUE. Estaba adentro del
+// then() de api/cuentas: hasta que esa consulta volvía (o si fallaba) el botón
+// apuntaba al "./" del HTML, y al apretarlo se entraba a la mensual sin marca
+// — con las conciliaciones y las cuentas de todas las empresas. Es lo que
+// reportaron desde Nave estando en LEAP.
+if (MARCA) $('#linkMensual').href = conMarca(BASE);
+
 fetch(conMarca(`${BASE}api/cuentas`)).then(r => r.json()).then(j => {
   cuentas = j.cuentas;
   if (MARCA) {
     const nombre = j.marca_nombre || MARCA;
     $('#chipMarca').textContent = nombre;
     $('#chipMarca').classList.remove('oculto');
-    $('#linkMensual').href = conMarca(BASE);
     document.title = `Conciliación diaria — ${nombre}`;
     if (!j.cuentas.length)
       $('#subtitulo').innerHTML = `<span style="color:var(--rojo)">No hay cuentas de la marca "${esc(MARCA)}" — revisá el parámetro de la URL o cargala en el hub</span>`;
