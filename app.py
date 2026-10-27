@@ -173,15 +173,11 @@ def _recalcular_resumen(datos):
 
 
 def _saldo_inicial_mayor(mayor_parsed) -> float | None:
-    """El saldo con el que arranca la hoja Mayor del export: la suma de las
-    DOS cuentas (E y O), porque esa hoja lleva un solo saldo corrido sobre los
-    asientos de ambas y de ahi sale el "saldo final segun mayor" de la hoja
-    Conciliacion. Si falta el de alguna no se inventa: la celda queda vacia
-    con su aviso, mejor que un saldo corrido que arranque mal."""
-    saldos = [(mayor_parsed.get(h) or {}).get("saldo_inicial") for h in ("E", "O")]
-    if any(s is None for s in saldos):
-        return None
-    return round(sum(saldos), 2)
+    """El saldo con el que arranca la hoja Mayor del export. Es el de la
+    cuenta E y solo el de la E: esa hoja es el mayor del banco, y de su ultima
+    fila sale el "saldo final segun mayor" de la hoja Conciliacion. Los
+    asientos de la O estan a confirmar y van en su propia solapa."""
+    return (mayor_parsed.get("E") or {}).get("saldo_inicial")
 
 
 def _serializar(resultado, extractos, ia_sugerencias, ia_estado):
@@ -2322,7 +2318,10 @@ def _hojas_contables(wb, datos):
     fechas = [e[k] for e in extractos for k in ("desde", "hasta") if e.get(k)]
     desde, hasta = (min(fechas), max(fechas)) if fechas else ("", "")
     movs = _todos_los_movimientos(datos)
-    asientos = _todos_los_asientos(datos)
+    # Las hojas contables son LA CUENTA E: el mayor del banco. Lo de la O son
+    # asientos a confirmar y tienen su propia solapa ("Pendientes confirmar
+    # (O)"); mezclados acá corrian el saldo y ensuciaban los pendientes.
+    asientos = [a for a in _todos_los_asientos(datos) if a.get("hoja") != "O"]
 
     def encabezar(ws, titulos, fila=1):
         for i, t in enumerate(titulos, 1):
@@ -2387,7 +2386,7 @@ def _hojas_contables(wb, datos):
         # el reporte del mayor no lo trajo (o lo trajo de una sola cuenta)
         ws_may["H3"] = "← completar con el saldo inicial del mayor"
     else:
-        ws_may["H3"] = "← saldo anterior de las cuentas E y O"
+        ws_may["H3"] = "← saldo de la cuenta E al cierre anterior (del FBS)"
     encabezar(ws_may, ["Asiento", "Fecha", "Referencia", "Comentario", "Debe",
                        "Haber", "Saldo", "Hoja"], fila=4)
     for i, a in enumerate(asientos, start=5):
@@ -2453,7 +2452,7 @@ def _hojas_contables(wb, datos):
                       "Cred", "Deb", "Neto"], fila=3)
     # Cred = Debe del mayor, Deb = Haber: visto desde el banco, un Debe del
     # mayor es plata que entra. Es la convención de su propia planilla.
-    sin_banco = sorted(datos.get("e_sin_banco", []) + datos.get("o_pendientes_sin_banco", []),
+    sin_banco = sorted(datos.get("e_sin_banco", []),
                        key=lambda a: (a.get("fecha") or "", str(a.get("asiento") or "")))
     fila = 4
     for a in sin_banco:

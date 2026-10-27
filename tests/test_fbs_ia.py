@@ -374,9 +374,9 @@ def test_sin_saldo_previo_no_se_rompe_nada(monkeypatch):
     assert fbs_sql.saldos_previos("c1", "2026-09-01", marca="Nave") == {}
 
 
-def test_el_saldo_inicial_del_export_suma_las_dos_cuentas():
-    # la hoja Mayor lleva UN saldo corrido sobre los asientos de E y O
+def test_el_saldo_inicial_del_export_es_el_de_la_cuenta_e():
+    # la hoja Mayor es el mayor del banco: la cuenta E. La O tiene su solapa.
     mayor = {"E": {"saldo_inicial": 1000.0}, "O": {"saldo_inicial": -250.5}}
-    assert app_mod._saldo_inicial_mayor(mayor) == 749.5
-    mayor["O"]["saldo_inicial"] = None
+    assert app_mod._saldo_inicial_mayor(mayor) == 1000.0
+    mayor["E"]["saldo_inicial"] = None
     assert app_mod._saldo_inicial_mayor(mayor) is None
